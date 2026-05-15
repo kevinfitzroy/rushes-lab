@@ -147,9 +147,12 @@ material-storage:1715789012:rebase + commit v0.4 file-management-system update
 
 - `git checkout <branch>` / `git switch`(切分支)
 - `git branch -f` / `git reset` / `git rebase` / `git merge`
+- `git cherry-pick` / `git revert` / `git apply`(改 HEAD)
 - `git commit` / `git commit --amend`
 - `git push`(任何形式)
 - `git stash push` / `git stash pop`
+- `git clean -fd` / `git restore`(改 working tree)
+- `git tag` / `git tag -d`(改 ref)
 
 **不需要** lock 的 git 操作(只读 / 不影响 HEAD):
 
@@ -160,11 +163,15 @@ material-storage:1715789012:rebase + commit v0.4 file-management-system update
 ### 9.3 协议
 
 ```
+0. (session 起手清理)如果 lock 内容是自己 agent name → rm -f
+   (孤儿 lock — 同一 agent 的上次 session crash/forget;**假设同一 agent 不并行多 session**)
 1. mkdir -p .claude/agent-locks
 2. 读取 .claude/agent-locks/git.lock(不存在 → 视为空 lock)
 3. 判定:
-   - 不存在 / 时间戳 > 30 分钟前 → 失效,可抢
-   - 内容是自己 agent name → 已持有,直接进行(可续约 timestamp)
+   - 不存在 / 时间戳 > 60 分钟前 → 失效,可抢
+     (60 min 而非 30 min:advisor 校对 + 起草 + commit + push 这种链路就接近 30 min,
+      预留 buffer)
+   - 内容是自己 agent name → 已持有,可直接进行 + 续约 timestamp
    - 内容是别人 agent name + 未过期 → **STOP,告知用户**:
      "git lock 被 <other-agent> 持有(since <timestamp>, reason: <reason>),
       请协调或在 <other-agent> 会话中释放 lock"
@@ -172,26 +179,33 @@ material-storage:1715789012:rebase + commit v0.4 file-management-system update
    实施:`echo "..." > .claude/agent-locks/git.lock.tmp && \
           mv .claude/agent-locks/git.lock.tmp .claude/agent-locks/git.lock`
 5. 执行 git 操作
-6. 操作完成 → `rm -f .claude/agent-locks/git.lock`(或更新 timestamp 续约长任务)
+6. 操作后失败/成功语义:
+   - 正常完成 → `rm -f .claude/agent-locks/git.lock`(释放)
+   - **失败但状态未损**(参数错 / 网络错 / push 被拒)→ `rm -f`(释放,失败 op 不污染下次)
+   - **状态损坏**(merge conflict / rebase in progress / cherry-pick conflict)→
+     **保留 lock + STOP + 告知用户介入**(`git status` 会显示有 unmerged paths;
+     用户处理完后 release lock)
 ```
 
 ### 9.4 Commit 前自检清单(必跑)
 
-每次 `git commit` 之前,**显式 verify**:
+每次 `git commit` 之前,**显式 verify** 四件套:
 
 ```bash
 echo "branch:   $(git symbolic-ref --short HEAD)"
 echo "email:    $(git config user.email)"
 echo "lock:     $(cat .claude/agent-locks/git.lock 2>/dev/null || echo 'not held')"
+echo "tree:     $(git status --porcelain | wc -l | xargs) modified path(s)"
 ```
 
 预期:
 
-- `branch:` 是你打算 commit 到的分支(**不**是 `main`,**不**是对方 agent 的 `feat/<other>-*` 分支)
-- `email:` 严格等于 `kevinfitzroy715@gmail.com`(workspace memory: git-identity-isolation;**严禁** zklink 邮箱)
-- `lock:` 应该是 `<self>:<recent-ts>:<reason>`(自己持有 lock)
+- **`branch:`** 是你打算 commit 到的分支(**不**是 `main`,**不**是对方 agent 的 `feat/<other>-*` 分支)— **不符 → STOP**
+- **`email:`** 严格等于 `kevinfitzroy715@gmail.com`(workspace memory: git-identity-isolation;**严禁** zklink 邮箱)— **不符 → STOP**
+- **`lock:`** 应该是 `<self>:<recent-ts>:<reason>`(自己持有 lock)— **不符 → STOP**
+- **`tree:`** 显示 modified 路径数 — 若 > 你即将 commit 的文件数,说明 working tree 有他方未 commit 的改动 → **warn(不强制 STOP)**:确认这些改动**不属于本次 commit**;用 `git add <specific-paths>` 而**非** `git add -A` 来避免误 commit 他方文件
 
-**任何一项不符 → STOP,告知用户**,不强行 commit。
+任一前三项不符 → STOP;第四项 warn 后可继续(用具体路径 `git add`)。
 
 ### 9.5 历史事故(2026-05-15)
 
@@ -201,9 +215,9 @@ material-storage agent 在 `git rebase main` 后,HEAD 意外落在 feishu agent 
 
 **根因:** 共享 cwd 无 lock + commit 前无 branch verify。本节是事故后引入的协作规则。
 
-### 9.6 更彻底方案(推荐日后采纳):git worktree
+### 9.6 推荐立即采纳:git worktree
 
-如果共享 cwd lock 仍频繁出问题,用 `git worktree` 给两 agent 独立 cwd:
+worktree 是**硬隔离**(两 HEAD 物理分离),lock 是**软约束**(协议靠 agent 自律)。本节为推荐立即采纳路径;§9.1-9.5 lock 协议作 fallback,适用于 worktree 因故未启用的会话(例如临时 ad-hoc 操作)。
 
 ```bash
 # 在 workspace 根目录(假设 rushes-lab/ 已 clone)
@@ -214,6 +228,8 @@ git -C rushes-lab worktree add ../rushes-lab-feishu
 - material-storage agent cwd:`.../rushes-lab-workspace/rushes-lab/`
 - feishu agent cwd:`.../rushes-lab-workspace/rushes-lab-feishu/`
 
-两 worktree 共享 `.git` 对象库(同 remote / push / fetch),但**各自独立 HEAD**,git 操作不可能跨界。lock 机制可弃用。
+两 worktree 共享 `.git` 对象库(同 remote / push / fetch),但**各自独立 HEAD**,git 操作不可能跨界。
 
-采纳条件:用户在两个 Claude Code 会话启动时,显式 cwd 到对应目录;引导语相应调整。
+**用户操作指引**:在两个 Claude Code 会话启动时,显式 `cd` 到对应目录(`.../rushes-lab/` 给 material-storage agent;`.../rushes-lab-feishu/` 给 feishu agent)。引导语已相应调整(见仓库根 `README.md`)。
+
+worktree 启用后,§9.1-9.5 的 lock 协议**仍保留为协议**(供 ad-hoc 场景使用),但实际共享 HEAD 风险降到 0。
