@@ -2,6 +2,7 @@
 
 > **调研日期:** 2026-05-15
 > **版本:** v0.1
+> **迁移说明:** 2026-05-15 由 `rushes-spec/material-storage/research/feishu-approval.md` 迁入(`git mv` 保留 history)。原属 material-storage 调研区,因飞书功能拆为独立子项目 `feishu-integration`,此文档归位到飞书方案区,供 **feishu agent** 接手时作为调研起点。文中 §13 "待办" 是 feishu agent 的工作清单。
 > **结论摘要:** 推荐走 **飞书原生审批 v4 API**(`/open-apis/approval/v4/*`),不走"三方审批实例同步"。鉴权用 `tenant_access_token` + Redis 中心化缓存。Python 用官方 `lark-oapi` SDK 处理 token / 事件 / 卡片回调 / 加解密,审批 API 调用以"低层封装 + 手写参数"为主(SDK 高层未覆盖审批模块的现成示例)。
 > **状态:** v0.1 草稿,基于 open.feishu.cn 官方文档与 SDK README 一手证据
 

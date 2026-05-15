@@ -9,6 +9,7 @@
 | Scope | 状态 | 索引 |
 | --- | --- | --- |
 | `material-storage/` | 方案细化中(v2 初稿) | [./material-storage/README.md](./material-storage/README.md) |
+| `feishu/` | 方案就位,等独立 agent 接手实施 | [./feishu/README.md](./feishu/README.md) |
 
 ## 内容约定
 

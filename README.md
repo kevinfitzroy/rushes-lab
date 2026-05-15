@@ -6,8 +6,9 @@
 
 | 项目 | 说明 | 状态 |
 | --- | --- | --- |
-| [`rushes-spec/`](./rushes-spec) | 方案细化与决策记录工作区(各项目的 ADR / 调研笔记) | 进行中 |
+| [`rushes-spec/`](./rushes-spec) | 方案细化与决策记录工作区(各项目的 ADR / 调研笔记 / 契约) | 进行中 |
 | [`material-storage/`](./material-storage) | 素材存储系统(实施目录) | 规划中,方案见 `rushes-spec/material-storage/` |
+| [`feishu-integration/`](./feishu-integration) | 飞书集成桥接层(对内 REST,对外飞书开放平台) | 规划中,由独立 agent 接手,见 `rushes-spec/feishu/COLLABORATION.md` |
 
 > 新增项目:在仓库根目录下创建一个项目子目录,初始化各自的 `README.md` 与构建配置,再把它加入上表。
 
