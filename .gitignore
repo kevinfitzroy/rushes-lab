@@ -26,3 +26,6 @@ desktop.ini
 !.env.example
 *.pem
 *.key
+
+# Claude Code 本地代理状态
+.claude/
