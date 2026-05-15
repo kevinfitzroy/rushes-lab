@@ -1,16 +1,33 @@
-# Seafile + 本地 MinIO PoC docker-compose(v0.4 主推路线)
+# Seafile Pro + 本地 MinIO PoC docker-compose(v0.5 收敛主推路线)
 #
-# 落地 v0.3/v0.4 §3.2 Seafile (本地 MinIO 作 S3 backend) 路线分层:
-#   - Seafile 配 S3 backend 指向同机 MinIO
-#   - MinIO 数据物理写到 ZFS dataset(由 ${MINIO_DATA_DIR} 挂载)
+# 落地 v0.5 §3.2 Seafile + 本地 MinIO 作 S3 backend 分层:
+#   - Seafile (Pro) 配 [block_backend]/[commit_object_backend]/[fs_object_backend] = s3
+#   - MinIO 暴露 S3 API,数据物理写到 ZFS dataset A(由 ${MINIO_DATA_DIR} 挂载)
 #   - MinIO bucket notification webhook 推 FastAPI 旁路(commit object PUT → 触发 AI/缩略图)
 #
-# ⚠️ Seafile 镜像版本与 S3 backend 配置兼容性:实际部署前 verify 官方文档,
-#    本 compose 是 PoC 骨架,具体 image tag / env 名称可能需要按当下版本微调。
+# ⚠️ 关键前提与 2026-05-15 实测 finding(详 file-management-system.md §6.3 F-1~F-6 + ADR-0003)
 #
-# 启动:cp ../.env.example ../.env && vim ../.env && docker compose up -d
+#   F-1: 必须用 MariaDB 10.11 LTS,不要 MySQL 8 —
+#        seaf-server 内嵌 libmariadb 不支持 MySQL 8 默认的 caching_sha2_password
+#
+#   F-2: Seafile image tag — CE latest = 11.0.13(不存在 13.0);Pro 用专属镜像
+#        seafileltd/seafile-pro-mc:<ver>(license 申请中)。CE 不支持 S3 backend,
+#        本 compose 占位为 :latest(CE),实际部署时替换为 Pro tag
+#
+#   F-3: 挂载点改名 local_settings.py(不是 seahub_settings.override.py)—
+#        Seafile 只自动 import seahub_settings 和 local_settings
+#
+#   F-4: S3 backend conf 节名 = [block_backend] / [commit_object_backend] /
+#        [fs_object_backend],不是 [storage]+[s3];env 注入不可靠,首启后手编 seafile.conf
+#
+#   F-5: Pro 版 seahub 需 boto3,容器内 pip install boto3 botocore(或自定义 Dockerfile)
+#
+#   F-6: 端口策略 —— 默认 8081/8083/9000/9001 可能不在云安全组开放;.env 默认搬到 6000-7000
+#        MinIO S3 API 不外暴露(仅 docker network 内访问),只暴露 Console
+#
+# 启动:cp ../.env.example ../.env && vim ../.env && docker compose --env-file ../.env up -d
 # 等首启 init ~5min:docker compose logs -f seafile
-# 关停:docker compose down(数据保留);down -v(连 volumes 一并删)
+# 关停:docker compose --env-file ../.env down(数据保留);down -v(连 volumes 一并删)
 
 services:
   # ─── 本地 MinIO 作 Seafile S3 backend ───
@@ -33,8 +50,9 @@ services:
     volumes:
       - ${MINIO_DATA_DIR:?must set in .env}:/data
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"      # S3 API
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # MinIO Console (admin UI)
+      # MinIO S3 API host 映射已删 — 安全组开放 6000-7000 不含 9000;只在 docker network 内访问
+      # 笔记本调 mc 请用 SSH 隧道:ssh -L 9000:localhost:9000 host
+      - "${MINIO_CONSOLE_PORT:-6901}:9001"  # MinIO Console (admin UI),建议 6901 进开放区
     networks:
       - seafile-net
     healthcheck:
@@ -43,11 +61,12 @@ services:
       timeout: 5s
       retries: 3
 
-  # ─── Seafile CE (含 seahub web + seaf-server + seafdav + thumbnail) ───
-  # 官方推荐 docker-compose 拆分多容器(seafile / mysql / memcached);本 PoC 用 all-in-one 简化。
-  # 生产部署再拆分。
+  # ─── Seafile Pro (含 seahub web + seaf-server + seafdav + thumbnail) ───
+  # ⚠️ image tag 占位:
+  #   - 申请 Pro license 前:seafileltd/seafile-mc:latest (CE 11.0.13,但 CE 不支持 S3 backend!仅 boots 不可生产)
+  #   - 拿到 Pro license 后:seafileltd/seafile-pro-mc:<patch>(替换并重启)
   seafile:
-    image: seafileltd/seafile-mc:13.0  # PoC tag,实际部署 pin patch 版本
+    image: seafileltd/seafile-mc:latest  # PoC 占位 CE;生产用 seafileltd/seafile-pro-mc:<ver>
     container_name: seafile
     restart: unless-stopped
     depends_on:
@@ -63,29 +82,30 @@ services:
       SEAFILE_ADMIN_PASSWORD: ${SEAFILE_ADMIN_PASSWORD:?must set in .env}
       SEAFILE_SERVER_HOSTNAME: ${SEAFILE_HOST:?must set in .env}
       SEAFILE_SERVER_LETSENCRYPT: "false"
-      # ─── S3 backend 配置(env 风格,实际版本需 verify;若不支持 env 注入,
-      #     init 后改 /shared/seafile/conf/seafile.conf 的 [storage] / [s3] 节)
-      # SEAFILE_STORAGE_TYPE: s3
-      # SEAFILE_S3_BUCKET: seafile-blocks
-      # SEAFILE_S3_KEY_ID: ${MINIO_ROOT_USER}
-      # SEAFILE_S3_KEY: ${MINIO_ROOT_PASSWORD}
-      # SEAFILE_S3_HOST: seafile-minio:9000
-      # SEAFILE_S3_USE_HTTPS: "false"
-      # SEAFILE_S3_PATH_STYLE_REQUEST: "true"
+      # ─── S3 backend 配置说明(F-4):env 注入不被 Seafile parse,
+      #     首启后手编 /shared/seafile/conf/seafile.conf 三节:
+      #       [block_backend]         name = s3, bucket, key_id, key, host, use_v4_signature = true, path_style_request = true, use_https = false
+      #       [commit_object_backend] 同上
+      #       [fs_object_backend]     同上
+      #     restart seafile;详 README §配 S3 backend
     volumes:
       - seafile-data:/shared
-      - ./config/seahub_settings.override.py:/shared/seafile/conf/seahub_settings.override.py:ro
+      # F-3 修复:挂载点改为 local_settings.py(不是 seahub_settings.override.py)
+      - ./config/local_settings.py:/shared/seafile/conf/local_settings.py:ro
     ports:
-      - "${SEAFILE_PORT:-8083}:80"
+      - "${SEAFILE_PORT:-6083}:80"  # F-6:默认搬到 6000-7000(原 8083 不在云安全组)
     networks:
       - seafile-net
 
+  # ─── 数据库:MariaDB 10.11 LTS(F-1)───
+  # ⚠️ 不要用 MySQL 8 — seaf-server 内嵌 libmariadb 不支持 caching_sha2_password 默认插件,
+  #    会导致 seaf-server connect MySQL 全失败 → admin/system repo 创建链 break。
   seafile-mysql:
-    image: mysql:8.0
+    image: mariadb:10.11
     container_name: seafile-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${SEAFILE_DB_PASSWORD:?must set in .env}
+      MARIADB_ROOT_PASSWORD: ${SEAFILE_DB_PASSWORD:?must set in .env}
     volumes:
       - seafile-mysql-data:/var/lib/mysql
     networks:
