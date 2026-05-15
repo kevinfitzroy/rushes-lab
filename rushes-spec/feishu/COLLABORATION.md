@@ -119,3 +119,101 @@ rushes-lab/
     │   └── decisions/                   ← 飞书侧 ADR
     └── material-storage/                ← material-storage 方案区
 ```
+
+## 9. Git 操作互斥 lock + 分支自检(2026-05-15 加,事故后引入)
+
+两个 agent 在共享 cwd 操作 git 会互相干扰 —— 已发生过 main 分支意外污染 + commit 落到对方分支上的事故(详见 §9.5)。本节定义协作 lock 机制 + commit 前必跑的自检清单。
+
+### 9.1 互斥 lock 文件
+
+**路径(相对仓库根):** `.claude/agent-locks/git.lock`
+
+> `.gitignore` 已覆盖 `.claude/`,**不入仓库**,仅在本地 cwd 生效。
+
+**格式:** 单行 `<agent-name>:<unix-timestamp>:<reason>`,例如:
+
+```
+material-storage:1715789012:rebase + commit v0.4 file-management-system update
+```
+
+**Agent name 约定:**
+
+- material-storage agent → `material-storage`
+- feishu agent → `feishu`
+
+### 9.2 何时获取 lock
+
+**必须**获取 lock 的 git 操作(写动作):
+
+- `git checkout <branch>` / `git switch`(切分支)
+- `git branch -f` / `git reset` / `git rebase` / `git merge`
+- `git commit` / `git commit --amend`
+- `git push`(任何形式)
+- `git stash push` / `git stash pop`
+
+**不需要** lock 的 git 操作(只读 / 不影响 HEAD):
+
+- `git status` / `git log` / `git diff` / `git show`
+- `git fetch`(只更新 remote-tracking,不动本地 ref)
+- `gh pr view` / `gh pr diff` / `gh issue list` 等远端只读
+
+### 9.3 协议
+
+```
+1. mkdir -p .claude/agent-locks
+2. 读取 .claude/agent-locks/git.lock(不存在 → 视为空 lock)
+3. 判定:
+   - 不存在 / 时间戳 > 30 分钟前 → 失效,可抢
+   - 内容是自己 agent name → 已持有,直接进行(可续约 timestamp)
+   - 内容是别人 agent name + 未过期 → **STOP,告知用户**:
+     "git lock 被 <other-agent> 持有(since <timestamp>, reason: <reason>),
+      请协调或在 <other-agent> 会话中释放 lock"
+4. 抢锁:atomic write `<self>:<now>:<reason>` 到 .claude/agent-locks/git.lock
+   实施:`echo "..." > .claude/agent-locks/git.lock.tmp && \
+          mv .claude/agent-locks/git.lock.tmp .claude/agent-locks/git.lock`
+5. 执行 git 操作
+6. 操作完成 → `rm -f .claude/agent-locks/git.lock`(或更新 timestamp 续约长任务)
+```
+
+### 9.4 Commit 前自检清单(必跑)
+
+每次 `git commit` 之前,**显式 verify**:
+
+```bash
+echo "branch:   $(git symbolic-ref --short HEAD)"
+echo "email:    $(git config user.email)"
+echo "lock:     $(cat .claude/agent-locks/git.lock 2>/dev/null || echo 'not held')"
+```
+
+预期:
+
+- `branch:` 是你打算 commit 到的分支(**不**是 `main`,**不**是对方 agent 的 `feat/<other>-*` 分支)
+- `email:` 严格等于 `kevinfitzroy715@gmail.com`(workspace memory: git-identity-isolation;**严禁** zklink 邮箱)
+- `lock:` 应该是 `<self>:<recent-ts>:<reason>`(自己持有 lock)
+
+**任何一项不符 → STOP,告知用户**,不强行 commit。
+
+### 9.5 历史事故(2026-05-15)
+
+material-storage agent 在 `git rebase main` 后,HEAD 意外落在 feishu agent 的本地分支 `feat/feishu-contract-identity-v1`(飞书 agent 已切到但未提交)。结果:material-storage agent 的 PoC commit 加错分支 + local main 被污染。
+
+**修复:** reset 受影响分支 → cherry-pick commit 到正确分支 → fast-forward push。
+
+**根因:** 共享 cwd 无 lock + commit 前无 branch verify。本节是事故后引入的协作规则。
+
+### 9.6 更彻底方案(推荐日后采纳):git worktree
+
+如果共享 cwd lock 仍频繁出问题,用 `git worktree` 给两 agent 独立 cwd:
+
+```bash
+# 在 workspace 根目录(假设 rushes-lab/ 已 clone)
+cd /Users/foxer/claude/rushes-lab-workspace
+git -C rushes-lab worktree add ../rushes-lab-feishu
+```
+
+- material-storage agent cwd:`.../rushes-lab-workspace/rushes-lab/`
+- feishu agent cwd:`.../rushes-lab-workspace/rushes-lab-feishu/`
+
+两 worktree 共享 `.git` 对象库(同 remote / push / fetch),但**各自独立 HEAD**,git 操作不可能跨界。lock 机制可弃用。
+
+采纳条件:用户在两个 Claude Code 会话启动时,显式 cwd 到对应目录;引导语相应调整。
