@@ -1,0 +1,115 @@
+# Nextcloud PoC docker-compose
+#
+# 落地 v0.3 §8 NC 部署最小配置(PostgreSQL + Redis + OPcache,无 nginx fronting)。
+# 启动:cp ../.env.example ../.env && vim ../.env && docker compose up -d
+# 关停:docker compose down(数据保留在 ../data/ 下;rm -rf ../data/ 清空)
+#
+# 注意:此为 PoC 配置,不适用生产
+#   - NC_PROTOCOL=http(生产应走 https,前面挂 Caddy/nginx)
+#   - 无 fail2ban / rate limit
+#   - admin 密码走 env,不走 secrets
+
+services:
+  nc-app:
+    image: nextcloud:30-apache
+    container_name: nc-app
+    restart: unless-stopped
+    depends_on:
+      - nc-db
+      - nc-redis
+    environment:
+      # Database
+      POSTGRES_HOST: nc-db
+      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
+      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?must set NC_DB_PASSWORD in .env}
+      # Trusted domains + admin bootstrap
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NC_TRUSTED_DOMAINS:-localhost 127.0.0.1}
+      NEXTCLOUD_ADMIN_USER: ${NC_ADMIN_USER:-admin}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?must set NC_ADMIN_PASSWORD in .env}
+      # Redis (memcache + locking)
+      REDIS_HOST: nc-redis
+      REDIS_HOST_PORT: 6379
+      # Protocol / host overwrites(behind proxy / 端口转换)
+      OVERWRITEPROTOCOL: ${NC_PROTOCOL:-http}
+      OVERWRITEHOST: ${NC_HOST:-localhost}
+      # PHP limits(v0.3 §8 配置)
+      PHP_UPLOAD_LIMIT: 16G
+      PHP_MEMORY_LIMIT: 512M
+    volumes:
+      - ${NC_DATA_DIR:?must set NC_DATA_DIR in .env}:/var/www/html/data
+      - ./config/custom.config.php:/var/www/html/config/custom.config.php:ro
+    ports:
+      - "${NC_PORT:-8081}:80"
+    networks:
+      - nc-net
+
+  nc-db:
+    image: postgres:16-alpine
+    container_name: nc-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
+      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?must set NC_DB_PASSWORD in .env}
+    volumes:
+      - nc-pg-data:/var/lib/postgresql/data
+    networks:
+      - nc-net
+    # PG 调优(v0.3 §8;假设 16GB host;PoC 机器内存少则按比例下调)
+    command:
+      - postgres
+      - -c
+      - shared_buffers=4GB
+      - -c
+      - effective_cache_size=12GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - max_connections=100
+
+  nc-redis:
+    image: redis:7-alpine
+    container_name: nc-redis
+    restart: unless-stopped
+    networks:
+      - nc-net
+    command:
+      - redis-server
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+
+  # Cron 容器:每 5 分钟跑 NC cron.php(v0.3 §8 cron)
+  nc-cron:
+    image: nextcloud:30-apache
+    container_name: nc-cron
+    restart: unless-stopped
+    depends_on:
+      - nc-db
+      - nc-redis
+    entrypoint: /cron.sh
+    volumes:
+      - ${NC_DATA_DIR:?must set NC_DATA_DIR in .env}:/var/www/html/data
+      - ./config/custom.config.php:/var/www/html/config/custom.config.php:ro
+    networks:
+      - nc-net
+    environment:
+      POSTGRES_HOST: nc-db
+      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
+      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${NC_DB_PASSWORD}
+      REDIS_HOST: nc-redis
+
+volumes:
+  nc-pg-data:
+
+networks:
+  nc-net:
