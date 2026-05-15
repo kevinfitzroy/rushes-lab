@@ -271,17 +271,123 @@ material-storage 是单一自建应用 → **`open_id` 够用**。
 | 临时权限申请通过"钉钉/企微"做 | 临时权限申请走飞书审批 v4 → IT 在 LDAP/AD(待定身份源)加入临时组 |
 | "案例库下载需审批,触发邮件/企微通知" | 改:走飞书审批 v4 + 飞书机器人/IM 推通知(邮件可保留作备份) |
 
-## 13. 待办
+## 13. 实测发现
 
-- [ ] 在飞书开发者后台创建自建应用,拿 `app_id` / `app_secret` / `verification_token` / `encrypt_key`(由用户操作)
-- [ ] 通过审批后台 `devMode=on` 配置 2 个审批模板:
+> **测试上下文:** 2026-05-15,应用 `cli_aa8c58fae5391be7`,域名 `rusheslab.taoxiplan.com`(测试服 `47.109.30.236`)。bridge PoC = FastAPI + Caddy(自动 ACME),代码见 [`feishu-integration/`](../../../feishu-integration/),复跑脚本 [`feishu-integration/scripts/create_approval.py`](../../../feishu-integration/scripts/create_approval.py)。
+>
+> 本节记录"已实测"的事实,**与 §1–12 调研推论分开**,以便后续接手者机械地核 caveat。
+
+### 13.1 接口路径修正
+
+| 操作 | 实测路径 | 备注 |
+| --- | --- | --- |
+| 创建审批定义 | `POST /open-apis/approval/v4/approvals` (**复数**) | §4 表格里写的单数 `/approval` **404 page not found**;请按这里更新认知 |
+| 创建审批实例 | `POST /open-apis/approval/v4/instances` | 与 §4 一致 ✓ |
+| 查询审批实例 | `GET  /open-apis/approval/v4/instances/{instance_code}` | 与 §4 一致 ✓ |
+| 拿 tenant_access_token | `POST /open-apis/auth/v3/tenant_access_token/internal` | §5 一致 ✓ |
+
+### 13.2 创建审批定义最简 payload(可复制)
+
+```json
+{
+  "approval_name": "@i18n@approval_name",
+  "description":   "@i18n@desc_text",
+  "viewers":       [{"viewer_type": "TENANT"}],
+  "form":          {"form_content": "[{\"id\":\"reason\",\"type\":\"textarea\",\"name\":\"@i18n@reason_label\",\"required\":true}]"},
+  "node_list": [
+    {"id": "START"},
+    {"id": "node_approver", "name": "@i18n@approver_label", "node_type": "OR", "approver": [{"type": "Free"}]},
+    {"id": "END"}
+  ],
+  "i18n_resources": [{"locale": "zh-CN", "is_default": true, "texts": [
+    {"key": "@i18n@approval_name",   "value": "rushes-lab PoC 测试审批"},
+    {"key": "@i18n@desc_text",       "value": "PoC 端到端测试模板"},
+    {"key": "@i18n@reason_label",    "value": "申请理由"},
+    {"key": "@i18n@approver_label",  "value": "审批人"}
+  ]}],
+  "process_manager_ids": []
+}
+```
+
+关键约束(踩坑后总结):
+
+- `node_list` **必须含 `{"id":"START"}` 和 `{"id":"END"}` 边界节点**,且 START/END 不需要 `name` / `node_type` / `approver`。缺失则飞书返回 `1390001 node amount not enough`。
+- `form` 是 `{"form_content": "<widgets JSON 压缩转义后的字符串>"}`,**不是**直接的 widget 数组。
+- `approval_name` / `description` 必须以 `@i18n@` 开头,且**总长 ≥ 9 字符**(`@i18n@` 占 6 字符,后接的 key 名 ≥ 3 字符)。
+- `process_manager_ids: []` 空数组可被接受,**不强制必须指定模板管理员**(与官方 Java sample 一致)。
+- `viewers` 至少一项;`viewer_type: TENANT` 全企业可见最简。
+- `approver[].type = "Free"` 表示发起人自选审批人,创建实例时通过 `node_approver_open_id_list` 指定具体审批人,避免模板里硬编码 user_id。
+
+实测结果:`POST /approvals` 200 OK,返回 `approval_code` + `approval_id`。
+
+> **API 化 vs UI 配置的权衡:** §4 推荐"初期 UI 配置,迭代后代码化"。本次测试证明 API 路径**可用**,但 **不**意味着"推荐 API 化"作为长期路径 —— 控件类型 / 节点 / 审批人类型尚未系统性测过,UI 配置仍是模板演化期更稳的选项。
+
+### 13.3 创建审批实例 + 状态查询
+
+`POST /open-apis/approval/v4/instances` payload:
+
+```json
+{
+  "approval_code": "<from §13.2>",
+  "user_id":  "ou_xxxx",
+  "open_id":  "ou_xxxx",
+  "form":     "[{\"id\":\"reason\",\"type\":\"textarea\",\"value\":\"申请理由具体文本\"}]",
+  "node_approver_open_id_list": [
+    {"key": "node_approver", "value": ["ou_xxxx"]}
+  ]
+}
+```
+
+- `form` 在创建实例时同样是 **JSON 字符串**(不是对象);value 字段填用户输入。
+- `node_approver_open_id_list[].key` 必须与模板 `node_list` 中业务节点的 `id` 严格一致(本例 `node_approver`)。
+- 实测响应 200,`status: PENDING`,飞书 App 立即收到审批通知。
+
+### 13.4 状态枚举(已实测 vs 未确认)
+
+| 飞书 status | 实测 | 触发动作 |
+| --- | --- | --- |
+| `PENDING` | ✓ | 创建实例后初始态 |
+| `APPROVED` | ✓ | 审批人在飞书 App 点"同意"后 ≤ 数秒内 `GET /instances/:id` 即可观察到 |
+| `REJECTED` | ✗ 未实测 | 走拒绝流程时验证 |
+| `CANCELED` | ✗ 未实测 | 申请人撤销时验证 |
+| `DELETED` / `HIDDEN` | ✗ 未实测 | 管理员后台操作时验证 |
+
+`timeline[].type` 已观察到 `START` / `PASS`;其他枚举值(可能含 `REJECT`、`CANCEL` 等)**未实测**。
+
+### 13.5 open_id 跨应用域的现象
+
+测试期间出现:**给 `POST /instances` 传入 open_id `ou_075fa520...`(从其他应用的 API 调试台复制),飞书在响应里返回的 open_id 是 `ou_0d8a04338cd3...`,不同字符串**,但实例正确创建、用户正确收到通知。
+
+可观察事实:`open_id` 是 **应用作用域** 标识;一份用户标识在不同应用下值不同。**具体机制(union_id 反查 / user_id 检索 / 其他)未确认**,但现象说明:
+
+- bridge 收到来自上游(material-storage)的 open_id 时,**必须假定是 bridge 这个飞书应用域下的 open_id**,不能是其他应用域的
+- 这条直接影响契约 MS-FB-002(身份解析):上游传给 bridge 的标识应当是 bridge 应用域下的 open_id,或者上游传内部 user_id / email,由 bridge 内部解析为本应用 open_id
+
+### 13.6 事件订阅 webhook 路径(未实测)
+
+本次测试只走通了 url_verification 握手(明文 payload),**未触发任何真实加密事件**。原因:测试应用的事件订阅在飞书后台未配置具体事件类型 + 未发布版本(应用创建人非测试者,需走 owner 审批,本次跳过)。
+
+后续待验证项见 §13.7。
+
+## 13.7 待办(实测层)
+
+按"机械可核"形式列出,做完即勾掉,把对应 caveat 从本文档 / ADR-0001 移除:
+
+- [ ] 在事件订阅页**抄回**实际可勾选的审批相关事件名清单(v1 `approval_instance` 还是 v2 `approval.approval.instance.{approved,rejected,canceled}_v4`;影响 ADR-0001 §3 子决策的实测落地)
+- [ ] 真实加密事件(有 `encrypt` 字段的 outer body)走完一次 callback,验证 `ENCRYPT_KEY` 解密路径
+- [ ] 拒绝流程实测:确认 `status = "REJECTED"` 与 timeline 新增 type 枚举值
+- [ ] 撤销流程实测:`POST /instances/cancel` + 确认 `status = "CANCELED"` 与 timeline 新增 type 枚举值
+
+## 13.8 待办(策略 / 决策层)
+
+- [ ] 在飞书开发者后台创建自建应用(由测试者本人创建,避免 owner 协作 friction),拿 `app_id` / `app_secret` / `verification_token` / `encrypt_key`(用户操作)
+- [ ] 通过 §13.2 payload 或 UI 配置 2 个生产模板:
   - 资源下载审批
   - 临时权限申请
   并把 `approval_code` 提交到方案
-- [ ] 验证 `tenant_access_token` 刷新 + Redis 缓存代码在我方栈下的可行性(PoC,小)
+- [ ] 验证 `tenant_access_token` 刷新 + Redis 缓存代码在我方栈下的可行性
 - [ ] **决策依赖:** 用户身份源(Q2)决定后,通讯录同步策略才能定;若选"飞书通讯录直接作 SoT",此处大幅简化
 - [ ] 决策依赖:文件管理系统(Q1)PoC 决定 C' / B 路线后,审批触发点的接入位置才能定(NC 跳转 vs 全自研 Web)
-- [ ] 写第一篇 ADR:`decisions/0001-feishu-as-approval-channel.md`
 
 ## 14. 参考文档
 
