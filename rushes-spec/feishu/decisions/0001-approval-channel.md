@@ -55,10 +55,18 @@
 - 事件 v2 schema 的字段细节在飞书官方文档(SPA 渲染,WebFetch 不可取)与社区 SDK(adamcavendish/larksuite-oapi-sdk-rs 的 `P2ApprovalInstanceCreatedV4` 等)中存在轻微差异,**实施阶段需要在测试服(`rusheslab.taoxiplan.com`)实测落地后回写到 [`../research/approval-integration.md`](../research/approval-integration.md) §6**。
 - 飞书审批模板字段(form control id)更新会失效旧实例的字段路径,实施侧用"新模板新 `approval_code`"+ 配置文件版本号管理。
 
-## 已知配置脏点(留痕,不阻塞契约)
+## 测试环境运行时配置(参考,非契约稳定面)
 
-- 当前飞书应用后台事件回调地址配的是 `https://rusheslab.taoxiplan.com/api/wecom/callback`,路径里残留 `wecom`(企微遗留)。**实施开始前**需要在飞书开发者后台把它改成 `/api/feishu/callback` 之类、且对应 bridge 实际的路由。这条会作为单独 GitHub issue(`area:feishu` `type:bug`)跟踪。
+下列为测试服(`rusheslab.taoxiplan.com`)当前在飞书开发者后台已配的回调路径,bridge 实施需对应暴露:
+
+| 用途 | 路径 |
+| --- | --- |
+| OAuth 回调(MS-FB-004 SSO) | `/login/callback` |
+| 事件回调(本 ADR 的审批事件) | `/api/lark/callback` |
+
+> 这些路径仅作为现状记录;若 bridge 实施期间需要换 path,需同步改飞书后台,并把新值回写到本节。**敏感配置项**(`APP_ID` / `APP_SECRET` / `ENCRYPT_KEY` / `VERIFICATION_TOKEN`)以**环境变量**注入 bridge,**不入仓库**;变量名约定在 `feishu-integration/` 实施时的 `.env.example` 内冻结。
 
 ## 变更日志
 
 - 2026-05-15: 初版,accepted。
+- 2026-05-15: 测试服事件回调路径已从早期残留的 `/api/wecom/callback` 改为 `/api/lark/callback`,同步更新本 ADR 的"测试环境运行时配置"节,删除原"配置脏点"。
