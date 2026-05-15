@@ -52,8 +52,10 @@
 
 ## 风险与待跟踪事项
 
-- 事件 v2 schema 的字段细节在飞书官方文档(SPA 渲染,WebFetch 不可取)与社区 SDK(adamcavendish/larksuite-oapi-sdk-rs 的 `P2ApprovalInstanceCreatedV4` 等)中存在轻微差异,**实施阶段需要在测试服(`rusheslab.taoxiplan.com`)实测落地后回写到 [`../research/approval-integration.md`](../research/approval-integration.md) §6**。
+- 事件 v2 schema 的字段细节在飞书官方文档(SPA 渲染,WebFetch 不可取)与社区 SDK(adamcavendish/larksuite-oapi-sdk-rs 的 `P2ApprovalInstanceCreatedV4` 等)中存在轻微差异,**实施阶段需要在测试服(`rusheslab.taoxiplan.com`)实测落地后回写到 [`../research/approval-integration.md`](../research/approval-integration.md) §13**。
 - 飞书审批模板字段(form control id)更新会失效旧实例的字段路径,实施侧用"新模板新 `approval_code`"+ 配置文件版本号管理。
+- **子决策 §3 (事件订阅 v2 schema) 的实测窗口推后:** 2026-05-15 端到端 PoC 测试期间,因测试应用所有者非测试者、事件订阅未发布,未触发任何真实加密事件,事件 schema 的 v1 vs v2 选择**未由真实事件验证**。换应用后需要按 [`../research/approval-integration.md`](../research/approval-integration.md) §13.7 的清单核完;若发现飞书后台只支持 v1 schema(或对本企业租户只放开 v1),**回滚此子决策**并在变更日志留痕。
+- **`ENCRYPT_KEY` 仅由 self-test(自加密自解密)验证,尚未由真实加密事件验证。** 同 §13.7 清单,换应用后实测加密 callback 流量。
 
 ## 测试环境运行时配置(参考,非契约稳定面)
 
@@ -70,3 +72,4 @@
 
 - 2026-05-15: 初版,accepted。
 - 2026-05-15: 测试服事件回调路径已从早期残留的 `/api/wecom/callback` 改为 `/api/lark/callback`,同步更新本 ADR 的"测试环境运行时配置"节,删除原"配置脏点"。
+- 2026-05-15: 端到端 PoC 部分通过(创建/查询审批 API + URL verification 握手 ✓);事件订阅 webhook + 真实加密事件解密**未实测**(测试应用所有者协作 friction)。在"风险与待跟踪事项"加入两条 caveat,绑定 [research §13.7](../research/approval-integration.md#137-待办实测层) 的实测清单;**不**调整决策本身的措辞。
