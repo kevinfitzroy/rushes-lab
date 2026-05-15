@@ -73,8 +73,12 @@ OAUTH_CLIENT_SECRET = '<from env, 不入仓库>'
 # 回调 URL(注册到 bridge 的 redirect_uri 白名单,见 §5)
 OAUTH_REDIRECT_URL = '<SEAFILE_BASE_URL>/oauth/callback/'
 
-# OIDC 标准 scope。bridge 仅识别 `openid` 必填;其他 scope 是 OIDC 惯例
-OAUTH_SCOPE = ['openid', 'profile', 'email']
+# OIDC 标准 scope。bridge 仅识别 `openid` 必填;其他 scope 是 OIDC 惯例。
+# 注:本契约 §2 userinfo schema 含 `groups` claim(必返,可空数组),
+# 与父契约 MS-FB-004 [`sso.md`](./sso.md) §5/§7 scope-gated 语义一致 —— **groups 必须显式申请**;
+# 缺 `groups` scope 则 bridge userinfo 不返该字段(Seafile OAUTH_ATTRIBUTE_MAP 也未映射,无副作用,
+# 但请求 scope 仍带上以保持父子契约自洽,见 PR #28 review 一致性瑕疵记录)
+OAUTH_SCOPE = ['openid', 'profile', 'email', 'groups']
 
 # Claim → Seafile 字段映射(11.0+ 标准 schema,见 §1 关键事实第 3 条)
 OAUTH_ATTRIBUTE_MAP = {
@@ -105,7 +109,7 @@ OAUTH_ENABLE_INSECURE_TRANSPORT = False
 
 ```
 1. 用户访问 Seafile,点 "Login with feishu"(或 Seafile 首页 OAuth 按钮)
-2. Seafile 重定向到 bridge /oidc/authorize?...&state=...&scope=openid profile email
+2. Seafile 重定向到 bridge /oidc/authorize?...&state=...&scope=openid profile email groups
 3. bridge 持久化 state,重定向到飞书 /authen/v1/index
 4. 用户在飞书 OAuth 授权,回调 bridge /login/callback?code=...
 5. bridge:换 user_access_token → /authen/v1/user_info → 拿 open_id / union_id / name / email
