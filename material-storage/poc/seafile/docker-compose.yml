@@ -1,0 +1,99 @@
+# Seafile + 本地 MinIO PoC docker-compose(v0.4 主推路线)
+#
+# 落地 v0.3/v0.4 §3.2 Seafile (本地 MinIO 作 S3 backend) 路线分层:
+#   - Seafile 配 S3 backend 指向同机 MinIO
+#   - MinIO 数据物理写到 ZFS dataset(由 ${MINIO_DATA_DIR} 挂载)
+#   - MinIO bucket notification webhook 推 FastAPI 旁路(commit object PUT → 触发 AI/缩略图)
+#
+# ⚠️ Seafile 镜像版本与 S3 backend 配置兼容性:实际部署前 verify 官方文档,
+#    本 compose 是 PoC 骨架,具体 image tag / env 名称可能需要按当下版本微调。
+#
+# 启动:cp ../.env.example ../.env && vim ../.env && docker compose up -d
+# 等首启 init ~5min:docker compose logs -f seafile
+# 关停:docker compose down(数据保留);down -v(连 volumes 一并删)
+
+services:
+  # ─── 本地 MinIO 作 Seafile S3 backend ───
+  seafile-minio:
+    image: minio/minio:latest  # 实际 PoC pin 到具体 tag(例 RELEASE.2025-04-01T00-00-00Z)
+    container_name: seafile-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?must set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must set in .env}
+      # Bucket notification → FastAPI 旁路(env vars 启用 webhook target;
+      # bucket 级 subscription 用 `mc event add` 在 init 阶段配,见 README)
+      MINIO_NOTIFY_WEBHOOK_ENABLE_seafile: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_seafile: ${MINIO_WEBHOOK_ENDPOINT:-http://host.docker.internal:8090/}
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+    volumes:
+      - ${MINIO_DATA_DIR:?must set in .env}:/data
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"      # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # MinIO Console (admin UI)
+    networks:
+      - seafile-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ─── Seafile CE (含 seahub web + seaf-server + seafdav + thumbnail) ───
+  # 官方推荐 docker-compose 拆分多容器(seafile / mysql / memcached);本 PoC 用 all-in-one 简化。
+  # 生产部署再拆分。
+  seafile:
+    image: seafileltd/seafile-mc:13.0  # PoC tag,实际部署 pin patch 版本
+    container_name: seafile
+    restart: unless-stopped
+    depends_on:
+      seafile-minio:
+        condition: service_healthy
+      seafile-mysql:
+        condition: service_started
+    environment:
+      DB_HOST: seafile-mysql
+      DB_ROOT_PASSWD: ${SEAFILE_DB_PASSWORD:?must set in .env}
+      TIME_ZONE: Asia/Shanghai
+      SEAFILE_ADMIN_EMAIL: ${SEAFILE_ADMIN_EMAIL:?must set in .env}
+      SEAFILE_ADMIN_PASSWORD: ${SEAFILE_ADMIN_PASSWORD:?must set in .env}
+      SEAFILE_SERVER_HOSTNAME: ${SEAFILE_HOST:?must set in .env}
+      SEAFILE_SERVER_LETSENCRYPT: "false"
+      # ─── S3 backend 配置(env 风格,实际版本需 verify;若不支持 env 注入,
+      #     init 后改 /shared/seafile/conf/seafile.conf 的 [storage] / [s3] 节)
+      # SEAFILE_STORAGE_TYPE: s3
+      # SEAFILE_S3_BUCKET: seafile-blocks
+      # SEAFILE_S3_KEY_ID: ${MINIO_ROOT_USER}
+      # SEAFILE_S3_KEY: ${MINIO_ROOT_PASSWORD}
+      # SEAFILE_S3_HOST: seafile-minio:9000
+      # SEAFILE_S3_USE_HTTPS: "false"
+      # SEAFILE_S3_PATH_STYLE_REQUEST: "true"
+    volumes:
+      - seafile-data:/shared
+      - ./config/seahub_settings.override.py:/shared/seafile/conf/seahub_settings.override.py:ro
+    ports:
+      - "${SEAFILE_PORT:-8083}:80"
+    networks:
+      - seafile-net
+
+  seafile-mysql:
+    image: mysql:8.0
+    container_name: seafile-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${SEAFILE_DB_PASSWORD:?must set in .env}
+    volumes:
+      - seafile-mysql-data:/var/lib/mysql
+    networks:
+      - seafile-net
+
+volumes:
+  seafile-data:
+  seafile-mysql-data:
+
+networks:
+  seafile-net:

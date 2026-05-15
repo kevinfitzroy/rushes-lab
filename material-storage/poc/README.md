@@ -18,9 +18,14 @@ poc/
 ├── .env.example              敏感变量模板;运行前 cp 成 .env(.gitignore 已覆盖)
 ├── dataset-gen/              合成数据集生成器(issue #11)
 ├── nc/                       Nextcloud 路线 docker-compose + 配置(issue #12)
-├── ocis/                     oCIS 路线 docker-compose + 配置(issue #13,依赖 bridge OIDC 就绪)
+├── seafile/                  Seafile + 本地 MinIO 路线(v0.4 主推,issue [PoC-Seafile])
+├── ocis/                     oCIS 路线 docker-compose + 配置(v0.4 降级 P1,issue #13 deferred)
 └── tests/                    通用测试脚本(inotify watcher 等,issue #14 一部分)
 ```
+
+## v0.4 路线变化(2026-05-15)
+
+[v0.4 file-management-system](../../rushes-spec/material-storage/research/file-management-system.md) 把首批 PoC 改为 **NC + Seafile(本地 MinIO 作 S3 backend)**;oCIS 全部 backend 降级 P1。本目录 `seafile/` 子目录是 v0.4 加。
 
 ## 前置条件
 
