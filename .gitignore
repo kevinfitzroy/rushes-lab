@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统临时文件
+Thumbs.db
+desktop.ini
+
+# 通用日志 / 缓存(具体语言/框架的 ignore 项放在各项目目录内)
+*.log
+.cache/
+.tmp/
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
