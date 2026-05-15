@@ -19,7 +19,7 @@
 | --- | --- | --- | --- |
 | Q1 | **文件管理系统选型**:用什么承载视频素材的存储/检索/分享/权限 | 草案 v0.1,等用户敲定 NC 路线 | [`research/file-management-system.md`](./research/file-management-system.md) |
 | Q2 | **用户身份源**:LDAP/AD vs 企微通讯录 SoT vs 文件系统自带用户 vs 自建用户表 | 阻塞于 Q1 | — |
-| Q3 | **飞书审批对接**:飞书审批引擎 vs 自建应用消息卡片 vs 服务端 API | 待调研(用户已有初步结论) | `research/feishu-approval.md`(待建) |
+| Q3 | **飞书审批对接**:原生审批 v4 vs 三方实例同步 | 草案 v0.1(推荐原生 v4) | [`research/feishu-approval.md`](./research/feishu-approval.md) |
 | Q4 | 后端技术栈是否锁定 Python (FastAPI + Celery) | 暂列,优先级低 | — |
 
 依赖关系:Q1 → Q2 → Q3。Q1 决定 Q2 的候选集合,Q2 决定 Q3 的对接路径。
