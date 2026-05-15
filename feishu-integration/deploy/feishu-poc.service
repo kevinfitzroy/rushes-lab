@@ -1,0 +1,18 @@
+[Unit]
+Description=feishu-integration PoC (FastAPI on uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/feishu-poc
+EnvironmentFile=/opt/feishu-poc/.env
+ExecStart=/opt/feishu-poc/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080 --log-level info
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
