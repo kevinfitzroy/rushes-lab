@@ -1,0 +1,61 @@
+# oCIS PoC docker-compose(骨架,待飞书 bridge OIDC 实施完成 后才能完整跑)
+#
+# 当前状态:
+#   - 7.0.x 镜像已发布,docker-compose 骨架可用
+#   - storage backend 走 decomposedfs 本地路径(等待 PoC 阶段把它指向 NFS-mounted 目录)
+#   - OIDC 配置依赖 feishu-integration 的 bridge OIDC endpoint
+#     (见 rushes-spec/feishu/decisions/0002-bridge-as-oidc-provider.md)
+#
+# 启动前置(待飞书 bridge OIDC 就绪后):
+#   1. bridge 暴露 /oidc/.well-known/openid-configuration 等 5 个端点
+#   2. bridge 静态配置中已注册 ocis-poc client(client_id + client_secret + redirect_uri)
+#   3. 本机能访问 bridge 的 OIDC issuer URL
+#
+# 启动:
+#   cp ../.env.example ../.env && vim ../.env
+#   docker compose up -d
+#
+# 关停:
+#   docker compose down -v
+
+services:
+  ocis:
+    image: owncloud/ocis:7.0.1
+    container_name: ocis
+    restart: unless-stopped
+    user: "0:0"            # 让 oCIS 能写 xattr;生产环境改为非 root
+    entrypoint:
+      - /bin/sh
+    command:
+      - -c
+      - "ocis init || true; ocis server"
+    environment:
+      OCIS_URL: ${OCIS_URL:?must set OCIS_URL in .env}
+      OCIS_INSECURE: "true"            # PoC only — 自签证书 / http
+      OCIS_LOG_LEVEL: warning
+      OCIS_LOG_PRETTY: "true"
+
+      # ─── OIDC ─── (依赖 feishu bridge,见上方注释)
+      OCIS_OIDC_ISSUER: ${OCIS_OIDC_ISSUER:?must set OCIS_OIDC_ISSUER in .env}
+      WEB_OIDC_CLIENT_ID: ${OCIS_OIDC_CLIENT_ID:-ocis-poc}
+      # WEB_OIDC_CLIENT_SECRET 仅当 bridge 要求 confidential client 时设;
+      # PKCE 公共 client 模式不需要 secret
+      # WEB_OIDC_CLIENT_SECRET: ${OCIS_OIDC_CLIENT_SECRET}
+
+      # ─── storage backend ───
+      # 默认 decomposedfs。本地存储路径 → 后续改 NFS mount
+      # 见 rushes-spec/material-storage/research/file-management-system.md §9
+      OCIS_DECOMPOSEDFS_ROOT: /var/lib/ocis/storage/users
+      # TODO: PoC 实测 xattr 行为后,在此添加 NFS-specific 参数
+      # OCIS_DECOMPOSEDFS_METADATA_BACKEND: xattrs(默认)
+
+      # ─── admin / proxy ───
+      # PROXY_AUTOPROVISION_ACCOUNTS=true 让首次 OIDC 登录自动建账号(JIT)
+      PROXY_AUTOPROVISION_ACCOUNTS: "true"
+
+    volumes:
+      # /var/lib/ocis 包含 storage + metadata;PoC 简化挂本地目录,生产换 NFS mount
+      - ${OCIS_DATA_DIR:?must set OCIS_DATA_DIR in .env}:/var/lib/ocis
+
+    ports:
+      - "${OCIS_PORT:-8082}:9200"
