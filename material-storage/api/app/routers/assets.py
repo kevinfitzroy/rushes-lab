@@ -94,10 +94,10 @@ async def complete_upload(
     folder = await db.get(Folder, folder_id)
     if folder:
         permissions = request.app.state.permissions
+        # Phase B-2 next iter:model 简化后无需 parent_is_sensitive 参数
         await permissions.bootstrap_asset(
             asset_id=str(asset.id),
             parent_folder_id=str(folder.id),
-            parent_is_sensitive=folder.is_sensitive,
         )
 
     return AssetOut.model_validate(asset)
@@ -138,20 +138,22 @@ async def get_download_link(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> DownloadLinkOut:
-    """普通 asset:签 presigned GET URL;敏感:Phase B-2.5 改代理 stream。"""
+    """签 presigned GET URL。
+
+    model 简化 v2 后:不再二分 sensitive/普通 folder;所有 asset 同一签 URL TTL。
+    权限粒度统一通过 OpenFGA(`can_download` = `member or explicit_downloader`)。
+    Phase B-2 next iter 会加 OpenFGA `check` enforce。
+    """
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(404, "asset not found")
 
-    folder = await db.get(Folder, asset.folder_id)
-    if not folder:
-        raise HTTPException(500, "asset parent folder missing")
-
     settings = get_settings()
     presign = request.app.state.presign
-    ttl = settings.presigned_sensitive_ttl_seconds if folder.is_sensitive else settings.presigned_normal_ttl_seconds
+    ttl = settings.presigned_normal_ttl_seconds
     url = presign.sign_get_url(asset.minio_bucket, asset.minio_key, ttl)
-    return DownloadLinkOut(url=url, expires_in=ttl, is_sensitive=folder.is_sensitive)
+    # is_sensitive 字段保留(business labeling),但不影响行为
+    return DownloadLinkOut(url=url, expires_in=ttl, is_sensitive=False)
 
 
 async def _project_bucket(db: AsyncSession, project_id: uuid.UUID) -> str:

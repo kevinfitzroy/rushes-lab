@@ -175,9 +175,28 @@ http://localhost:8089               # HTTP API(自检 / Postman 等)
 | 业务后端 SDK 集成 | 🟡 Sketch 给出,Phase B 实际编码 |
 | Playground UI 可访问(SSH tunnel) | ✅ |
 
+## v2 — 简化模型(2026-05-16 next iter)
+
+业务侧反馈:**不需要 sensitive/普通二分**;一切由角色驱动 + 申请补足。
+
+Model v2 改:
+- 删 `sensitive_folder` type → 统一 `folder` type
+- 临时下载 grant `explicit_downloader` 移到 **project 级 + asset 级 双层**:
+  - **project 级**:批量场景(实习生 30d、一次性批量审批整 project)
+  - **asset 级**:单文件审批(每次申请一个 file,审批通过临时下载)
+- material-storage backend 新增 `project.visibility` DB 字段(`public` / `private` / `stealth`)
+  控制 metadata 列表可见性(不进 OpenFGA model)
+
+**v2 PoC 通过:1/1 test + 29/29 check**,覆盖:
+- alice (org admin) 全权
+- bob (project editor) project 内全权
+- charlie (file-level grant) grant 内/外 边界
+- david (project-level grant 30d) member=false 但 can_download=true(`from parent or explicit_downloader`)
+
 ## 关联
 
 - ADR-0005 §11.2 Gap 1(presigned URL 撤销)+ Gap 5(权限模型)
+- ADR-0006 §1 + §10(权限引擎 + Gap update)
 - OpenFGA: https://openfga.dev / Apache 2.0 / Auth0 + CNCF
 - Pigsty MinIO PoC: `../minio/`
-- Phase B 技术选型 ADR(待起草):权限引擎选 OpenFGA / 业务后端 framework / 飞书 H5 入口
+- material-storage api Phase B-2 配套:`../api/`

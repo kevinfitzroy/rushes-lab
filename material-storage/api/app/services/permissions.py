@@ -76,22 +76,28 @@ class PermissionsService:
         )
         return resp.allowed
 
-    # ─── grant 敏感访问 ──────────────────────────────────────────────────────
-    async def grant_sensitive_access(
+    # ─── grant 临时下载(model 简化 v2 后,通用 project / asset 级)──────────
+    async def grant_explicit_download(
         self,
         user_id: str,
-        sensitive_folder_id: str,
+        object_type: Literal["project", "asset"],
+        object_id: str,
         duration_seconds: int,
     ) -> None:
-        """飞书审批通过后写 time-limited grant;过期自动失效(无 cron)。"""
+        """审批通过后写 time-limited download grant;过期自动失效(无 cron)。
+
+        object_type:
+          - "project" → 批量下载整个 project(如实习生 30d / 一次性批量审批)
+          - "asset"   → 单文件下载(细粒度,每次审批一个)
+        """
         grant_time = datetime.now(timezone.utc).isoformat()
         await self._client.write(
             ClientWriteRequest(
                 writes=[
                     ClientTuple(
                         user=f"user:{user_id}",
-                        relation="explicit_viewer",
-                        object=f"sensitive_folder:{sensitive_folder_id}",
+                        relation="explicit_downloader",
+                        object=f"{object_type}:{object_id}",
                         condition=RelationshipCondition(
                             name="non_expired_grant",
                             context={
@@ -103,22 +109,27 @@ class PermissionsService:
                 ]
             )
         )
-        log.info("granted sensitive access user=%s folder=%s ttl=%ds",
-                 user_id, sensitive_folder_id, duration_seconds)
+        log.info("granted explicit_download user=%s %s=%s ttl=%ds",
+                 user_id, object_type, object_id, duration_seconds)
 
-    async def revoke_sensitive_access(self, user_id: str, sensitive_folder_id: str) -> None:
+    async def revoke_explicit_download(
+        self,
+        user_id: str,
+        object_type: Literal["project", "asset"],
+        object_id: str,
+    ) -> None:
         await self._client.write(
             ClientWriteRequest(
                 deletes=[
                     ClientTuple(
                         user=f"user:{user_id}",
-                        relation="explicit_viewer",
-                        object=f"sensitive_folder:{sensitive_folder_id}",
+                        relation="explicit_downloader",
+                        object=f"{object_type}:{object_id}",
                     )
                 ]
             )
         )
-        log.info("revoked sensitive access user=%s folder=%s", user_id, sensitive_folder_id)
+        log.info("revoked explicit_download user=%s %s=%s", user_id, object_type, object_id)
 
     # ─── 离职闭环 ────────────────────────────────────────────────────────────
     async def revoke_user_completely(self, user_id: str) -> int:
@@ -157,18 +168,17 @@ class PermissionsService:
     async def bootstrap_folder(
         self,
         folder_id: str,
-        parent_type: Literal["project", "folder", "sensitive_folder"],
+        parent_type: Literal["project", "folder"],
         parent_id: str,
-        is_sensitive: bool,
     ) -> None:
-        folder_type = "sensitive_folder" if is_sensitive else "folder"
+        """新建 folder 写 parent tuple(model 简化 v2 后,统一 folder type)。"""
         await self._client.write(
             ClientWriteRequest(
                 writes=[
                     ClientTuple(
                         user=f"{parent_type}:{parent_id}",
                         relation="parent",
-                        object=f"{folder_type}:{folder_id}",
+                        object=f"folder:{folder_id}",
                     )
                 ]
             )
@@ -178,14 +188,13 @@ class PermissionsService:
         self,
         asset_id: str,
         parent_folder_id: str,
-        parent_is_sensitive: bool,
     ) -> None:
-        parent_type = "sensitive_folder" if parent_is_sensitive else "folder"
+        """新建 asset 写 parent tuple(parent 永远是 folder)。"""
         await self._client.write(
             ClientWriteRequest(
                 writes=[
                     ClientTuple(
-                        user=f"{parent_type}:{parent_folder_id}",
+                        user=f"folder:{parent_folder_id}",
                         relation="parent",
                         object=f"asset:{asset_id}",
                     )

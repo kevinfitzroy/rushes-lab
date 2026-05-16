@@ -27,6 +27,7 @@ class ProjectOut(ORMModel):
     description: str | None
     organization_id: uuid.UUID
     minio_bucket: str
+    visibility: str       # public / private / stealth
     is_archived: bool
     created_at: datetime
 

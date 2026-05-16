@@ -78,6 +78,11 @@ class Project(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None]
     minio_bucket: Mapped[str] = mapped_column(String(63), nullable=False)
+    # 元数据可见性(项目列表过滤):
+    #   public  — org member 都看到 metadata,可申请加入
+    #   private — 只 project member 看到(default)
+    #   stealth — 完全隐藏,只 admin 主动邀请(connection 知 code 输入申请)
+    visibility: Mapped[str] = mapped_column(String(16), default="private", nullable=False)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     organization: Mapped[Organization] = relationship(back_populates="projects")
@@ -96,6 +101,8 @@ class Folder(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     minio_prefix: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Deprecated(Phase B-2 next iter):OpenFGA model 不再区分 sensitive/普通 folder type;
+    # 字段保留为 future flexibility(可作业务标签),但不驱动权限。可下个 migration drop。
     is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="folders")
