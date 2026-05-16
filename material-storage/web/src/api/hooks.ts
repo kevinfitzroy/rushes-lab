@@ -41,9 +41,13 @@ export const useCreateProject = () => {
       code: string;
       name: string;
       description?: string;
-      organization_id: string;
+      organization_id?: string;       // 留空 → 后端自动从 user/default 推
       minio_bucket: string;
-    }) => (await http.post<Project>('/api/v1/projects', body)).data,
+    }) => {
+      const { organization_id, ...rest } = body;
+      const payload = organization_id ? { ...rest, organization_id } : rest;
+      return (await http.post<Project>('/api/v1/projects', payload)).data;
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 };

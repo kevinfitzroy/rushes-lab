@@ -105,17 +105,22 @@ class FeishuOIDCService:
         user = res.scalar_one_or_none()
 
         if user is None:
+            import uuid as _uuid
+            default_org = self._settings.default_organization_id
+            org_uuid = _uuid.UUID(default_org) if default_org else None
             user = User(
                 feishu_open_id=open_id,
                 feishu_union_id=userinfo.get("union_id"),
                 name=userinfo.get("name") or userinfo.get("en_name") or "unknown",
                 email=userinfo.get("email") or userinfo.get("enterprise_email"),
                 is_active=True,
+                organization_id=org_uuid,
             )
             db.add(user)
             await db.commit()
             await db.refresh(user)
-            log.info("created user from feishu open_id=%s name=%s", open_id, user.name)
+            log.info("created user from feishu open_id=%s name=%s org=%s",
+                     open_id, user.name, org_uuid)
         else:
             # 同步可能变化的字段
             changed = False
@@ -129,6 +134,11 @@ class FeishuOIDCService:
                 changed = True
             if not user.feishu_union_id and userinfo.get("union_id"):
                 user.feishu_union_id = userinfo["union_id"]
+                changed = True
+            # backfill organization_id(老 user 没绑 org)
+            if user.organization_id is None and self._settings.default_organization_id:
+                import uuid as _uuid
+                user.organization_id = _uuid.UUID(self._settings.default_organization_id)
                 changed = True
             if changed:
                 await db.commit()

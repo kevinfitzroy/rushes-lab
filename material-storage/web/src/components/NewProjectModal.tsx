@@ -11,7 +11,7 @@ interface Props {
   me: Me;
 }
 
-export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
+export function NewProjectModal({ open, onClose, onCreated, me: _me }: Props) {
   const create = useCreateProject();
   const [form] = Form.useForm();
   const { message } = App.useApp();
@@ -34,7 +34,8 @@ export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
             code: v.code.trim(),
             name: v.name.trim(),
             description: v.description?.trim() || undefined,
-            organization_id: v.organization_id,
+            // organization_id 后端自动从 user / default 推导
+            organization_id: '',
             minio_bucket: v.minio_bucket || 'ms-dev',
           });
           message.success(`项目 "${p.name}" 已创建`);
@@ -47,11 +48,7 @@ export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
       }}
     >
       <Form form={form} layout="vertical"
-            initialValues={{
-              organization_id: me.organization_id ?? '',
-              minio_bucket: 'ms-dev',
-              visibility: 'private',
-            }}>
+            initialValues={{ minio_bucket: 'ms-dev' }}>
         <Form.Item name="name" label="项目名称"
                    rules={[{ required: true, max: 255 }]}>
           <Input placeholder="2026 春季婚礼策划" />
@@ -61,19 +58,16 @@ export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
                      required: true, min: 2, max: 64,
                      pattern: /^[a-z0-9][a-z0-9-]*$/,
                      message: '小写字母/数字/-,以字母数字开头',
-                   }]}>
+                   }]}
+                   extra="提交后不可改;影响 MinIO 路径前缀">
           <Input placeholder="wedding-2026-spring" />
         </Form.Item>
-        <Form.Item name="description" label="描述">
-          <Input.TextArea rows={3} maxLength={500} showCount placeholder="可选" />
-        </Form.Item>
-        <Form.Item name="organization_id" label="组织 ID(默认你所在组织)"
-                   rules={[{ required: true }]}>
-          <Input disabled={!!me.organization_id} />
+        <Form.Item name="description" label="描述(可选)">
+          <Input.TextArea rows={3} maxLength={500} showCount />
         </Form.Item>
         <Form.Item name="minio_bucket" label="MinIO bucket"
                    rules={[{ required: true, max: 63 }]}
-                   extra="存储桶名;PoC 统一用 ms-dev">
+                   extra="PoC 统一 ms-dev">
           <Select options={[
             { label: 'ms-dev(开发环境)', value: 'ms-dev' },
           ]} />

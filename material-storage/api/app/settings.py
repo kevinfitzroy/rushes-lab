@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # ─── audit 留存 ───────────────────────────────────────────────────────────
     audit_retention_days: int = 365
 
+    # ─── 默认组织 ─────────────────────────────────────────────────────────────
+    # PoC 单 org 场景:新 OIDC 登录的 user 自动绑入该 org;
+    # create_project 时未指定 organization_id 也用此值
+    default_organization_id: str | None = Field(
+        None, description="UUID;留空则 user.organization_id 必须显式设置")
+
 
 # 单例(import 时 lazy 创建)
 _settings: Settings | None = None
