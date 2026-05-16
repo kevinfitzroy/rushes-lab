@@ -1,0 +1,36 @@
+services:
+  pigsty-minio:
+    image: pgsty/minio:latest
+    container_name: poc-pigsty-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin-poc-2026  # PoC only, rotate before prod
+      MINIO_NOTIFY_WEBHOOK_ENABLE_RUSHES: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_RUSHES: "http://poc-webhook:8000/minio-event"
+    ports:
+      - "6100:9000"   # S3 API(阿里云安全组开放 6000-7000,见 ADR-0003 F-6)
+      - "6101:9001"   # Web Console
+    volumes:
+      - ./data:/data
+    networks:
+      - poc-net
+
+  poc-webhook:
+    # 用 stdlib http.server,不依赖 pip install,避免阿里云走 dockerhub 拉 wheel 慢
+    image: python:3-alpine
+    container_name: poc-webhook
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./webhook:/app
+    command: python /app/main.py
+    expose:
+      - "8000"
+    networks:
+      - poc-net
+
+networks:
+  poc-net:
+    driver: bridge
