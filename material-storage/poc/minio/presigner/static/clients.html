@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Rushes Lab PoC — 桌面客户端下载与配置</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; max-width: 960px; color: #222; }
+    h1 { font-size: 22px; }
+    h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 2px solid #e5e7eb; font-size: 18px; }
+    h3 { margin-top: 24px; font-size: 16px; color: #1f2937; }
+    code, pre { background: #f3f4f6; border-radius: 4px; }
+    code { padding: 2px 6px; font-size: 13px; }
+    pre { padding: 12px 16px; overflow-x: auto; font-size: 13px; }
+    a { color: #1d4ed8; }
+    a.btn { display: inline-block; padding: 6px 14px; background: #1d4ed8; color: #fff; border-radius: 6px; text-decoration: none; margin: 4px 6px 4px 0; font-size: 13px; }
+    a.btn:hover { background: #1e40af; }
+    a.btn-secondary { background: #6b7280; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #f9fafb; }
+    .nav { margin-bottom: 24px; font-size: 13px; }
+    .nav a { margin-right: 16px; }
+    .note { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 10px 14px; margin: 12px 0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="/uppy/">← uppy 浏览器上传</a>
+    <a href="/console/" target="_blank">MinIO Console</a>
+    <a href="/health">presigner /health</a>
+  </div>
+
+  <h1>桌面客户端 — Mac / Windows / Linux 跨平台,续传支持</h1>
+
+  <p>两套推荐方案:</p>
+  <ul>
+    <li><b>Cyberduck</b>(GUI,小白友好,Mac/Win,断点续传内置)— 拖拽即用</li>
+    <li><b>rclone</b>(CLI,工业级,跨平台,multipart + 多线程 + 续传)— 适合脚本 / 大批量</li>
+  </ul>
+
+  <h2>账号</h2>
+  <table>
+    <tr><th>Access Key</th><th>Secret Key</th><th>权限</th></tr>
+    <tr><td><code>alice</code></td><td><code>alicesecret-poc-2026-32chars-pad</code></td><td>consoleAdmin(全 bucket RW)</td></tr>
+    <tr><td><code>bob</code></td><td><code>bobsecret-poc-2026-32chars-padded</code></td><td>bob-limited(只读 public + 写 incoming/bob/)</td></tr>
+  </table>
+  <p>Endpoint:<code>https://rusheslab.taoxiplan.com</code> Region:<code>us-east-1</code></p>
+
+  <h2>方案 A:Cyberduck(GUI)</h2>
+
+  <h3>1. 下载 Cyberduck</h3>
+  <p>
+    <a class="btn" href="https://update.cyberduck.io/Cyberduck-9.1.4.43059.zip" target="_blank">下载 macOS</a>
+    <a class="btn" href="https://update.cyberduck.io/windows/Cyberduck-Installer-9.1.4.43059.exe" target="_blank">下载 Windows</a>
+    <a class="btn btn-secondary" href="https://cyberduck.io/" target="_blank">官网 / 其它版本</a>
+  </p>
+
+  <h3>2. 下载我们的连接 profile(预填 endpoint + region)</h3>
+  <p>
+    <a class="btn" href="./poc-minio.cyberduckprofile" download>下载 poc-minio.cyberduckprofile</a>
+  </p>
+  <p>双击 <code>.cyberduckprofile</code> 文件,Cyberduck 自动导入 profile。</p>
+
+  <h3>3. 新建连接</h3>
+  <p>Cyberduck 顶部 <b>+</b> 按钮 → 选 <b>Rushes Lab PoC MinIO</b>(从 profile 导入的)→ 输入 access key + secret key → 连接。</p>
+
+  <h3>4. 续传 / 大文件</h3>
+  <p>Cyberduck 上传大文件时自动 multipart;断网或关闭后重连,会从中断 part 续传(右键传输列表 → <b>Resume</b>)。</p>
+
+  <div class="note">
+    <b>⚠️ 第一次连接</b>:Cyberduck 可能弹 "Disk profile" 安全确认,选 Allow。
+  </div>
+
+  <h2>方案 B:rclone(CLI)</h2>
+
+  <h3>1. 安装 rclone</h3>
+  <pre>
+# macOS (Homebrew)
+brew install rclone
+
+# Windows (Scoop / Chocolatey)
+scoop install rclone
+# 或:choco install rclone
+
+# 直装(任一系统):https://rclone.org/downloads/</pre>
+
+  <h3>2. 下载 config snippet</h3>
+  <p>
+    <a class="btn" href="./rclone-poc.conf" download>下载 rclone-poc.conf</a>
+  </p>
+  <p>拷贝其中 <code>[poc-minio]</code> 段到 rclone 配置文件:</p>
+  <ul>
+    <li>macOS / Linux:<code>~/.config/rclone/rclone.conf</code></li>
+    <li>Windows:<code>%APPDATA%\rclone\rclone.conf</code></li>
+  </ul>
+  <p>或直接命令:<code>rclone config</code>(交互式)。</p>
+
+  <h3>3. 常用命令</h3>
+  <pre>
+# 列 bucket
+rclone ls poc-minio:
+
+# 上传大文件(进度条 + 自动 multipart + 续传)
+rclone copy ~/Movies/big.mp4 poc-minio:incoming/alice/ --progress
+
+# 下载
+rclone copy poc-minio:incoming/alice/big.mp4 ./ --progress
+
+# 同步整个目录(双向 sync 用 bisync,单向用 sync/copy)
+rclone copy ~/material poc-minio:incoming/alice/material --progress --transfers=4
+
+# 断网恢复:rclone 自动检测已上传 part,重连后续传(默认 retry 3 次)
+# 强行 resume:--ignore-existing 跳过已有,--immutable 标已传部分</pre>
+
+  <h3>4. 挂载为本地盘(可选)</h3>
+  <pre>
+# macOS(先 brew install macfuse,且系统设置允许 kext)
+rclone mount poc-minio:incoming /Volumes/poc-incoming --vfs-cache-mode writes &
+
+# Windows(先装 WinFsp:https://winfsp.dev/)
+rclone mount poc-minio:incoming X: --vfs-cache-mode writes</pre>
+
+  <h2>方案 C:MinIO 官方 CLI (mc) — 最纯</h2>
+  <pre>
+# 安装(任一)
+brew install minio/stable/mc          # macOS
+scoop install mc                      # Windows
+# 或直装 https://min.io/docs/minio/linux/reference/minio-mc.html
+
+# 配 alias
+mc alias set poc https://rusheslab.taoxiplan.com alice alicesecret-poc-2026-32chars-pad
+
+# 命令
+mc ls poc/
+mc cp big.mp4 poc/incoming/alice/
+mc cp poc/incoming/alice/big.mp4 ./
+# mc 不天然有 progress + 续传 UX,大文件推荐用 rclone 或 Cyberduck</pre>
+
+  <h2>选型建议</h2>
+  <table>
+    <tr><th>场景</th><th>推荐</th></tr>
+    <tr><td>每日上传 / 拖拽 / 多人非技术用</td><td>Cyberduck(GUI 直观)</td></tr>
+    <tr><td>大批量 / 定时 sync / 脚本</td><td>rclone(CLI 强大,可 cron)</td></tr>
+    <tr><td>临时挂载本地盘剪辑</td><td>rclone mount(macFUSE/WinFsp)</td></tr>
+    <tr><td>纯命令检查 / admin</td><td>mc(MinIO 官方)</td></tr>
+  </table>
+
+  <h2>常见问题</h2>
+  <h3>SSL 证书警告?</h3>
+  <p>rusheslab.taoxiplan.com 是 Let's Encrypt 真证书,**不应有警告**。如有(可能旧浏览器/客户端 CA bundle 老),Cyberduck 可点 "Allow once",rclone 加 <code>--no-check-certificate</code>(不推荐生产)。</p>
+
+  <h3>权限 403?</h3>
+  <p>bob 只能写 <code>incoming/bob/</code>,不能写 <code>incoming/alice/</code> / <code>private-*/</code>。alice 全权。</p>
+
+  <h3>上传卡死?</h3>
+  <p>rclone:<code>--low-level-retries=10 --retries=5</code> 多重试;Cyberduck:右键传输 → Resume。MinIO 端 multipart 不完成不入 bucket,失败可 abort 清理。</p>
+</body>
+</html>

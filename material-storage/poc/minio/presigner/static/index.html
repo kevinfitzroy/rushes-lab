@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Pigsty MinIO PoC — uppy 大文件上传</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+
+  <!-- uppy v4 CSS(jsdelivr@npm)。原 transloadit CDN /uppy/v4.16.1/* 实测 404,详 P-16 -->
+  <link href="https://cdn.jsdelivr.net/npm/@uppy/core@4/dist/style.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@uppy/dashboard@4/dist/style.min.css" rel="stylesheet">
+
+  <style>
+    body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; max-width: 960px; }
+    h1 { font-size: 20px; }
+    .info { background: #f4f4f4; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
+    code { background: #eee; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    .log { margin-top: 24px; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-family: Menlo, monospace; font-size: 12px; white-space: pre-wrap; min-height: 100px; max-height: 320px; overflow-y: auto; border-radius: 6px; }
+    #status { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #fef3c7; color: #92400e; font-size: 12px; }
+    #status.ready { background: #d1fae5; color: #065f46; }
+    #status.error { background: #fee2e2; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <h1>Pigsty MinIO PoC — uppy 大文件 multipart 上传 <span id="status">加载中…</span></h1>
+  <p style="font-size:13px; margin:-6px 0 16px;">→ <a href="./clients.html">桌面客户端(Cyberduck / rclone / mc)+ 配置下载</a></p>
+  <div class="info">
+    <p>ADR-0005 Phase A.2 验证(§11.2 Gap 2)。后端 = MinIO,bucket = <code>incoming/</code>,prefix = <code>uppy-test/</code>。</p>
+    <p>uppy AwsS3 plugin → 走 5 endpoint 协议(create / signPart / complete / abort / listParts)。Backend = 自实现 Python presigner(stdlib http.server + boto3)。</p>
+    <p>测试建议:1) 小文件(< 10 MB)看链路;2) 中文件(50-500 MB)看 multipart 自动分段;3) 大文件(≥ 5 GB)看断网恢复 / abort 清理。</p>
+  </div>
+
+  <div id="uppy"></div>
+
+  <h3>事件日志</h3>
+  <div id="log" class="log">[等待 uppy module 加载…]</div>
+
+  <script type="module">
+    // P-16 修订:原 https://releases.transloadit.com/uppy/v4.16.1/uppy.min.mjs 404(transloadit CDN 不发布 v4 bundle)
+    // 改用 esm.sh 反代 npm 包,@4 = 最新 4.x major(实测当前 4.5.3)
+    import Uppy from "https://esm.sh/@uppy/core@4"
+    import Dashboard from "https://esm.sh/@uppy/dashboard@4"
+    import AwsS3 from "https://esm.sh/@uppy/aws-s3@4"
+
+    const logEl = document.getElementById("log")
+    const statusEl = document.getElementById("status")
+    function log(msg, data) {
+      const t = new Date().toISOString().slice(11, 23)
+      logEl.textContent += `\n[${t}] ${msg}${data ? " " + JSON.stringify(data).slice(0, 200) : ""}`
+      logEl.scrollTop = logEl.scrollHeight
+    }
+    function setStatus(text, cls) {
+      statusEl.textContent = text
+      statusEl.className = cls || ""
+    }
+
+    window.addEventListener("error", (e) => {
+      log("window.onerror", { msg: e.message, src: e.filename + ":" + e.lineno })
+      setStatus("脚本错误,看日志", "error")
+    })
+
+    try {
+      logEl.textContent = "[uppy 模块加载成功,初始化 Dashboard...]"
+      setStatus("初始化…", "")
+
+      const uppy = new Uppy({
+        autoProceed: false,
+        restrictions: { maxNumberOfFiles: 5 },
+        debug: false,
+      })
+        .use(Dashboard, {
+          inline: true,
+          target: "#uppy",
+          proudlyDisplayPoweredByUppy: false,
+          showProgressDetails: true,
+          height: 420,
+          note: "拖拽 / 点击选文件;100 MiB 以上自动 multipart(uppy AwsS3 plugin)。",
+        })
+        .use(AwsS3, {
+          endpoint: "",   // 同源:presigner serve 在 http://server/s3/multipart*
+          shouldUseMultipart: (file) => file.size > 100 * 1024 * 1024, // > 100 MiB
+        })
+
+      // P-18: uppy v4 event signature 变了(如 'upload' 现在 callback(uploadID, files)
+      // 双参数,不是单一 data 对象);所有 handler 防御性 wrap,避免一个 handler
+      // 异常影响整个 upload 流程(原 `data.fileIDs.length` → undefined.length 爆)
+      const safe = (name, fn) => (...args) => {
+        try { fn(...args) }
+        catch (e) {
+          log(`${name} handler error`, { err: String(e).slice(0, 200), args_types: args.map(a => Array.isArray(a) ? "array" : typeof a) })
+        }
+      }
+
+      uppy.on("upload", safe("upload", (uploadID, files) => {
+        log("upload start", { uploadID: String(uploadID).slice(0, 40), n_files: files?.length ?? "?" })
+      }))
+      uppy.on("upload-progress", safe("progress", (file, prog) => {
+        const mb = Math.floor((prog?.bytesUploaded ?? 0) / 1024 / 1024)
+        if (file && mb !== file._lastLogMb && (mb % 10 === 0 || mb < 1)) {
+          file._lastLogMb = mb
+          log(`progress ${file?.name ?? "?"}`, { pct: Math.floor(prog?.percentage ?? 0), mb })
+        }
+      }))
+      uppy.on("upload-success", safe("success", (file, resp) => {
+        log("upload-success", { name: file?.name, etag: resp?.body?.etag ?? resp?.uploadURL, status: resp?.status })
+      }))
+      uppy.on("upload-error", safe("error", (file, err, resp) => {
+        log("upload-error", { name: file?.name, err: String(err).slice(0, 240), status: resp?.status })
+      }))
+      uppy.on("complete", safe("complete", (result) => {
+        log("complete", {
+          success: result?.successful?.length ?? 0,
+          failed: result?.failed?.length ?? 0,
+        })
+      }))
+
+      setStatus("就绪 ✓", "ready")
+      log("uppy ready", { core: "@4", dashboard: "@4", aws_s3: "@4", endpoint: "(same-origin)" })
+    } catch (e) {
+      log("init error", { err: String(e).slice(0, 300) })
+      setStatus("初始化失败,看日志", "error")
+      console.error(e)
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+services:
+  pigsty-minio:
+    image: pgsty/minio:latest
+    container_name: poc-pigsty-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin-poc-2026  # PoC only, rotate before prod
+      MINIO_NOTIFY_WEBHOOK_ENABLE_RUSHES: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_RUSHES: "http://poc-webhook:8000/minio-event"
+      # 让 MinIO 知道公网 URL — 签 presigned URL / Console redirect 用此(P-13 nginx 反代关键)
+      MINIO_SERVER_URL: "https://rusheslab.taoxiplan.com"
+      MINIO_BROWSER_REDIRECT_URL: "https://rusheslab.taoxiplan.com/console"
+      # P-19 修订:Pigsty MinIO 内嵌 georgmangold/console fork 默认 random JWT secret,
+      # 重启后 session 立即失效;显式 pin 三个 console env 让 JWT/PBKDF 稳定可验
+      CONSOLE_HMAC_JWT_SECRET: "poc-jwt-secret-32-chars-for-poc!"
+      CONSOLE_PBKDF_PASSPHRASE: "poc-pbkdf-passphrase-32-chars!!!"
+      CONSOLE_PBKDF_SALT: "poc-pbkdf-salt-32-chars-padded!"
+      # P-19 fix:georgmangold/console fork 不内嵌 MinIO,需 CONSOLE_MINIO_SERVER 指向
+      # MinIO endpoint;Pigsty 嵌入但未自动 wire 此 env → 401 invalid login
+      CONSOLE_MINIO_SERVER: "http://localhost:9000"
+      CONSOLE_MINIO_REGION: "us-east-1"
+      MINIO_LOG_LEVEL: "DEBUG"
+    ports:
+      - "6100:9000"   # S3 API(SSH tunnel fallback,见 P-13;阿里云 6000-7000 实测全断,主路径走 nginx 80)
+      - "6101:9001"   # Console SSH tunnel fallback
+    volumes:
+      - ./data:/data
+    networks:
+      - poc-net
+
+  # ─── OpenFGA + Postgres(Phase B 权限引擎 PoC,ADR-0005 §11.2 Gap 1 + Gap 5)──────
+  poc-openfga-db:
+    image: postgres:16-alpine
+    container_name: poc-openfga-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openfga
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: openfga-poc-2026
+    volumes:
+      - openfga-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - poc-net
+
+  poc-openfga-migrate:
+    image: openfga/openfga:latest
+    container_name: poc-openfga-migrate
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:openfga-poc-2026@poc-openfga-db:5432/openfga?sslmode=disable"
+    depends_on:
+      poc-openfga-db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - poc-net
+
+  poc-openfga:
+    image: openfga/openfga:latest
+    container_name: poc-openfga
+    restart: unless-stopped
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:openfga-poc-2026@poc-openfga-db:5432/openfga?sslmode=disable"
+      OPENFGA_PLAYGROUND_ENABLED: "true"
+      OPENFGA_LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:8089:8080"   # HTTP API(SSH tunnel access)
+      - "127.0.0.1:3001:3000"   # Playground UI
+    depends_on:
+      poc-openfga-migrate:
+        condition: service_completed_successfully
+    networks:
+      - poc-net
+
+  poc-nginx:
+    # P-14:阿里云 6000-7000 完全阻断,80/443/22 才开 — nginx 反代 80 → Console + uppy + presigner + S3
+    image: nginx:alpine
+    container_name: poc-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - pigsty-minio
+      - poc-presigner
+    networks:
+      - poc-net
+
+  poc-webhook:
+    # 用 stdlib http.server,不依赖 pip install,避免阿里云走 dockerhub 拉 wheel 慢
+    image: python:3-alpine
+    container_name: poc-webhook
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./webhook:/app
+    command: python /app/main.py
+    expose:
+      - "8000"
+    networks:
+      - poc-net
+
+  poc-console:
+    # P-19 fix:Pigsty MinIO 内嵌的 Console(georgmangold fork)401 invalid login,
+    # 改用 standalone Console 容器(同 fork)+ 显式 CONSOLE_MINIO_SERVER。
+    # 反代到 server2 host 6102(SSH tunnel 给用户访问 — Console SPA 用 base href=/
+    # 与 nginx /console/ subpath 不兼容,留 follow-up)
+    image: ghcr.io/georgmangold/console:latest
+    container_name: poc-console
+    restart: unless-stopped
+    environment:
+      CONSOLE_MINIO_SERVER: "http://poc-pigsty-minio:9000"
+      CONSOLE_MINIO_REGION: "us-east-1"
+      # 不用 SUBPATH(fork 只改 base href 不改 API path);Console 直接占根 path
+      # nginx 把 Console 各 path(/api/v1, /api/v2, /static, /styles, /Loader.svg
+      # 各 icon, /manifest.json)反代到这里;uppy 用 /uppy/ 前缀
+    ports:
+      - "6102:9090"
+    depends_on:
+      - pigsty-minio
+    networks:
+      - poc-net
+
+  poc-presigner:
+    # uppy AwsS3 multipart presigner + 静态 uppy.html serve
+    # python:3.12-alpine 而非 3.14(boto3/urllib3 有 prebuild wheel,无需从源码 build)
+    # pip 走阿里云 mirror,避坑 P-3(同 webhook,但 boto3 ~30MB 必须装)
+    image: python:3.12-alpine
+    container_name: poc-presigner
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./presigner:/app
+      - presigner-pip-cache:/root/.cache/pip
+    environment:
+      MINIO_ENDPOINT: "http://poc-pigsty-minio:9000"
+      MINIO_ACCESS_KEY: "alice"
+      MINIO_SECRET_KEY: "alicesecret-poc-2026-32chars-pad"
+      MINIO_PUBLIC_HOST: "https://rusheslab.taoxiplan.com"   # 公网 host;sig v4 签 URL host 必须与浏览器访问一致(P-10)
+      DEFAULT_BUCKET: "incoming"
+      DEFAULT_PREFIX: "uppy-test/"
+      PIP_INDEX_URL: "https://mirrors.aliyun.com/pypi/simple/"
+    command: sh -c "pip install --quiet boto3 && python /app/main.py"
+    ports:
+      - "8080:8000"   # 浏览器走 SSH tunnel 8080 访问
+    networks:
+      - poc-net
+
+volumes:
+  presigner-pip-cache:
+  openfga-db-data:
+
+networks:
+  poc-net:
+    driver: bridge
