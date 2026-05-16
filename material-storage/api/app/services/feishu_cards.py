@@ -62,10 +62,10 @@ def _button(
         btn["value"] = value
     if url is not None:
         applink = applink_open(url)
-        # multi_url:PC 直接 web(用户多窗口浏览舒服);移动端走 applink 在飞书内 webview 开
+        # 全平台统一走 applink:PC / 移动端飞书内 webview 打开,不跳系统浏览器
         btn["multi_url"] = {
             "url": applink,
-            "pc_url": url,
+            "pc_url": applink,
             "android_url": applink,
             "ios_url": applink,
         }

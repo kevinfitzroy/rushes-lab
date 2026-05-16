@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,12 +25,16 @@ from app.db.tables import Folder, Project
 from app.deps import (
     get_audit,
     get_current_user_id,
+    get_feishu_client,
     get_permissions,
     get_request_context,
 )
 from app.models import FolderCreateIn, FolderInviteIn, FolderOut
 from app.services.audit import AuditService
+from app.services.feishu_client import FeishuClient
+from app.services.invite_notify import run_notify_folder_invite_bg
 from app.services.permissions import PermissionsService
+from app.settings import get_settings
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -187,9 +191,11 @@ async def get_folder(
 async def invite(
     folder_id: uuid.UUID,
     payload: FolderInviteIn,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
+    feishu: FeishuClient = Depends(get_feishu_client),
     user_id: uuid.UUID = Depends(get_current_user_id),
     ctx: dict = Depends(get_request_context),
 ) -> None:
@@ -241,6 +247,18 @@ async def invite(
         },
         **ctx,
     )
+
+    # iter4:user 邀请推 IM 卡(group 邀请没 feishu_open_id,跳过)
+    if payload.user_id is not None:
+        background.add_task(
+            run_notify_folder_invite_bg,
+            folder_id=folder_id,
+            invitee_user_id=payload.user_id,
+            inviter_user_id=user_id,
+            duration_seconds=payload.duration_seconds,
+            feishu=feishu,
+            settings=get_settings(),
+        )
 
 
 @router.delete("/{folder_id}/invite/user/{invitee_id}", status_code=204)
