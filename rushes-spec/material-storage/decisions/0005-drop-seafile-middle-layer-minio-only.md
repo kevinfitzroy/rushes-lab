@@ -234,40 +234,88 @@ ADR-0003 的 §"License / Pro 版前提" 中列的三条 fallback:
 
 ---
 
-## 7. 仍需 verify 的事项(业务侧拍板后转 accepted)
+## 7. 业务侧 verify 事项(2026-05-16 全 ✅ 完成)
 
-### 7.1 [关键] 剪辑师 / 设计师本地工作流确认
+### 7.1 剪辑师 / 设计师本地工作流 — ✅ **不需要本地后台同步**
 
-> 业务侧问题:剪辑师 / 设计师**是否需要"本地像自己硬盘一样浏览 / 编辑素材后自动同步回服务器"** 的工作模式?
+业务侧确认 2026-05-16:不强求 Seafile/NC 风格的"本地像自己硬盘"自动 sync 工作流。
 
-- 若 **不需要**(所有操作走业务 UI 显式下载 / 上传 / 通过 FastAPI 代理流式)→ 本 ADR 直接 accepted
-- 若 **需要**(部分角色必须本地后台同步)→ 评估 fallback:
-  - (a) 用 rclone 配 MinIO 作"准同步盘"(无 block 增量,但 full-file 同步可用)
-  - (b) 二开一个轻量同步守护(用 minio-py + watchdog 实现 inotify ↔ S3 双向 sync,2-4 周)
-  - (c) 重新引入 Seafile / NC 作"特定角色的同步前端",但**不作业务主路径** — 等于回到双轨,复杂度反弹
+**采纳方案**:
+- 普通业务用户(运营 / 客户经理 / 老板)→ 飞书 H5 app + 独立 web URL(纯 server 端)
+- 剪辑师 / 设计师 / 运维 → 通用 S3 客户端(**Cyberduck / rclone / Mountain Duck / Transmit / Commander One**)+ **长效 IAM access key**(project-prefix 限定)
+- 桌面 sync UX 需要时用 **rclone mount**(FUSE)兜底,不二开同步守护
 
-### 7.2 版本管理需求确认
+### 7.2 版本管理 — ✅ **单文件回滚足够**
 
-> 业务侧问题:**是否需要 "把整个项目目录 rollback 到上周三某时刻" 的语义?** 还是 **"恢复某个误删的单文件" 就够?**
+业务侧确认 2026-05-16:仅需"恢复某个误删的单文件"语义,不需要"整目录回滚到某时刻"。
 
-- 若仅后者 → MinIO object versioning 完美 cover(本 ADR 默认假设)
-- 若需要前者 → 需自建"目录级 snapshot" 抽象(基于业务表 + 定时打 ZFS snapshot),~2-3 周;**仍不需要 Seafile**
+**采纳方案**:**MinIO object versioning**(开启 bucket versioning + 业务 UI 暴露 "查看版本 / 还原" action),无需自建目录 snapshot。
 
-### 7.3 大文件上传 UX 实测
+### 7.3 大文件上传 UX — ✅ **基本通过**(Phase A.2 实测)
 
-> 100GB+ 文件用 uppy + S3 multipart,断网重连 / 浏览器关闭恢复实测体验
+Phase A.2 实测:
+- 632 MiB 跨境(浏览器 ↔ 阿里云)经 uppy v4 multipart 端到端通过(27 min,~80 parts × 8 MiB,ETag verified,webhook `CompleteMultipartUpload` 收到)
+- 测试覆盖 small / 50 MiB / 200 MiB / 1 GB
+- uppy v4 `safe(name, fn)` event handler wrap 修(P-18)后稳定
 
-- 已知 uppy 在 1-10GB 文件场景成熟,100GB+ 边缘情况需 PoC 验证
-- 若 uppy 不够 → 评估 tus-js / 自建 multipart 协调层
-- 不影响 ADR 结论,影响实施细节
+100 GB+ 真实场景留 Phase B-3 + 真实业务文件再验,但 PoC 基础架构 + 链路验证已通过;不阻塞 ADR-0005 accept。
 
-### 7.4 异地灾备 RPO/RTO 要求
+### 7.4 异地灾备 — ✅ **公有云备份(阿里云 OSS 同 region)**
 
-> 业务侧确认 RPO/RTO 目标,选择灾备方案
+业务侧拍板 2026-05-16:**阿里云 OSS replication**(同 region 内网传 + 低成本)。
 
-- RPO < 1h:MinIO bucket replication(active-passive)
-- RPO 几小时:ZFS send-recv(零额外组件)
-- RPO 秒级 + 跨云:MinIO multi-site replication / S3 CRR
+**RPO / RTO 暂定**:
+- **RPO ≈ 15 min**(MinIO event-driven replication to OSS)
+- **RTO ≈ 2-4 h**(临时拉 ECS + MinIO 指向 OSS bucket;不上 hot standby 平衡成本)
+- Phase C 评估升级
+
+**实施**(Phase B-4):
+```bash
+mc admin bucket remote add local/incoming \
+  https://OSS_ENDPOINT/incoming \
+  --service replication \
+  --access-key=<OSS_KEY> --secret-key=<OSS_SECRET>
+
+mc replicate add local/incoming \
+  --remote-bucket arn:minio:replication:OSS:incoming --priority 1
+```
+
+**备份范围**:
+- MinIO 对象 → OSS bucket replication
+- PostgreSQL(audit + 业务元数据 + OpenFGA tuples)→ pg_dump 定时推 OSS,或迁阿里云 RDS 主从
+- 配置 / docker-compose → git 仓库
+
+---
+
+## 7-bis. 产品决策(2026-05-16 Q&A 衍生)
+
+### 7-bis.1 审批驱动下载的客户端路径
+
+**问题**:能否让飞书 app 审批通过后,Cyberduck 内只看到批准的文件?
+
+**结论**:**技术可行**(MinIO STS AssumeRole + inline policy + TTL),**但不作主路径**(UX 痛苦:每次审批要手动复制临时凭据到 Cyberduck)。
+
+**分场景采纳**:
+
+| 场景 | 客户端 | 凭据形式 |
+|---|---|---|
+| 审批通过下载(几百 MB) | 飞书 H5 app 内直接下载 | presigned URL(后端签 → 点击触发浏览器/系统下载) |
+| 审批通过下载(几 GB+) | 飞书显示 "桌面下载" 链接 | 一键生成 STS 临时凭据(1 h)+ rclone 命令模板 |
+| 剪辑师 / 运维长期工作 | Cyberduck / rclone / Mountain Duck | 长效 IAM access key,project-prefix 限定;粒度靠 OpenFGA + MinIO policy |
+| 临时外部 / 单文件分享 | 飞书 H5 显示 link | presigned URL 短 TTL,无需凭据 |
+
+### 7-bis.2 飞书 H5 内大文件上传(主路径)
+
+业务侧确认:**上传主路径走飞书 H5 内 uppy**(移动端友好;几百 MB 体验好)。
+
+**Phase B-3 PoC 必跑**:
+- iOS / Android 飞书 H5 内 500 MB / 2 GB 实测
+- 切后台 / 切 WiFi / 锁屏 → 验证 uppy resume
+
+**容量分流**:
+- ≤ 500 MB:飞书 H5 主上传
+- 500 MB ~ 5 GB:同上 + WiFi 提示
+- ≥ 5 GB:建议桌面浏览器 / rclone(给 clients.html 链接)
 
 ---
 
