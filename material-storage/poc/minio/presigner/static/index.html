@@ -79,18 +79,38 @@
           shouldUseMultipart: (file) => file.size > 100 * 1024 * 1024, // > 100 MiB
         })
 
-      uppy.on("upload", (data) => log("upload start", { files: data.fileIDs.length }))
-      uppy.on("upload-progress", (file, prog) => {
-        // 限频:每 10 MB 打一次
-        const mb = Math.floor((prog.bytesUploaded || 0) / 1024 / 1024)
-        if (mb % 10 === 0 && mb !== file._lastLogMb) {
-          file._lastLogMb = mb
-          log(`progress ${file.name}`, { pct: Math.floor(prog.percentage), mb })
+      // P-18: uppy v4 event signature 变了(如 'upload' 现在 callback(uploadID, files)
+      // 双参数,不是单一 data 对象);所有 handler 防御性 wrap,避免一个 handler
+      // 异常影响整个 upload 流程(原 `data.fileIDs.length` → undefined.length 爆)
+      const safe = (name, fn) => (...args) => {
+        try { fn(...args) }
+        catch (e) {
+          log(`${name} handler error`, { err: String(e).slice(0, 200), args_types: args.map(a => Array.isArray(a) ? "array" : typeof a) })
         }
-      })
-      uppy.on("upload-success", (file, resp) => log("upload-success", { name: file.name, etag: resp.body?.etag }))
-      uppy.on("upload-error", (file, err, resp) => log("upload-error", { name: file.name, err: String(err).slice(0, 200), status: resp?.status }))
-      uppy.on("complete", (result) => log("complete", { success: result.successful.length, failed: result.failed.length }))
+      }
+
+      uppy.on("upload", safe("upload", (uploadID, files) => {
+        log("upload start", { uploadID: String(uploadID).slice(0, 40), n_files: files?.length ?? "?" })
+      }))
+      uppy.on("upload-progress", safe("progress", (file, prog) => {
+        const mb = Math.floor((prog?.bytesUploaded ?? 0) / 1024 / 1024)
+        if (file && mb !== file._lastLogMb && (mb % 10 === 0 || mb < 1)) {
+          file._lastLogMb = mb
+          log(`progress ${file?.name ?? "?"}`, { pct: Math.floor(prog?.percentage ?? 0), mb })
+        }
+      }))
+      uppy.on("upload-success", safe("success", (file, resp) => {
+        log("upload-success", { name: file?.name, etag: resp?.body?.etag ?? resp?.uploadURL, status: resp?.status })
+      }))
+      uppy.on("upload-error", safe("error", (file, err, resp) => {
+        log("upload-error", { name: file?.name, err: String(err).slice(0, 240), status: resp?.status })
+      }))
+      uppy.on("complete", safe("complete", (result) => {
+        log("complete", {
+          success: result?.successful?.length ?? 0,
+          failed: result?.failed?.length ?? 0,
+        })
+      }))
 
       setStatus("就绪 ✓", "ready")
       log("uppy ready", { core: "@4", dashboard: "@4", aws_s3: "@4", endpoint: "(same-origin)" })
