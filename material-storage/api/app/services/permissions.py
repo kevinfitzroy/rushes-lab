@@ -19,6 +19,7 @@ from openfga_sdk import OpenFgaClient
 from openfga_sdk.client.configuration import ClientConfiguration
 from openfga_sdk.client.models import (
     ClientCheckRequest,
+    ClientListObjectsRequest,
     ClientTuple,
     ClientWriteRequest,
 )
@@ -75,6 +76,33 @@ class PermissionsService:
             )
         )
         return resp.allowed
+
+    # ─── list_objects:取 user 可访问的 object IDs(给业务 list filter 用)────
+    async def list_objects(
+        self,
+        user_id: str,
+        relation: Relation,
+        object_type: str,
+        *,
+        current_time: datetime | None = None,
+    ) -> list[str]:
+        """返回 type 类型下,user 拥有指定 relation 的所有 object ID 列表。
+
+        典型用法:list_projects 时调 `list_objects(user, "can_view", "project")`,
+        union 上 `project.visibility=public` 得到最终可见列表。
+        """
+        ctx = {"current_time": (current_time or datetime.now(timezone.utc)).isoformat()}
+        resp = await self._client.list_objects(
+            ClientListObjectsRequest(
+                user=f"user:{user_id}",
+                relation=relation,
+                type=object_type,
+                context=ctx,
+            )
+        )
+        # OpenFGA 返回 ["project:abc-123", "project:def-456"];strip type prefix
+        prefix = f"{object_type}:"
+        return [obj.removeprefix(prefix) for obj in resp.objects if obj.startswith(prefix)]
 
     # ─── grant 临时下载(model 简化 v2 后,通用 project / asset 级)──────────
     async def grant_explicit_download(
