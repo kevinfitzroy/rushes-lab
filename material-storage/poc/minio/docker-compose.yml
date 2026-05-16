@@ -31,6 +31,34 @@ services:
     networks:
       - poc-net
 
+  poc-presigner:
+    # uppy AwsS3 multipart presigner + 静态 uppy.html serve
+    # python:3.12-alpine 而非 3.14(boto3/urllib3 有 prebuild wheel,无需从源码 build)
+    # pip 走阿里云 mirror,避坑 P-3(同 webhook,但 boto3 ~30MB 必须装)
+    image: python:3.12-alpine
+    container_name: poc-presigner
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./presigner:/app
+      - presigner-pip-cache:/root/.cache/pip
+    environment:
+      MINIO_ENDPOINT: "http://poc-pigsty-minio:9000"
+      MINIO_ACCESS_KEY: "alice"
+      MINIO_SECRET_KEY: "alicesecret-poc-2026-32chars-pad"
+      MINIO_PUBLIC_HOST: "http://localhost:6100"   # 浏览器视角(SSH tunnel 6100)
+      DEFAULT_BUCKET: "incoming"
+      DEFAULT_PREFIX: "uppy-test/"
+      PIP_INDEX_URL: "https://mirrors.aliyun.com/pypi/simple/"
+    command: sh -c "pip install --quiet boto3 && python /app/main.py"
+    ports:
+      - "8080:8000"   # 浏览器走 SSH tunnel 8080 访问
+    networks:
+      - poc-net
+
+volumes:
+  presigner-pip-cache:
+
 networks:
   poc-net:
     driver: bridge

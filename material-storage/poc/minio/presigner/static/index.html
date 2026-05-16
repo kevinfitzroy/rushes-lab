@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Pigsty MinIO PoC — uppy 大文件上传</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://releases.transloadit.com/uppy/v4.16.1/uppy.min.css" rel="stylesheet">
+  <style>
+    body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; max-width: 960px; }
+    h1 { font-size: 20px; }
+    .info { background: #f4f4f4; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
+    code { background: #eee; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    .log { margin-top: 24px; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-family: Menlo, monospace; font-size: 12px; white-space: pre-wrap; min-height: 100px; max-height: 320px; overflow-y: auto; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Pigsty MinIO PoC — uppy 大文件 multipart 上传</h1>
+  <div class="info">
+    <p>ADR-0005 Phase A.2 验证(§11.2 Gap 2)。后端 = MinIO,bucket = <code>incoming/</code>,prefix = <code>uppy-test/</code>。</p>
+    <p>uppy AwsS3 plugin → 走 5 endpoint 协议(create / signPart / complete / abort / listParts)。Backend = 自实现 Python presigner(stdlib http.server + boto3)。</p>
+    <p>测试建议:1) 小文件(< 10 MB)看链路;2) 中文件(50-500 MB)看 multipart 自动分段;3) 大文件(≥ 5 GB)看断网恢复 / abort 清理。</p>
+  </div>
+
+  <div id="uppy"></div>
+
+  <h3>事件日志</h3>
+  <div id="log" class="log">[等待 uppy 加载...]</div>
+
+  <script type="module">
+    import { Uppy } from "https://releases.transloadit.com/uppy/v4.16.1/uppy.min.mjs"
+    import { Dashboard, AwsS3 } from "https://releases.transloadit.com/uppy/v4.16.1/uppy.min.mjs"
+
+    const logEl = document.getElementById("log")
+    function log(msg, data) {
+      const t = new Date().toISOString().slice(11, 23)
+      logEl.textContent += `\n[${t}] ${msg}${data ? " " + JSON.stringify(data).slice(0, 200) : ""}`
+      logEl.scrollTop = logEl.scrollHeight
+    }
+    logEl.textContent = "[uppy ready]"
+
+    // 路径基:同源(presigner 既 serve static 又作 API)
+    const COMPANION = ""  // 同源
+
+    const uppy = new Uppy({
+      autoProceed: false,
+      restrictions: { maxNumberOfFiles: 5 },
+      debug: false,
+    })
+      .use(Dashboard, {
+        inline: true,
+        target: "#uppy",
+        proudlyDisplayPoweredByUppy: false,
+        showProgressDetails: true,
+        height: 380,
+        note: "支持任意类型,multipart 阈值 100 MiB(uppy 默认)。",
+      })
+      .use(AwsS3, {
+        endpoint: COMPANION,
+        shouldUseMultipart: (file) => file.size > 100 * 1024 * 1024, // > 100 MiB 用 multipart
+        // 单 PUT 路径(< 100MiB)走 createMultipartUpload 也可,uppy v4 默认。这里 explicit 看清楚。
+      })
+
+    uppy.on("upload", (data) => log("upload start", { files: data.fileIDs.length }))
+    uppy.on("upload-progress", (file, prog) => {
+      if (prog.bytesUploaded % (10 * 1024 * 1024) < 1024 * 1024) {
+        log(`progress ${file.name}`, { pct: Math.floor(prog.percentage), uploaded_mb: Math.floor(prog.bytesUploaded/1024/1024) })
+      }
+    })
+    uppy.on("upload-success", (file, resp) => log("upload-success", { name: file.name, etag: resp.body?.etag }))
+    uppy.on("upload-error", (file, err) => log("upload-error", { name: file.name, err: String(err).slice(0, 200) }))
+    uppy.on("complete", (result) => log("complete", { success: result.successful.length, failed: result.failed.length }))
+  </script>
+</body>
+</html>

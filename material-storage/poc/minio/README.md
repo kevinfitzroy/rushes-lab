@@ -68,11 +68,50 @@ EOF
 
 **期望**:webhook stdout 出现 `s3:ObjectCreated:Put bucket=rushes-poc key=poc-test.txt size=...`,`/events` 返回 events 列表。
 
+## Phase A.2 — 6 个 scenarios(2026-05-16 实测,server-side curl/mc 全验)
+
+| # | Scenario | 状态 | 说明 |
+| --- | --- | --- | --- |
+| **A** | alice(admin)全 bucket RW | ✅ | ls 5 bucket / PUT `private-sensitive/` / GET 回 |
+| **B** | bob(limited)权限边界 | ✅ | 只看到 public;拒绝写 `private-*` / 跨用户 `incoming/alice/`;读 `public` OK;读 `private-internal` 403 |
+| **C** | 模拟审批 — alice 签 presigned GET URL 给 bob | ✅ | `mc share download --expire 5m` 返完整 sig v4 URL;**注 caveat P-10** |
+| **D** | uppy 5-endpoint multipart 端到端(50 MiB / 2 parts) | ✅ | POST `/s3/multipart` → GET sign part(×2) → PUT 25 MiB(×2)→ POST complete → ETag `e9cc...-2` 落库;**webhook 收到** `CompleteMultipartUpload bucket=incoming key=uppy-test%2F...` |
+| **E.1** | 正常完成无 orphan | ✅ | 5 个 bucket `mc ls --incomplete --recursive` 全空 |
+| **E.2** | DELETE abort 清理 | ✅ | `POST /s3/multipart` + `DELETE /s3/multipart/{id}` → `{aborted: true}` |
+| **F** | 1 GB 大文件 multipart + webhook | ✅ | mc 自动 multipart(16 MiB part × 64),5 s 完成;webhook 收到 `bucket=incoming key=big-1g-v2.bin size=1073741824` |
+
+**Phase A.2 出口条件 ✅ 全部通过**(浏览器实测 uppy UX / 100GB+ 真实场景 / 断网恢复留作 follow-up,需用户参与)。
+
+## Finding P-8 ~ P-13(2026-05-16,Phase A.2 实测追加)
+
+| # | Finding | 影响 | 处理 |
+| --- | --- | --- | --- |
+| **P-8** | **MinIO bucket notification 必须 per-bucket 配**(`mc event add local/<bucket>`)而非全局 | 新建 bucket 不会自动继承 webhook,易漏 | 部署脚本 / 业务后端创建 bucket 时**同步注册 event**;监控:定时 `mc event list` 对账 |
+| **P-9** | MinIO IAM:user = access key 本身(非 username),`mc admin user add <accesskey> <secret>` 3 参数(若多写 1 个会被当 secret + extra arg 报 USAGE);policy 用 JSON 文件 + `mc admin policy create local <name> <file.json>` + `mc admin policy attach local <policy> --user <accesskey>` | 易踩坑(误以为 user/secret 分离命名) | 文档化命令模板;policy JSON 用 IAM-style `Statement / Effect / Action / Resource`,支持 prefix-based 隔离(`incoming/bob/*` for bob own,Condition `s3:prefix` 控 ListBucket 可见性) |
+| **P-10** | **Presigned URL sig v4 把 host 头进 canonical request,host:port 必须 客户端 与 签发时 一致**;否则 `SignatureDoesNotMatch` 403 | mc share download 默认用 alias endpoint 签;若客户端从别的 host 访问(SSH tunnel / 公网 / proxy)→ 全失败 | **presigner 用双 boto3 client** :`s3_internal` (docker DNS) 调 admin API(create/complete/abort/list);`s3_signer` (公网 host) 仅签 URL,不发请求 — 签出的 URL host = 客户端视角 host,签名匹配。MINIO_PUBLIC_HOST 环境变量配置可达 host(SSH tunnel = `http://localhost:6100`;直连 = `http://<server-ip>:6100`)|
+| **P-11** | **Webhook 事件 key 是 URL-encoded**(`/` → `%2F`),例 `bucket=incoming key=uppy-test%2Fuppy-test-50m.bin` | audit handler / 业务消费者直接用 key 查会 miss(URL-encoded ≠ 实际 object key) | 业务后端 webhook handler 必须 `urllib.parse.unquote(key)` 后再用 |
+| **P-12** | **Python 3.14-alpine 是 latest 但 boto3 / urllib3 没 prebuild wheel,pip install 从源码 build 卡 > 5 min**;3.12-alpine 有 prebuild,< 60 s 完成 | 容器启动延迟 → 误判失败 | pin `python:3.12-alpine`;pip mirror `https://mirrors.aliyun.com/pypi/simple/`(env `PIP_INDEX_URL`);mount pip cache volume 避免每次 install |
+| **P-13** | **阿里云安全组实际只对 22 开放**(与 server.md 描述"6000-7000/80/443 都开"不一致)— 本地 curl 6100/6101/6083/6901/80/443 全 timeout | 用户浏览器无法访问 MinIO Console / uppy 前端 | **临时**:用户走 SSH tunnel `ssh -L 6100:localhost:6100 -L 6101:localhost:6101 -L 8080:localhost:8080 root@<server>`;**长期**:阿里云控制台开 6000-7000 入站 |
+
+## 用户访问指南(SSH tunnel)
+
+```bash
+# 在本地终端跑(保持 session 开)
+ssh -L 6100:localhost:6100 -L 6101:localhost:6101 -L 8080:localhost:8080 root@8.156.34.238
+
+# 然后浏览器访问:
+#   MinIO Console:  http://localhost:6101   user=minioadmin pass=minioadmin-poc-2026
+#   uppy 前端:     http://localhost:8080   (拖拽文件即可,< 100 MiB 走 single PUT,≥ 100 MiB 走 multipart)
+#   webhook events: docker logs -f poc-webhook (在 server 上看)
+```
+
 ## 后续(超出 Phase A 验收)
 
-- **uppy 大文件 multipart upload PoC**(Gap 2):需要前端 + 真实大文件(100GB+),建议在本地浏览器跑(服务器没 GUI);见 `upload-test/`(待补)
+- **浏览器实测 uppy UX**(Gap 2):用户走 SSH tunnel,跑大文件(尤其 100 GiB+),验证进度条 / 浏览器关闭恢复 / 断网重连(uppy 内置 retry + listParts)— **需要用户参与**
 - **MinIO site replication 灾备 PoC**:需要第二台机或第二个 docker compose project,后续 Phase
-- **STS / presigned URL 撤销 black list 验证**(Gap 1):需要业务后端模拟黑名单 + FastAPI 代理拦截
+- **presigned URL 撤销 black list**(Gap 1):需要业务后端 + FastAPI 代理层校验(stateless presigned 不可直接撤,要黑名单兜底)
+- **真实负载** scenario:1k user 并发 + 100 万对象 + 50TB 数据 — 留生产化阶段
+- **配阿里云安全组**(P-13)或 nginx 反代 6XXX → 80/443,以摆脱 SSH tunnel 限制
 
 ## Finding(2026-05-16,Phase A 部署 + 端到端链路实测)
 
