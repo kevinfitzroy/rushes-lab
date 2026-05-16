@@ -74,9 +74,30 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
-    # static / uppy demo
+    # static / uppy demo + web SPA fallback
     import pathlib
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
     static_dir = pathlib.Path(__file__).parent / "static"
+    web_dir = static_dir / "web"
+
+    # SPA catch-all:必须在 mount /static 之前定义,FastAPI 路由 order 优先
+    # 行为:/static/web/{path} 命中本 route,若 path 是实际 file 则返 file,
+    # 否则返 index.html(BrowserRouter 深链直接刷新支持)
+    @app.get("/static/web/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        target = (web_dir / full_path).resolve()
+        # 防 path traversal
+        if not str(target).startswith(str(web_dir.resolve())):
+            raise HTTPException(status_code=400)
+        if target.is_file():
+            return FileResponse(target)
+        idx = web_dir / "index.html"
+        if not idx.exists():
+            raise HTTPException(status_code=404, detail="web dist not deployed")
+        return FileResponse(idx)
+
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 

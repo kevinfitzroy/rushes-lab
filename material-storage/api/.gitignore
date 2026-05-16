@@ -11,3 +11,6 @@ dist/
 build/
 *.egg-info/
 uv.lock     # Phase B 是否 commit lock?Phase B-1 暂不锁,Phase B-2 决定
+
+# Phase B-3 web build artifact(由 material-storage/web/ vite build 输出,不纳入 git)
+app/static/web/
