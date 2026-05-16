@@ -1,0 +1,206 @@
+name: material-storage-poc
+
+# 业务模型:medical aesthetics 素材库
+#  - organization (诊所)
+#  - group(角色组,如摄影师/设计师)
+#  - project(项目,关联 organization)
+#  - folder(项目内普通文件夹,viewer 自动从 project 继承)
+#  - sensitive_folder(项目内敏感文件夹,**不自动从 project 继承**;只 admin + 审批通过的临时 grant)
+#  - asset(文件,在 folder 或 sensitive_folder 内)
+#
+# 关键设计:
+#  - 普通文件(folder/asset):project member 自动可见可下载(presigned URL)
+#  - 敏感文件(sensitive_folder/asset):必须 admin 或 explicit_viewer + 时间条件 grant
+#    (审批驱动模型,grant 过期 OpenFGA 自动评估 false,无需 cron 清理)
+#  - 业务后端按 asset.parent type 决定下载路径:
+#      folder 父       → presigned URL 直传 MinIO
+#      sensitive_folder 父 → FastAPI 代理 stream(每 chunk check OpenFGA)
+
+model: |
+  model
+    schema 1.1
+
+  type user
+
+  type group
+    relations
+      define member: [user]
+
+  type organization
+    relations
+      define admin: [user, group#member]
+      define member: [user, group#member]
+
+  type project
+    relations
+      define organization: [organization]
+      define admin: [user, group#member] or admin from organization
+      define editor: [user, group#member] or admin from organization
+      define viewer: [user, group#member] or editor or admin from organization
+
+  type folder
+    relations
+      define parent: [project, folder]
+      define admin: admin from parent
+      define editor: editor from parent or admin
+      define viewer: viewer from parent or editor
+
+  type sensitive_folder
+    relations
+      define parent: [project, sensitive_folder]
+      define admin: admin from parent
+      # 显式审批 grant — 时间限定,过期自动失效
+      define explicit_viewer: [user with non_expired_grant]
+      define editor: admin
+      define viewer: explicit_viewer or admin
+
+  type asset
+    relations
+      define parent: [project, folder, sensitive_folder]
+      define viewer: viewer from parent
+      define editor: editor from parent
+      define admin: admin from parent
+      define can_view: viewer
+      define can_download: viewer    # 后端按 parent type 决定 presigned vs 代理
+      define can_edit: editor
+      define can_delete: admin
+
+  condition non_expired_grant(current_time: timestamp, grant_time: timestamp, grant_duration: duration) {
+    current_time < grant_time + grant_duration
+  }
+
+tuples:
+  # ─── alice = organization admin(全权)─────────
+  - user: user:alice
+    relation: admin
+    object: organization:my-clinic
+
+  # ─── bob in group:photographers ────────────────
+  - user: user:bob
+    relation: member
+    object: group:photographers
+
+  # ─── project case-2025-q4 归属 organization ────
+  - user: organization:my-clinic
+    relation: organization
+    object: project:case-2025-q4
+
+  # ─── photographers group 在 project 是 editor ───
+  - user: group:photographers#member
+    relation: editor
+    object: project:case-2025-q4
+
+  # ─── 普通 folder(自动从 project 继承)───────────
+  - user: project:case-2025-q4
+    relation: parent
+    object: folder:raw
+
+  # ─── 敏感 folder(不从 project 继承,只 admin + 审批)─
+  - user: project:case-2025-q4
+    relation: parent
+    object: sensitive_folder:client-private
+
+  # ─── asset 归属 ──────────────────────────────────
+  - user: folder:raw
+    relation: parent
+    object: asset:clip-1-raw
+
+  - user: sensitive_folder:client-private
+    relation: parent
+    object: asset:clip-99-secret
+
+  # ─── 飞书审批通过 → bob 获得 1h 临时访问 sensitive_folder ─
+  # (不写 asset 级别,写 sensitive_folder 级别;folder 内所有 asset 继承)
+  - user: user:bob
+    relation: explicit_viewer
+    object: sensitive_folder:client-private
+    condition:
+      name: non_expired_grant
+      context:
+        grant_time: "2026-05-16T10:00:00Z"
+        grant_duration: 1h
+
+tests:
+  - name: 业务权限场景 e2e
+    check:
+      # ─── alice(org admin)全权访问 ──────────
+      - user: user:alice
+        object: organization:my-clinic
+        assertions:
+          admin: true
+
+      - user: user:alice
+        object: project:case-2025-q4
+        assertions:
+          admin: true
+          editor: true
+          viewer: true
+
+      - user: user:alice
+        object: asset:clip-1-raw
+        assertions:
+          can_view: true
+          can_download: true
+          can_edit: true
+          can_delete: true
+
+      - user: user:alice
+        object: asset:clip-99-secret
+        assertions:
+          can_view: true
+          can_download: true
+          can_edit: true
+          can_delete: true
+
+      # ─── bob 普通文件(project editor 自动继承)─────
+      - user: user:bob
+        object: project:case-2025-q4
+        assertions:
+          admin: false
+          editor: true
+          viewer: true
+
+      - user: user:bob
+        object: asset:clip-1-raw
+        assertions:
+          can_view: true
+          can_download: true
+          can_edit: true
+          can_delete: false   # 非 admin
+
+      # ─── bob 敏感文件(grant 期内 10:30 在 1h grant 内)─
+      - user: user:bob
+        object: asset:clip-99-secret
+        context:
+          current_time: "2026-05-16T10:30:00Z"
+        assertions:
+          can_view: true                # via sensitive_folder.viewer = explicit_viewer
+          can_download: true
+          can_delete: false
+
+      # ─── bob 敏感文件(grant 过期 11:30 = grant + 1.5h)─
+      - user: user:bob
+        object: asset:clip-99-secret
+        context:
+          current_time: "2026-05-16T11:30:00Z"
+        assertions:
+          can_view: false               # explicit_viewer 过期 + 非 admin
+          can_download: false
+
+      # ─── bob 敏感文件(grant 刚开始 10:00,边界)─────
+      - user: user:bob
+        object: asset:clip-99-secret
+        context:
+          current_time: "2026-05-16T10:00:00Z"
+        assertions:
+          can_view: true
+          can_download: true
+
+      # ─── bob 敏感文件(grant 刚到期 11:00,边界)─────
+      - user: user:bob
+        object: asset:clip-99-secret
+        context:
+          current_time: "2026-05-16T11:00:00Z"
+        assertions:
+          can_view: false               # current >= grant + duration → false
+          can_download: false

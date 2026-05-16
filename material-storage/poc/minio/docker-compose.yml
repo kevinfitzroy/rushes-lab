@@ -30,6 +30,58 @@ services:
     networks:
       - poc-net
 
+  # ─── OpenFGA + Postgres(Phase B 权限引擎 PoC,ADR-0005 §11.2 Gap 1 + Gap 5)──────
+  poc-openfga-db:
+    image: postgres:16-alpine
+    container_name: poc-openfga-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openfga
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: openfga-poc-2026
+    volumes:
+      - openfga-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - poc-net
+
+  poc-openfga-migrate:
+    image: openfga/openfga:latest
+    container_name: poc-openfga-migrate
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:openfga-poc-2026@poc-openfga-db:5432/openfga?sslmode=disable"
+    depends_on:
+      poc-openfga-db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - poc-net
+
+  poc-openfga:
+    image: openfga/openfga:latest
+    container_name: poc-openfga
+    restart: unless-stopped
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:openfga-poc-2026@poc-openfga-db:5432/openfga?sslmode=disable"
+      OPENFGA_PLAYGROUND_ENABLED: "true"
+      OPENFGA_LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:8089:8080"   # HTTP API(SSH tunnel access)
+      - "127.0.0.1:3001:3000"   # Playground UI
+    depends_on:
+      poc-openfga-migrate:
+        condition: service_completed_successfully
+    networks:
+      - poc-net
+
   poc-nginx:
     # P-14:阿里云 6000-7000 完全阻断,80/443/22 才开 — nginx 反代 80 → Console + uppy + presigner + S3
     image: nginx:alpine
@@ -107,6 +159,7 @@ services:
 
 volumes:
   presigner-pip-cache:
+  openfga-db-data:
 
 networks:
   poc-net:
