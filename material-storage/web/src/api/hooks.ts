@@ -34,7 +34,39 @@ export const useProject = (id: string | undefined) =>
     enabled: !!id,
   });
 
+export const useCreateProject = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: {
+      code: string;
+      name: string;
+      description?: string;
+      organization_id?: string;       // 留空 → 后端自动从 user/default 推
+      minio_bucket: string;
+    }) => {
+      const { organization_id, ...rest } = body;
+      const payload = organization_id ? { ...rest, organization_id } : rest;
+      return (await http.post<Project>('/api/v1/projects', payload)).data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+};
+
 // ─── folders ───────────────────────────────────────────────────────────────
+export const useCreateFolder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: {
+      project_id: string;
+      parent_folder_id?: string;
+      name: string;
+      is_sensitive?: boolean;
+      minio_prefix?: string;
+    }) => (await http.post<Folder>('/api/v1/folders', body)).data,
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['folders', vars.project_id] }),
+  });
+};
+
 export const useFolders = (projectId: string | undefined) =>
   useQuery({
     queryKey: ['folders', projectId],

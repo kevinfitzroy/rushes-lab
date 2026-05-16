@@ -9,6 +9,7 @@ import { apiBase, errorMessage } from './api/client';
 import { UserMenu } from './components/UserMenu';
 import { PersistentUploadDrawer } from './components/PersistentUploadDrawer';
 import { UploadFloatingIndicator } from './components/UploadFloatingIndicator';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { UploadProvider } from './lib/upload-store';
 import { DownloadProvider } from './lib/download-store';
 
@@ -121,15 +122,17 @@ export default function App() {
       token: { colorPrimary: '#1677ff', borderRadius: 6 },
     }}>
       <AntApp>
-        <QueryClientProvider client={qc}>
-          <UploadProvider>
-            <DownloadProvider>
-              <BrowserRouter basename="/ms-static/web">
-                <AppShell />
-              </BrowserRouter>
-            </DownloadProvider>
-          </UploadProvider>
-        </QueryClientProvider>
+        <ErrorBoundary>
+          <QueryClientProvider client={qc}>
+            <UploadProvider>
+              <DownloadProvider>
+                <BrowserRouter basename="/ms-static/web">
+                  <AppShell />
+                </BrowserRouter>
+              </DownloadProvider>
+            </UploadProvider>
+          </QueryClientProvider>
+        </ErrorBoundary>
       </AntApp>
     </ConfigProvider>
   );

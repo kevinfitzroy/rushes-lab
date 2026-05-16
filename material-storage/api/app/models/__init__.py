@@ -16,7 +16,8 @@ class ProjectCreateIn(BaseModel):
     code: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9\-]*$")
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
-    organization_id: uuid.UUID
+    # 留空 = 用 user.organization_id 或 settings.default_organization_id
+    organization_id: uuid.UUID | None = None
     minio_bucket: str = Field(..., max_length=63)
 
 

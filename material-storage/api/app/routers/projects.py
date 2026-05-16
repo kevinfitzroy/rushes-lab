@@ -45,10 +45,29 @@ async def create_project(
 
     Phase B-2 iter4:不 enforce 创建权限(iter5 SSO 加 org admin check);
     任何已认证 user 可建项目。
+
+    organization_id 解析顺序:payload > user.organization_id > settings.default_organization_id。
+    创建者自动作为 project admin → OpenFGA tuple,确保 list/get 可见。
     """
+    # 解析 org_id
+    org_id = payload.organization_id
+    if org_id is None:
+        from app.db.tables import User
+        user = await db.get(User, user_id)
+        if user and user.organization_id:
+            org_id = user.organization_id
+        else:
+            from app.settings import get_settings
+            default = get_settings().default_organization_id
+            if default:
+                import uuid as _uuid
+                org_id = _uuid.UUID(default)
+    if org_id is None:
+        raise HTTPException(400, "organization_id missing(no payload, no user org, no default)")
+
     project = Project(
         id=uuid.uuid4(),
-        organization_id=payload.organization_id,
+        organization_id=org_id,
         code=payload.code,
         name=payload.name,
         description=payload.description,
@@ -64,6 +83,22 @@ async def create_project(
     await permissions.bootstrap_project(
         project_id=str(project.id), organization_id=str(project.organization_id)
     )
+
+    # 创建者立即获 project admin tuple(否则后续 list/get 看不到自己刚建的项目)
+    try:
+        from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
+        await permissions._client.write(  # type: ignore[attr-defined]
+            ClientWriteRequest(writes=[
+                ClientTuple(
+                    user=f"user:{user_id}", relation="admin",
+                    object=f"project:{project.id}",
+                ),
+            ])
+        )
+    except Exception as e:
+        # tuple 重复 / 其他错误不阻塞;但 log
+        import logging
+        logging.getLogger(__name__).warning("creator admin tuple write tolerated: %s", e)
 
     await audit.write(
         event_type="project_created",

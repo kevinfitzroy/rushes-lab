@@ -19,6 +19,7 @@ import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { FolderTree } from '../components/FolderTree';
 import { AssetSummaryPanel } from '../components/AssetSummaryPanel';
 import { RequestAccessModal } from '../components/RequestAccessModal';
+import { NewFolderModal } from '../components/NewFolderModal';
 import { useUpload } from '../lib/upload-store';
 import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
@@ -69,6 +70,7 @@ export default function ProjectDetailPage() {
 
   const [applyAsset, setApplyAsset] = useState<Asset | null>(null);
   const [applySensitive, setApplySensitive] = useState(false);
+  const [newFolderMode, setNewFolderMode] = useState<'root' | 'child' | null>(null);
 
   const onFolderSelect = (fid: string) => {
     setActiveFolderId(fid);
@@ -108,17 +110,33 @@ export default function ProjectDetailPage() {
     return (
       <div>
         <AppBreadcrumb />
-        <Empty description="本项目没有可见 folder(可能 sensitive 待邀请)" style={{ marginTop: 60 }} />
+        <Empty description="本项目还没有 folder — 新建一个开始" style={{ marginTop: 60 }} />
         <div style={{ textAlign: 'center', marginTop: 16 }}>
-          <Button onClick={() => setApplySensitive(true)} icon={<KeyOutlined />}>
-            申请 sensitive 目录访问
-          </Button>
+          <Space>
+            <Button type="primary" icon={<UploadOutlined />} onClick={() => setNewFolderMode('root')}>
+              新建第一个文件夹
+            </Button>
+            <Button onClick={() => setApplySensitive(true)} icon={<KeyOutlined />}>
+              申请 sensitive 目录访问
+            </Button>
+          </Space>
         </div>
         {applySensitive && (
           <RequestAccessModal
             open onClose={() => setApplySensitive(false)}
             targetId="" targetName="(请输入 folder UUID)"
             targetType="sensitive_folder" defaultAction="access"
+          />
+        )}
+        {newFolderMode && projectId && (
+          <NewFolderModal
+            open
+            onClose={() => setNewFolderMode(null)}
+            projectId={projectId}
+            onCreated={(fid) => {
+              setActiveFolderId(fid);
+              navigate(`/projects/${projectId}/folders/${fid}`, { replace: true });
+            }}
           />
         )}
       </div>
@@ -174,6 +192,8 @@ export default function ProjectDetailPage() {
             projectName={project?.name}
             activeFolderId={activeFolderId}
             onSelect={onFolderSelect}
+            onCreateRoot={() => setNewFolderMode('root')}
+            onCreateChild={() => setNewFolderMode('child')}
           />
         </Layout.Sider>
       )}
@@ -278,6 +298,21 @@ export default function ProjectDetailPage() {
           open onClose={() => setApplyAsset(null)}
           targetId={applyAsset.id} targetName={applyAsset.filename}
           targetType="asset" defaultAction="download"
+        />
+      )}
+
+      {newFolderMode && projectId && (
+        <NewFolderModal
+          open
+          onClose={() => setNewFolderMode(null)}
+          projectId={projectId}
+          parentFolderId={newFolderMode === 'child' ? (activeFolderId ?? undefined) : undefined}
+          parentName={newFolderMode === 'child' ? folder?.minio_prefix : undefined}
+          parentIsSensitive={newFolderMode === 'child' ? folder?.is_sensitive : false}
+          onCreated={(fid) => {
+            setActiveFolderId(fid);
+            navigate(`/projects/${projectId}/folders/${fid}`, { replace: true });
+          }}
         />
       )}
     </Layout>
