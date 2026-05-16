@@ -236,6 +236,35 @@ async def test_share_invalid_token_404(client: AsyncClient) -> None:
     assert r.status_code == 404
 
 
+# ─── a2:GET /users 搜索 ─────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_users_list_basic(client: AsyncClient) -> None:
+    """无 q 列出前 N 个 active user。"""
+    r = await client.get("/api/v1/users?limit=5", headers=_h(EVAN_ID))
+    assert r.status_code == 200
+    items = r.json()
+    assert isinstance(items, list)
+    assert len(items) <= 5
+    if items:
+        assert "open_id" in items[0]
+        assert "name" in items[0]
+
+
+@pytest.mark.asyncio
+async def test_users_fuzzy_search(client: AsyncClient) -> None:
+    """模糊搜 'Evan' → 至少 Evan 自己。"""
+    r = await client.get("/api/v1/users?q=Evan&limit=10", headers=_h(EVAN_ID))
+    assert r.status_code == 200
+    names = {u["name"] for u in r.json()}
+    assert "Evan" in names
+
+
+@pytest.mark.asyncio
+async def test_users_no_auth_401(client: AsyncClient) -> None:
+    r = await client.get("/api/v1/users")
+    assert r.status_code == 401
+
+
 # ─── admin endpoint:feishu health ───────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_admin_feishu_health(client: AsyncClient) -> None:

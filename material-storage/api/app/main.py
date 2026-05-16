@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.routers import (
-    admin, approvals, assets, auth, folders, projects, share, webhooks,
+    admin, approvals, assets, auth, folders, projects, share, users, webhooks,
 )
 from app.settings import get_settings
 
@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(folders.router, prefix="/api/v1/folders", tags=["folders"])
     app.include_router(assets.router, prefix="/api/v1/assets", tags=["assets"])
     app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["approvals"])
+    app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
     app.include_router(share.router, prefix="/api/v1/share", tags=["share"])
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
