@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.routers import admin, approvals, assets, auth, folders, projects, webhooks
@@ -72,6 +73,12 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
+
+    # static / uppy demo
+    import pathlib
+    static_dir = pathlib.Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 
     return app
 

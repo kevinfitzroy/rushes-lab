@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>material-storage — uppy demo</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@uppy/core@4/dist/style.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@uppy/dashboard@4/dist/style.min.css">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 900px; margin: 20px auto; padding: 0 16px; }
+    h1 { font-size: 18px; }
+    label { display: block; margin-top: 8px; font-size: 13px; color: #555; }
+    input { width: 100%; padding: 6px 8px; margin-top: 2px; box-sizing: border-box; font: 13px ui-monospace, monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    #log { background: #f3f4f6; padding: 12px; margin-top: 16px; font: 12px ui-monospace, monospace; white-space: pre-wrap; max-height: 260px; overflow: auto; border-radius: 4px; }
+    .err { color: #b91c1c; }
+    .ok { color: #047857; }
+    button { margin-top: 8px; padding: 6px 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>material-storage uppy demo(dev mode,X-User-Id header)</h1>
+  <p style="font-size:13px;color:#666">
+    在 dev 模式下,header <code>X-User-Id</code> 即可认证(env=dev)。生产走 OIDC cookie。
+    上传走 5-endpoint multipart(create / sign-part × N / complete / abort)。
+  </p>
+
+  <div class="row">
+    <label>API base(同源时填空,跨域填 https://...)
+      <input id="apiBase" value="">
+    </label>
+    <label>X-User-Id(UUID)
+      <input id="userId" placeholder="00000000-0000-0000-0000-00000000u002">
+    </label>
+  </div>
+  <label>Folder ID(把文件传到此 folder)
+    <input id="folderId" placeholder="00000000-0000-0000-0000-00000000f001">
+  </label>
+
+  <button id="check">check /healthz + /auth/me</button>
+
+  <div id="uppy"></div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { Uppy } from 'https://esm.sh/@uppy/core@4';
+    import Dashboard from 'https://esm.sh/@uppy/dashboard@4';
+    import AwsS3 from 'https://esm.sh/@uppy/aws-s3@4';
+
+    const $log = document.getElementById('log');
+    function log(msg, cls = '') {
+      const t = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      if (cls) line.className = cls;
+      line.textContent = `[${t}] ${msg}`;
+      $log.prepend(line);
+    }
+    const $api = document.getElementById('apiBase');
+    const $uid = document.getElementById('userId');
+    const $fid = document.getElementById('folderId');
+
+    function api() { return ($api.value || '').replace(/\/$/, ''); }
+    function hdrs() {
+      const h = { 'Content-Type': 'application/json' };
+      if ($uid.value) h['X-User-Id'] = $uid.value.trim();
+      return h;
+    }
+
+    document.getElementById('check').addEventListener('click', async () => {
+      try {
+        const r1 = await fetch(api() + '/healthz');
+        log('healthz: ' + r1.status + ' ' + await r1.text(), r1.ok ? 'ok' : 'err');
+      } catch (e) { log('healthz err: ' + e.message, 'err'); }
+      try {
+        const r2 = await fetch(api() + '/api/v1/auth/me', { headers: hdrs() });
+        log('/auth/me: ' + r2.status + ' ' + await r2.text(), r2.ok ? 'ok' : 'err');
+      } catch (e) { log('/me err: ' + e.message, 'err'); }
+    });
+
+    // ─── Uppy ────────────────────────────────────────────────────────
+    function safe(name, fn) {
+      return (...args) => {
+        try { return fn(...args); }
+        catch (e) { log(`${name} err: ${e.message}`, 'err'); throw e; }
+      };
+    }
+
+    const uppy = new Uppy({
+      restrictions: { maxNumberOfFiles: 10, maxFileSize: 5 * 1024 * 1024 * 1024 }, // 5GB
+      autoProceed: false,
+    })
+      .use(Dashboard, { inline: true, target: '#uppy', height: 360, showProgressDetails: true })
+      .use(AwsS3, {
+        shouldUseMultipart: true,
+        // partSize default 5MB,大文件改 16MB
+        getChunkSize: () => 16 * 1024 * 1024,
+
+        createMultipartUpload: safe('createMultipart', async (file) => {
+          const r = await fetch(api() + '/api/v1/assets/uploads', {
+            method: 'POST', headers: hdrs(),
+            body: JSON.stringify({
+              folder_id: $fid.value.trim(),
+              filename: file.name,
+              content_type: file.type || 'application/octet-stream',
+              size_bytes: file.size,
+            }),
+          });
+          if (!r.ok) throw new Error(`createMultipart ${r.status}: ${await r.text()}`);
+          const d = await r.json();
+          log(`created upload ${d.upload_id} key=${d.key}`, 'ok');
+          return { uploadId: d.upload_id, key: d.key };
+        }),
+
+        signPart: safe('signPart', async (file, opts) => {
+          const { uploadId, key, partNumber } = opts;
+          const bucket = (await getBucketForKey(key));
+          const u = new URL(api() + `/api/v1/assets/uploads/${uploadId}/parts/${partNumber}`);
+          u.searchParams.set('bucket', bucket);
+          u.searchParams.set('key', key);
+          const r = await fetch(u, { headers: hdrs() });
+          if (!r.ok) throw new Error(`signPart ${r.status}: ${await r.text()}`);
+          const d = await r.json();
+          return { url: d.url, headers: {} };
+        }),
+
+        completeMultipartUpload: safe('complete', async (file, opts) => {
+          const { uploadId, key, parts } = opts;
+          const bucket = (await getBucketForKey(key));
+          const r = await fetch(api() + `/api/v1/assets/uploads/${uploadId}/complete`, {
+            method: 'POST', headers: hdrs(),
+            body: JSON.stringify({ upload_id: uploadId, bucket, key, parts }),
+          });
+          if (!r.ok) throw new Error(`complete ${r.status}: ${await r.text()}`);
+          const d = await r.json();
+          log(`upload complete asset_id=${d.id} bytes=${d.size_bytes}`, 'ok');
+          return { location: `s3://${d.minio_bucket}/${d.minio_key}` };
+        }),
+
+        abortMultipartUpload: safe('abort', async (file, opts) => {
+          const { uploadId, key } = opts;
+          const bucket = (await getBucketForKey(key));
+          const u = new URL(api() + `/api/v1/assets/uploads/${uploadId}`);
+          u.searchParams.set('bucket', bucket);
+          u.searchParams.set('key', key);
+          await fetch(u, { method: 'DELETE', headers: hdrs() });
+          log(`aborted upload ${uploadId}`);
+        }),
+      });
+
+    // 简化:bucket 跟 project 走;从 folder_id → folder 拿。
+    // 这里直接 cache 第一次 createMultipart 时拿到的 bucket(从 response)
+    let cachedBucket = null;
+    async function getBucketForKey(key) {
+      if (cachedBucket) return cachedBucket;
+      // fallback:dev 默认 bucket
+      return 'ms-dev';
+    }
+
+    uppy.on('upload-success', (file, response) => log(`success: ${file?.name}`, 'ok'));
+    uppy.on('upload-error', (file, err) => log(`error: ${file?.name} ${err?.message}`, 'err'));
+    uppy.on('complete', (result) => log(`batch done: ${result.successful.length} ok / ${result.failed.length} fail`));
+
+    log('uppy ready');
+  </script>
+</body>
+</html>
