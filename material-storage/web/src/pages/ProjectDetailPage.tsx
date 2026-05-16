@@ -19,6 +19,7 @@ import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { FolderTree } from '../components/FolderTree';
 import { AssetSummaryPanel } from '../components/AssetSummaryPanel';
 import { RequestAccessModal } from '../components/RequestAccessModal';
+import { NewFolderModal } from '../components/NewFolderModal';
 import { useUpload } from '../lib/upload-store';
 import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
@@ -69,6 +70,7 @@ export default function ProjectDetailPage() {
 
   const [applyAsset, setApplyAsset] = useState<Asset | null>(null);
   const [applySensitive, setApplySensitive] = useState(false);
+  const [newFolderMode, setNewFolderMode] = useState<'root' | 'child' | null>(null);
 
   const onFolderSelect = (fid: string) => {
     setActiveFolderId(fid);
@@ -174,6 +176,8 @@ export default function ProjectDetailPage() {
             projectName={project?.name}
             activeFolderId={activeFolderId}
             onSelect={onFolderSelect}
+            onCreateRoot={() => setNewFolderMode('root')}
+            onCreateChild={() => setNewFolderMode('child')}
           />
         </Layout.Sider>
       )}
@@ -278,6 +282,21 @@ export default function ProjectDetailPage() {
           open onClose={() => setApplyAsset(null)}
           targetId={applyAsset.id} targetName={applyAsset.filename}
           targetType="asset" defaultAction="download"
+        />
+      )}
+
+      {newFolderMode && projectId && (
+        <NewFolderModal
+          open
+          onClose={() => setNewFolderMode(null)}
+          projectId={projectId}
+          parentFolderId={newFolderMode === 'child' ? (activeFolderId ?? undefined) : undefined}
+          parentName={newFolderMode === 'child' ? folder?.minio_prefix : undefined}
+          parentIsSensitive={newFolderMode === 'child' ? folder?.is_sensitive : false}
+          onCreated={(fid) => {
+            setActiveFolderId(fid);
+            navigate(`/projects/${projectId}/folders/${fid}`, { replace: true });
+          }}
         />
       )}
     </Layout>

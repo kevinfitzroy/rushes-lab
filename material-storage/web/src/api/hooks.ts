@@ -34,7 +34,35 @@ export const useProject = (id: string | undefined) =>
     enabled: !!id,
   });
 
+export const useCreateProject = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: {
+      code: string;
+      name: string;
+      description?: string;
+      organization_id: string;
+      minio_bucket: string;
+    }) => (await http.post<Project>('/api/v1/projects', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+};
+
 // ─── folders ───────────────────────────────────────────────────────────────
+export const useCreateFolder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: {
+      project_id: string;
+      parent_folder_id?: string;
+      name: string;
+      is_sensitive?: boolean;
+      minio_prefix?: string;
+    }) => (await http.post<Folder>('/api/v1/folders', body)).data,
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ['folders', vars.project_id] }),
+  });
+};
+
 export const useFolders = (projectId: string | undefined) =>
   useQuery({
     queryKey: ['folders', projectId],
