@@ -1,10 +1,9 @@
-"""审批决策核心服务 — 抽自 routers/approvals.py。
+"""审批决策核心服务 — iter a1 适配 v4 OpenFGA model(subject 用飞书 ID)。
 
-iter7 飞书 IM 卡片接入后,decision 入口有两个:
+decide 入口两个:
   1. HTTP:POST /api/v1/approvals/{id}/approve|reject — router endpoint
   2. 飞书卡片回调:card.action.trigger value.intent='approval_decision' — feishu_card_handlers
-
-两个入口必须走同一段权限校验 + grant 写入 + 落库 + audit 逻辑,所以抽到这里。
+两个入口都调本服务,共用 admin check + grant 写入 + 落库 + audit 逻辑。
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.tables import ApprovalRequest
+from app.db.tables import ApprovalRequest, User
 from app.services.audit import AuditService
 from app.services.permissions import PermissionsService
 
@@ -34,8 +33,6 @@ class ApprovalDecisionError(Exception):
 
 @dataclass
 class DecisionContext:
-    """请求级 context — 写 audit 用(IP / User-Agent)。card handler 路径多数为空。"""
-
     request_ip: str | None = None
     user_agent: str | None = None
 
@@ -51,20 +48,20 @@ async def fetch_pending(db: AsyncSession, approval_id: uuid.UUID) -> ApprovalReq
 
 async def enforce_admin_for_target(
     permissions: PermissionsService,
-    user_id: uuid.UUID,
+    decider_user_id: uuid.UUID,
+    decider_open_id: str,
     approval: ApprovalRequest,
     *,
     audit: AuditService | None = None,
     ctx: DecisionContext | None = None,
 ) -> None:
-    """user 必须对申请目标 can_admin(asset 走 can_delete,project/sensitive_folder 走 can_admin)。"""
+    """user 必须对申请目标 can_admin(v4 model:asset/folder/sensitive_folder/project 都用 can_admin)。"""
     object_type = approval.target_type
     object_id = str(approval.target_id)
-    admin_relation = "can_delete" if object_type == "asset" else "can_admin"
 
     allowed = await permissions.check(
-        user_id=str(user_id),
-        relation=admin_relation,
+        user_subject=f"user:{decider_open_id}",
+        relation="can_admin",
         object_type=object_type,
         object_id=object_id,
     )
@@ -72,7 +69,7 @@ async def enforce_admin_for_target(
         if audit is not None:
             await audit.write(
                 event_type="access_denied",
-                actor_user_id=user_id,
+                actor_user_id=decider_user_id,
                 details={
                     "action": "approve_approval",
                     "approval_id": str(approval.id),
@@ -85,10 +82,15 @@ async def enforce_admin_for_target(
 
 
 async def grant_for_approval(
-    permissions: PermissionsService, approval: ApprovalRequest
+    db: AsyncSession,
+    permissions: PermissionsService,
+    approval: ApprovalRequest,
 ) -> dict[str, Any]:
-    """写 grant tuple,返 tuple ref(撤销/审计用)。"""
-    applicant = str(approval.applicant_user_id)
+    """approve 通过后写 grant tuple(v4 model:subject 用飞书 open_id)。"""
+    applicant = await db.get(User, approval.applicant_user_id)
+    if applicant is None or not applicant.feishu_open_id:
+        raise ApprovalDecisionError(400, "applicant user has no feishu_open_id")
+    applicant_open_id = applicant.feishu_open_id
     target_id = str(approval.target_id)
 
     if approval.action == "download":
@@ -99,27 +101,29 @@ async def grant_for_approval(
         if approval.duration_seconds is None:
             raise ApprovalDecisionError(400, "download 必须有 duration_seconds")
         await permissions.grant_explicit_download(
-            user_id=applicant,
+            user_open_id=applicant_open_id,
             object_type=approval.target_type,  # type: ignore[arg-type]
             object_id=target_id,
             duration_seconds=approval.duration_seconds,
         )
         return {
-            "user": f"user:{applicant}",
+            "user": f"user:{applicant_open_id}",
             "relation": "explicit_downloader",
             "object": f"{approval.target_type}:{target_id}",
             "duration_seconds": approval.duration_seconds,
         }
 
-    # action=='access' → sensitive_folder 邀请
+    # action == 'access' → sensitive_folder 邀请;v4 model 需 level(默认 viewer)
     await permissions.invite_to_sensitive_folder(
         sensitive_folder_id=target_id,
-        user_id=applicant,
+        subject=f"user:{applicant_open_id}",
+        level="viewer",
         duration_seconds=approval.duration_seconds,
     )
+    permanent = approval.duration_seconds is None
     return {
-        "user": f"user:{applicant}",
-        "relation": "invited" if approval.duration_seconds is None else "explicit_invited",
+        "user": f"user:{applicant_open_id}",
+        "relation": ("invited_viewer" if permanent else "explicit_invited_viewer"),
         "object": f"sensitive_folder:{target_id}",
         "duration_seconds": approval.duration_seconds,
     }
@@ -130,22 +134,21 @@ async def decide(
     db: AsyncSession,
     approval_id: uuid.UUID,
     decider_user_id: uuid.UUID,
+    decider_open_id: str,
     decision: Literal["approve", "reject"],
     decision_note: str | None,
     permissions: PermissionsService,
     audit: AuditService,
     ctx: DecisionContext | None = None,
 ) -> ApprovalRequest:
-    """approve 或 reject 一个 pending approval — router/card handler 唯一入口。
-
-    抛 ApprovalDecisionError(status_code, msg)给调用方,无副作用回滚。
-    """
     approval = await fetch_pending(db, approval_id)
-    await enforce_admin_for_target(permissions, decider_user_id, approval, audit=audit, ctx=ctx)
+    await enforce_admin_for_target(
+        permissions, decider_user_id, decider_open_id, approval, audit=audit, ctx=ctx
+    )
 
     granted_ref: dict[str, Any] = {}
     if decision == "approve":
-        granted_ref = await grant_for_approval(permissions, approval)
+        granted_ref = await grant_for_approval(db, permissions, approval)
         approval.status = "approved"
     else:
         approval.status = "rejected"

@@ -117,8 +117,12 @@ class FolderOut(ORMModel):
 
 
 class FolderInviteIn(BaseModel):
-    user_id: uuid.UUID | None = None
-    group_id: uuid.UUID | None = None
+    # subject 三选一(飞书 ID)— 任选其一传:
+    user_open_id: str | None = None       # 单人 user (飞书 open_id)
+    group_id: str | None = None           # 飞书用户组
+    department_id: str | None = None      # 飞书部门(含子部门 via OpenFGA 自递归)
+    # 邀请等级(v4 新增,旧调用方默认 viewer)
+    level: str = Field("viewer", pattern=r"^(viewer|downloader)$")
     duration_seconds: int | None = Field(None, ge=60, le=365 * 24 * 3600,
                                          description="None=永久邀请;int=时间限定")
 

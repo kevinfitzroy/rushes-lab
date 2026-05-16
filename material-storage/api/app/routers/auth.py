@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import User
-from app.deps import get_current_user_id
+from app.deps import CurrentUser, get_current_user
 from app.services.auth import FeishuOIDCService
 from app.settings import get_settings
 
@@ -101,10 +101,10 @@ async def callback(
 
 @router.get("/me")
 async def me(
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    user = await db.get(User, user_id)
+    user = await db.get(User, cur.id)
     if not user:
         raise HTTPException(401, "session user not found")
     return {

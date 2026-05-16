@@ -1,16 +1,28 @@
-"""FastAPI Dependency Injection — Phase B-2 iter4 + iter5。"""
+"""FastAPI Dependency Injection — iter a1 加 CurrentUser(同时给 SQL UUID 和飞书 open_id)。"""
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from fastapi import Header, HTTPException, Request
+from sqlalchemy import select
 
+from app.db.session import get_sessionmaker
+from app.db.tables import User
 from app.services.audit import AuditService
 from app.services.auth import FeishuOIDCService
 from app.services.feishu_client import FeishuClient
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
 from app.settings import Settings, get_settings
+
+
+@dataclass
+class CurrentUser:
+    """authn 结果 — 同时拿 SQL UUID(FK 用)和飞书 open_id(OpenFGA subject 用)。"""
+    id: uuid.UUID
+    open_id: str
+    name: str
 
 
 def settings_dep() -> Settings:
@@ -40,14 +52,15 @@ async def get_audit(request: Request):
         yield AuditService(session)
 
 
-# ─── current user(Phase B-2 iter5:cookie session 优先 + dev header fallback)─
-async def get_current_user_id(
+# ─── current user(cookie session 优先 + dev header fallback)─────────────────
+async def get_current_user(
     request: Request,
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
-) -> uuid.UUID:
+) -> CurrentUser:
     """认证优先级:
       1. cookie 'ms_session'(JWT)— 生产路径,飞书 OIDC 登录获得
-      2. X-User-Id header — dev / smoke 测试 fallback;生产环境 settings.env != 'dev' 时拒绝
+         JWT payload 已包 sub(UUID)+ open_id + name → 直接构 CurrentUser,不查 db
+      2. X-User-Id header(dev fallback)— 反查 db 拿 open_id;生产 env != 'dev' 拒绝
     """
     settings = get_settings()
     auth: FeishuOIDCService = request.app.state.auth
@@ -56,18 +69,31 @@ async def get_current_user_id(
     if token:
         try:
             payload = auth.decode_session(token)
-            return uuid.UUID(payload["sub"])
+            return CurrentUser(
+                id=uuid.UUID(payload["sub"]),
+                open_id=payload["open_id"],
+                name=payload.get("name", ""),
+            )
         except (ValueError, KeyError) as e:
             raise HTTPException(401, f"invalid session: {e}") from e
 
-    # dev fallback
     if settings.env == "dev" and x_user_id:
         try:
-            return uuid.UUID(x_user_id)
+            uid = uuid.UUID(x_user_id)
         except ValueError as e:
             raise HTTPException(400, f"X-User-Id must be valid UUID: {e}") from e
+        # dev fallback 反查 db
+        async with get_sessionmaker()() as db:
+            stmt = select(User).where(User.id == uid)
+            res = await db.execute(stmt)
+            user = res.scalar_one_or_none()
+            if user is None:
+                raise HTTPException(401, f"X-User-Id user {uid} not found")
+            return CurrentUser(id=user.id, open_id=user.feishu_open_id, name=user.name)
 
     raise HTTPException(401, "not authenticated — call /api/v1/auth/login")
+
+
 
 
 async def get_request_context(request: Request) -> dict[str, str | None]:
