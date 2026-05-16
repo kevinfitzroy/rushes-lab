@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.routers import admin, approvals, assets, auth, projects, webhooks
+from app.routers import admin, approvals, assets, auth, folders, projects, webhooks
 from app.settings import get_settings
 
 log = structlog.get_logger()
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     # routers
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"])
+    app.include_router(folders.router, prefix="/api/v1/folders", tags=["folders"])
     app.include_router(assets.router, prefix="/api/v1/assets", tags=["assets"])
     app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["approvals"])
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])

@@ -95,6 +95,33 @@ class ApprovalDecisionIn(BaseModel):
     decision_note: str | None = Field(None, max_length=2000)
 
 
+# ─── folders(iter7)──────────────────────────────────────────────────────────
+class FolderCreateIn(BaseModel):
+    project_id: uuid.UUID
+    parent_folder_id: uuid.UUID | None = None
+    name: str = Field(..., min_length=1, max_length=255)
+    is_sensitive: bool = False
+    minio_prefix: str | None = Field(None, max_length=1024,
+                                      description="未给则自动 = '<parent_prefix>/<name>/'")
+
+
+class FolderOut(ORMModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    parent_folder_id: uuid.UUID | None
+    name: str
+    minio_prefix: str
+    is_sensitive: bool
+    created_at: datetime
+
+
+class FolderInviteIn(BaseModel):
+    user_id: uuid.UUID | None = None
+    group_id: uuid.UUID | None = None
+    duration_seconds: int | None = Field(None, ge=60, le=365 * 24 * 3600,
+                                         description="None=永久邀请;int=时间限定")
+
+
 class ApprovalOut(ORMModel):
     id: uuid.UUID
     applicant_user_id: uuid.UUID
