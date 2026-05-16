@@ -175,9 +175,67 @@ http://localhost:8089               # HTTP API(自检 / Postman 等)
 | 业务后端 SDK 集成 | 🟡 Sketch 给出,Phase B 实际编码 |
 | Playground UI 可访问(SSH tunnel) | ✅ |
 
+## v2 → v3 model 演进(2026-05-16)
+
+### v2(短暂):简化为单一 folder type
+
+业务讨论后反复 — v3 给 sensitive_folder 新语义(邀请制可见性),回归 type 隔离。
+
+### v3 — 4 层粒度(当前)
+
+| Layer | 控制 | OpenFGA 表达 |
+|---|---|---|
+| 1. **project.visibility**(DB 字段)| project metadata 在 org 内可见性(public / private / stealth)| 业务后端 filter |
+| 2. **project member** | 普通 folder 全可见 + 可下载 | project 内 `member / editor / admin` relations |
+| 3. **sensitive_folder invited**(邀请制)| 即使 project member,sensitive folder 默认看不到;必须 admin 显式 invite | `invited: [user, group#member]`(永久) + `explicit_invited: [user with non_expired_grant]`(临时) |
+| 4. **asset explicit_downloader** | 跨 folder 单文件审批临时下载 | `explicit_downloader: [user with non_expired_grant]` |
+
+普通 folder + sensitive folder **两种 type** 共存,业务可灵活组合。
+
+### v3 PoC verified:1/1 test + **42/42 check pass**
+
+覆盖关键场景:
+- alice(org admin)全权 sensitive folder(从 project admin 继承)
+- bob(project editor + 显式 `invited` 永久)可见 sensitive
+- **eve(同 project editor 同 group,但 NOT invited)** → ❌ 看不到 sensitive folder + 内部 asset(关键验证)
+- charlie(实习生 30d `explicit_invited`)grant 内 ✓ / 31d 过期 ❌
+- david(file-level grant 1h)单 file 下载 ✓ / 边界过期 ❌
+- david 别的 file → ❌(no grant)
+
+### 业务后端 SDK 用法(material-storage api)
+
+```python
+# 永久邀请
+await permissions.invite_to_sensitive_folder(
+    sensitive_folder_id=str(folder.id),
+    user_id=str(user.id),
+)
+
+# 临时邀请(30 天)
+await permissions.invite_to_sensitive_folder(
+    sensitive_folder_id=str(folder.id),
+    user_id=str(user.id),
+    duration_seconds=30 * 24 * 3600,
+)
+
+# 邀请整个 group(group#member 形式)
+await permissions.invite_to_sensitive_folder(
+    sensitive_folder_id=str(folder.id),
+    group_id=str(group.id),
+)
+
+# 撤销
+await permissions.revoke_from_sensitive_folder(
+    sensitive_folder_id=str(folder.id),
+    user_id=str(user.id),
+    permanent=True,   # 删 invited;False 则删 explicit_invited
+)
+```
+
 ## 关联
 
 - ADR-0005 §11.2 Gap 1(presigned URL 撤销)+ Gap 5(权限模型)
+- ADR-0006 §1 + §10(权限引擎 + Gap update)
 - OpenFGA: https://openfga.dev / Apache 2.0 / Auth0 + CNCF
 - Pigsty MinIO PoC: `../minio/`
-- Phase B 技术选型 ADR(待起草):权限引擎选 OpenFGA / 业务后端 framework / 飞书 H5 入口
+- material-storage api Phase B-2 配套:`../api/`

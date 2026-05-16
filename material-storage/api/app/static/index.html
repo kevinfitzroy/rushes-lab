@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>material-storage — dev landing</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 700px; margin: 30px auto; padding: 0 16px; color: #222; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 3px; font: 12px ui-monospace, monospace; }
+    li { margin: 6px 0; }
+    .pill { display: inline-block; padding: 1px 8px; background: #dbeafe; color: #1e40af; border-radius: 10px; font-size: 12px; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <h1>material-storage — Phase B-2 PoC</h1>
+  <p>FastAPI + OpenFGA + MinIO + 飞书 OIDC(去 bridge);dev 模式接受 <code>X-User-Id</code> header。</p>
+
+  <h3>endpoints</h3>
+  <ul>
+    <li><span class="pill">GET</span> <a href="/healthz">/healthz</a> — 健康检查</li>
+    <li><span class="pill">GET</span> <a href="/docs">/docs</a> — OpenAPI Swagger UI</li>
+    <li><span class="pill">UI</span> <a href="/static/uppy.html">/static/uppy.html</a> — uppy 上传 demo</li>
+    <li><span class="pill">OIDC</span> <a href="/api/v1/auth/login">/api/v1/auth/login</a> — 飞书 SSO 入口</li>
+  </ul>
+
+  <h3>API 列表</h3>
+  <ul>
+    <li><code>/api/v1/auth/*</code> — login/callback/me/logout</li>
+    <li><code>/api/v1/projects</code> — CRUD + visibility filter</li>
+    <li><code>/api/v1/folders</code> — CRUD + sensitive 邀请</li>
+    <li><code>/api/v1/assets/uploads</code> — uppy AwsS3 5-endpoint multipart</li>
+    <li><code>/api/v1/assets/{id}/download-link</code> — presigned GET</li>
+    <li><code>/api/v1/approvals</code> — 申请/批准/拒绝</li>
+    <li><code>/api/v1/webhooks/feishu</code> — 飞书事件入口</li>
+  </ul>
+</body>
+</html>

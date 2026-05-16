@@ -12,9 +12,10 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.routers import admin, approvals, assets, auth, projects, webhooks
+from app.routers import admin, approvals, assets, auth, folders, projects, webhooks
 from app.settings import get_settings
 
 log = structlog.get_logger()
@@ -25,19 +26,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     log.info("starting material-storage-api", env=settings.env, version=__version__)
 
-    # TODO Phase B-1:
-    #   - connect db pool
-    #   - connect redis
-    #   - connect openfga(verify store / model id)
-    #   - connect feishu bridge(health check)
-    #   - connect MinIO(health check)
-    #   挂到 app.state
-    log.info("startup complete")
+    # Phase B-2:wire 服务到 app.state
+    from app.services.auth import create_auth_service
+    from app.services.permissions import create_permissions_service
+    from app.services.presign import PresignService
+
+    app.state.permissions = await create_permissions_service(settings)
+    app.state.presign = PresignService(settings)
+    app.state.auth = await create_auth_service(settings)
+    log.info("startup complete — permissions + presign + auth ready")
 
     yield
 
     log.info("shutting down")
-    # TODO: cleanup pools
+    await app.state.permissions.close()
+    await app.state.auth.close()
 
 
 def create_app() -> FastAPI:
@@ -61,6 +64,7 @@ def create_app() -> FastAPI:
     # routers
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"])
+    app.include_router(folders.router, prefix="/api/v1/folders", tags=["folders"])
     app.include_router(assets.router, prefix="/api/v1/assets", tags=["assets"])
     app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["approvals"])
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -69,6 +73,12 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
+
+    # static / uppy demo
+    import pathlib
+    static_dir = pathlib.Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 
     return app
 

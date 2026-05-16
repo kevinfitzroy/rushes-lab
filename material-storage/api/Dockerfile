@@ -1,36 +1,24 @@
-# material-storage-api Dockerfile — Phase B-1
-# uv-based build,multi-stage 减体积
+# material-storage-api Dockerfile — Phase B-2
+# 单 stage,清华 pip 源(避 GFW + 跳 uv ghcr.io 依赖)
 
-# ─── stage 1: build deps ──────────────────────────────────────────────
-FROM python:3.12-slim AS builder
-
-# uv 包管理
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-WORKDIR /app
-COPY pyproject.toml ./
-
-RUN uv venv /opt/venv \
- && . /opt/venv/bin/activate \
- && uv pip install --no-cache .
-
-# ─── stage 2: runtime ─────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# 媒体处理(worker 用)
-RUN apt-get update -qq \
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update -qq \
  && apt-get install -y --no-install-recommends ffmpeg \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+ && pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
 
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir .
+
 COPY app /app/app
 COPY alembic.ini /app/alembic.ini
+COPY scripts /app/scripts
 
 EXPOSE 8000
-
-# 默认 API server;worker 用 docker-compose override command
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

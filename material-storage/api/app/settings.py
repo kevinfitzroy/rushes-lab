@@ -29,11 +29,24 @@ class Settings(BaseSettings):
     openfga_store_id: str = Field(..., description="启动时通过 list stores + name=material-storage-poc 找;或固化")
     openfga_model_id: str | None = Field(None, description="可选;None = 用 store latest model")
 
-    # ─── 飞书 ────────────────────────────────────────────────────────────────
+    # ─── 飞书 OIDC(passport.feishu.cn,iter5)───────────────────────────────
     feishu_app_id: str
     feishu_app_secret: str
-    feishu_bridge_url: str = Field(..., description="bridge service base URL,e.g. http://feishu-bridge:8000")
-    feishu_oidc_issuer: str = Field(..., description="MS-FB-004 OIDC issuer,e.g. https://feishu-bridge.example/oidc")
+    feishu_authorize_endpoint: str = "https://passport.feishu.cn/suite/passport/oauth/authorize"
+    feishu_token_endpoint: str = "https://passport.feishu.cn/suite/passport/oauth/token"
+    feishu_userinfo_endpoint: str = "https://passport.feishu.cn/suite/passport/oauth/userinfo"
+    feishu_oidc_scope: str = "contact:user.base:readonly"
+    feishu_redirect_uri: str = Field(..., description="OIDC callback,绝对 URL,需在飞书后台注册;e.g. https://rusheslab.taoxiplan.com/api/v1/auth/callback")
+    feishu_bridge_url: str | None = Field(None, description="可选;iter6 webhook handler 在 ms-api 内,不再依赖 bridge")
+    feishu_verification_token: str | None = Field(None, description="飞书事件订阅 Verification Token,prod 必填(env!=dev 时强制 verify)")
+
+    # ─── session JWT ─────────────────────────────────────────────────────────
+    session_jwt_secret: str = Field(..., description="HS256 签名密钥,至少 32 字节随机")
+    session_jwt_alg: str = "HS256"
+    session_jwt_ttl_seconds: int = 24 * 3600
+    session_cookie_name: str = "ms_session"
+    session_cookie_secure: bool = True
+    session_cookie_samesite: str = "lax"     # H5 webview 同站访问,lax 足够
 
     # ─── presigned URL TTL ────────────────────────────────────────────────────
     presigned_normal_ttl_seconds: int = 900       # 15 min,普通文件
