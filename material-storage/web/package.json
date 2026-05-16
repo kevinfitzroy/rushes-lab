@@ -15,6 +15,7 @@
     "@uppy/aws-s3": "4",
     "@uppy/core": "4",
     "@uppy/dashboard": "4",
+    "@uppy/locales": "^5.1.1",
     "antd": "^6.4.2",
     "axios": "^1.16.1",
     "dayjs": "^1.11.20",
