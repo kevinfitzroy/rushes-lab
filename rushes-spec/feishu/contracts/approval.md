@@ -10,10 +10,11 @@
 
 ## 版本
 
-- **当前版本:** v1
+- **当前版本:** v1.1
 - **状态:** draft
 - **变更日志:**
-  - 2026-05-15: initial draft (feishu agent)
+  - 2026-05-15: v1 initial draft (feishu agent)
+  - 2026-05-16: v1.1 — webhook body 加 `metadata` 可选字段(POST 时传入的 metadata 由 bridge 在 webhook 中原样回传);驱动:[MS-FB-007 v2](./approval-callback.md) 需要 `metadata.material_storage_ref` 关联本地资源。**向后兼容**(新增可选 response 字段允许)
 
 ## 通用约定
 
@@ -257,6 +258,7 @@ bridge 收到飞书审批实例的状态变更事件(`approval.approval.instance
 | `current_status` | enum (`approved` \| `rejected` \| `withdrawn`) | 终态 |
 | `decided_by` | string | 决策者 `open_id`(`withdrawn` 时为 `applicant_open_id`) |
 | `comment` | string \| null | 决策者备注;可能为空 |
+| `metadata` | object | **v1.1 新增**:POST 时上游传入的 `metadata` 由 bridge 原样回传。**bridge 不解析、不修改、不补字段**。例如 MS-FB-007 v2 场景下含 `material_storage_ref` 等业务 ID,详见 [`approval-callback.md`](./approval-callback.md)。**v1 客户端不读此字段时行为不变**(向后兼容,新增可选 response 字段允许) |
 
 **Body 示例:**
 
@@ -270,7 +272,11 @@ bridge 收到飞书审批实例的状态变更事件(`approval.approval.instance
   "previous_status": "pending",
   "current_status": "approved",
   "decided_by": "ou_c8f4afe4ab51ce0a1c6711d6c0e2f3a9",
-  "comment": "已核对客户合同范围"
+  "comment": "已核对客户合同范围",
+  "metadata": {
+    "valid_until": "2026-05-22T23:59:59Z",
+    "category": "case_library"
+  }
 }
 ```
 
