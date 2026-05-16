@@ -28,19 +28,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Phase B-2:wire 服务到 app.state
     from app.services.auth import create_auth_service
+    from app.services.feishu_client import create_feishu_client
     from app.services.permissions import create_permissions_service
     from app.services.presign import PresignService
 
     app.state.permissions = await create_permissions_service(settings)
     app.state.presign = PresignService(settings)
     app.state.auth = await create_auth_service(settings)
-    log.info("startup complete — permissions + presign + auth ready")
+    app.state.feishu_client = await create_feishu_client(settings)
+    # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
+    # iter1:noop;iter2 起按 intent 注册具体 handler
+    import app.services.feishu_card_handlers  # noqa: F401
+    log.info("startup complete — permissions + presign + auth + feishu_client ready")
 
     yield
 
     log.info("shutting down")
     await app.state.permissions.close()
     await app.state.auth.close()
+    await app.state.feishu_client.close()
 
 
 def create_app() -> FastAPI:

@@ -1,13 +1,16 @@
-"""webhooks router — 飞书事件统一入口(Phase B-2 iter6 框架)。
+"""webhooks router — 飞书事件统一入口。
 
-飞书事件类型(iter6 框架处理 + iter7 接具体业务):
+飞书事件 / 卡片回调统一接入此 URL(飞书后台"事件订阅 Request URL"和
+"消息卡片请求网址"均填同一个 `/api/v1/webhooks/feishu`):
+
 - url_verification               — 飞书后台首次验证 challenge
 - contact.user.deleted_v3        — 离职闭环 → permissions.revoke_user_completely
-- approval_instance              — 审批结果 → 对应 internal approve/reject
+- approval_instance              — 飞书审批 instance 状态变更(iter7 真审批闭环)
+- card.action.trigger            — 飞书 IM 卡片按钮点击 → dispatch 到 services/feishu_card_handlers
 
-签名校验:飞书 Encrypt Key + Verification Token(后台配)
+签名校验:飞书 Verification Token(应用后台 → 事件订阅)
   - Header `X-Lark-Signature` = HMAC-SHA256(verification_token, timestamp + nonce + body)
-  - iter6 占位 verify(env=dev 跳过);iter7 严格 enforce
+  - env=dev 跳过;非 dev 强制 enforce
 """
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.deps import get_permissions
+from app.services.feishu_card_handlers import dispatch_card_action
 from app.services.permissions import PermissionsService
 from app.settings import get_settings
 
@@ -78,7 +82,13 @@ async def feishu_event(
         log.info("approval_instance event(iter7 接业务):%s", event_data)
         return {"status": "ack", "todo": "iter7 wire approval_instance → internal decision"}
 
-    # 未识别事件:ack 防止飞书重试,iter7 按需扩展
+    if event_type == "card.action.trigger":
+        # IM 卡片按钮点击 → dispatch 到 services/feishu_card_handlers
+        # 飞书要求同步返回 {toast?, card?} 完成"toast + 卡片更新";否则返 {}
+        result = await dispatch_card_action(event_data, request)
+        return result
+
+    # 未识别事件:ack 防止飞书重试
     log.info("feishu event unhandled type=%s", event_type)
     return {"status": "ack"}
 
