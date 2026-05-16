@@ -16,9 +16,10 @@ GREEN='\033[0;32m'; YEL='\033[0;33m'; NC='\033[0m'
 step() { echo -e "\n${YEL}═══${NC} $* ${YEL}═══${NC}"; }
 ok() { echo -e "${GREEN}✓${NC} $*"; }
 
-ssh_run() { sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$USER@$HOST" "$@"; }
-scp_to() { sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r "$@"; }
-rsync_to() { sshpass -p "$PASS" rsync -az -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" "$@"; }
+export SSHPASS="$PASS"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password -o PubkeyAuthentication=no"
+ssh_run() { sshpass -e ssh $SSH_OPTS "$USER@$HOST" "$@"; }
+rsync_to() { sshpass -e rsync -az -e "ssh $SSH_OPTS" "$@"; }
 
 step "0) 检查本地环境(在 material-storage/api 目录运行)"
 [[ -f Dockerfile ]] || { echo "ERROR: 必须在 material-storage/api/ 下跑"; exit 1; }
