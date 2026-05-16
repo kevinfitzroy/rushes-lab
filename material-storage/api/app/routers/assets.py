@@ -127,16 +127,19 @@ async def complete_upload(
         payload.bucket, payload.key, upload_id, payload.parts  # type: ignore[arg-type]
     )
 
+    # head_object 拿真实 size + content-type(complete 返回不含)
+    head = presign.head_object(payload.bucket, payload.key)
+
     asset = Asset(
         id=uuid.uuid4(),
         folder_id=folder_id,
         filename=payload.key.rsplit("/", 1)[-1],
         minio_bucket=payload.bucket,
         minio_key=payload.key,
-        etag=result.get("etag"),
-        minio_version_id=result.get("version_id"),
-        size_bytes=0,  # iter4 后续:head_object enrich
-        content_type=None,
+        etag=head.get("etag") or result.get("etag"),
+        minio_version_id=head.get("version_id") or result.get("version_id"),
+        size_bytes=head.get("size_bytes") or 0,
+        content_type=head.get("content_type"),
         uploader_id=user_id,
     )
     db.add(asset)

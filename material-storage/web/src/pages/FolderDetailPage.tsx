@@ -6,6 +6,7 @@ import { useAssets, useDownloadLink, useFolder } from '../api/hooks';
 import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { RequestAccessModal } from '../components/RequestAccessModal';
 import { useUpload } from '../lib/upload-store';
+import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
 import type { Asset } from '../api/types';
 
@@ -16,17 +17,6 @@ function fmtBytes(n: number) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
-function triggerDownload(url: string, filename: string) {
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.target = '_blank';
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => document.body.removeChild(a), 0);
-}
-
 export default function FolderDetailPage() {
   const { folderId } = useParams<{ folderId: string }>();
   const { data: folder } = useFolder(folderId);
@@ -34,12 +24,14 @@ export default function FolderDetailPage() {
   const dlLink = useDownloadLink();
   const { message } = App.useApp();
   const upload = useUpload();
+  const downloads = useDownloads();
   const [applyAsset, setApplyAsset] = useState<Asset | null>(null);
 
   const handleDownload = async (a: Asset) => {
     try {
       const link = await dlLink.mutateAsync(a.id);
-      triggerDownload(link.url, a.filename);
+      // 走任务中心(fetch + progress + 可取消),右下浮按显示
+      await downloads.start(link.url, a.filename);
     } catch (e: unknown) {
       const err = e as { response?: { status?: number } };
       if (err.response?.status === 403) {

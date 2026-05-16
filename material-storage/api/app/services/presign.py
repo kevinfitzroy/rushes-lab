@@ -92,11 +92,42 @@ class PresignService:
         upload_id: str,
         parts: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # 清洗 parts:uppy v4 client 把 PUT response 整组 headers 都塞进 part dict,
+        # boto3 严格只接 PartNumber / ETag / Checksum*,其他字段会触发
+        # 'Unknown parameter' 校验失败 → 5xx。这里 case-insensitive 提取 + key 大小写归一。
+        ALLOWED = {
+            "etag", "partnumber",
+            "checksumcrc32", "checksumcrc32c", "checksumcrc64nvme",
+            "checksumsha1", "checksumsha256",
+        }
+        # 大小写归一:PartNumber / ETag / ChecksumXxx 是 boto3 期望的 Pascal/camel
+        BOTO_KEY = {
+            "etag": "ETag", "partnumber": "PartNumber",
+            "checksumcrc32": "ChecksumCRC32", "checksumcrc32c": "ChecksumCRC32C",
+            "checksumcrc64nvme": "ChecksumCRC64NVME",
+            "checksumsha1": "ChecksumSHA1", "checksumsha256": "ChecksumSHA256",
+        }
+
+        cleaned: list[dict[str, Any]] = []
+        for p in parts:
+            row: dict[str, Any] = {}
+            for k, v in p.items():
+                lk = k.lower()
+                if lk in ALLOWED:
+                    # ETag 去引号(uppy 不一定 strip)
+                    if lk == "etag" and isinstance(v, str):
+                        v = v.strip().strip('"')
+                    row[BOTO_KEY[lk]] = v
+            if "PartNumber" in row and "ETag" in row:
+                cleaned.append(row)
+
+        cleaned.sort(key=lambda r: int(r["PartNumber"]))
+
         resp = self._s3_internal.complete_multipart_upload(
             Bucket=bucket,
             Key=key,
             UploadId=upload_id,
-            MultipartUpload={"Parts": parts},
+            MultipartUpload={"Parts": cleaned},
         )
         return {
             "location": resp.get("Location"),
@@ -106,6 +137,17 @@ class PresignService:
 
     def abort_multipart_upload(self, bucket: str, key: str, upload_id: str) -> None:
         self._s3_internal.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+
+    def head_object(self, bucket: str, key: str) -> dict[str, Any]:
+        """拿 object 元信息(size / content-type / etag),complete 后 enrich Asset 用。"""
+        resp = self._s3_internal.head_object(Bucket=bucket, Key=key)
+        return {
+            "size_bytes": int(resp.get("ContentLength", 0)),
+            "content_type": resp.get("ContentType"),
+            "etag": (resp.get("ETag") or "").strip('"') or None,
+            "version_id": resp.get("VersionId"),
+            "last_modified": resp.get("LastModified"),
+        }
 
     def list_parts(self, bucket: str, key: str, upload_id: str) -> list[dict[str, Any]]:
         resp = self._s3_internal.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)

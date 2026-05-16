@@ -10,6 +10,7 @@ import { UserMenu } from './components/UserMenu';
 import { PersistentUploadDrawer } from './components/PersistentUploadDrawer';
 import { UploadFloatingIndicator } from './components/UploadFloatingIndicator';
 import { UploadProvider } from './lib/upload-store';
+import { DownloadProvider } from './lib/download-store';
 
 // (2) route-level lazy:首屏只加载当前路由 chunk
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
@@ -121,9 +122,11 @@ export default function App() {
       <AntApp>
         <QueryClientProvider client={qc}>
           <UploadProvider>
-            <BrowserRouter basename="/ms-static/web">
-              <AppShell />
-            </BrowserRouter>
+            <DownloadProvider>
+              <BrowserRouter basename="/ms-static/web">
+                <AppShell />
+              </BrowserRouter>
+            </DownloadProvider>
           </UploadProvider>
         </QueryClientProvider>
       </AntApp>
