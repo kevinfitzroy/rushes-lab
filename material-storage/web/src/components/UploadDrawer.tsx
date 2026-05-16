@@ -3,10 +3,10 @@
  * 直接接 ms-api 5-endpoint。
  */
 import { Drawer, App } from 'antd';
-import { Dashboard } from '@uppy/react';
 import Uppy from '@uppy/core';
+import Dashboard from '@uppy/dashboard';
 import AwsS3 from '@uppy/aws-s3';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiBase, http } from '../api/client';
 
@@ -28,6 +28,7 @@ interface CreateUploadResp {
 export function UploadDrawer({ open, onClose, folderId }: Props) {
   const { message } = App.useApp();
   const qc = useQueryClient();
+  const mountRef = useRef<HTMLDivElement>(null);
 
   const uppy = useMemo(() => {
     let lastBucket = 'ms-dev';
@@ -76,6 +77,22 @@ export function UploadDrawer({ open, onClose, folderId }: Props) {
     });
   }, [folderId]);
 
+  // 挂载原生 @uppy/dashboard 到 div(避 @uppy/react peer dep 链)
+  useEffect(() => {
+    if (!open || !mountRef.current) return;
+    const plugin = uppy.use(Dashboard, {
+      inline: true,
+      target: mountRef.current,
+      height: 460,
+      showProgressDetails: true,
+      proudlyDisplayPoweredByUppy: false,
+    });
+    return () => {
+      const dashPlugin = uppy.getPlugin('Dashboard');
+      if (dashPlugin) plugin.removePlugin(dashPlugin);
+    };
+  }, [open, uppy]);
+
   useEffect(() => {
     const onSuccess = () => {
       message.success('上传成功');
@@ -93,7 +110,7 @@ export function UploadDrawer({ open, onClose, folderId }: Props) {
 
   return (
     <Drawer title="上传文件" open={open} onClose={onClose} width={720} destroyOnClose>
-      <Dashboard uppy={uppy} height={460} showProgressDetails proudlyDisplayPoweredByUppy={false} />
+      <div ref={mountRef} />
     </Drawer>
   );
 }
