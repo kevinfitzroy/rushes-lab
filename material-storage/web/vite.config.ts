@@ -19,5 +19,17 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        // (2) code splitting — id 路径模式分 vendor chunk(独立 cache)
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (/[\\/]antd[\\/]|@ant-design/.test(id)) return 'antd';
+          if (/@uppy/.test(id)) return 'uppy';
+          if (/react|react-dom|react-router|@tanstack/.test(id)) return 'react';
+          return 'vendor';
+        },
+      },
+    },
   },
 });

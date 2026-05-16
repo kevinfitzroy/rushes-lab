@@ -1,16 +1,19 @@
-import { App as AntApp, ConfigProvider, Layout, Menu, Spin, Typography, theme, message as antMessage } from 'antd';
+import { App as AntApp, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Spin, Typography, theme, message as antMessage } from 'antd';
+import { MenuOutlined } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HashRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Suspense, lazy, useState } from 'react';
 import { useMe } from './api/hooks';
 import { apiBase, errorMessage } from './api/client';
 import { UserMenu } from './components/UserMenu';
 
-import ProjectsPage from './pages/ProjectsPage';
-import ProjectDetailPage from './pages/ProjectDetailPage';
-import FolderDetailPage from './pages/FolderDetailPage';
-import ApprovalsPage from './pages/ApprovalsPage';
-import DevLoginPage from './pages/DevLoginPage';
+// (2) route-level lazy:首屏只加载当前路由 chunk
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
+const FolderDetailPage = lazy(() => import('./pages/FolderDetailPage'));
+const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
+const DevLoginPage = lazy(() => import('./pages/DevLoginPage'));
 
 // 全局 query/mutation 错误统一 toast(401 axios interceptor 已处理跳 OIDC,这里跳过 401)
 const qc = new QueryClient({
@@ -32,54 +35,72 @@ const qc = new QueryClient({
   }),
 });
 
+const RouterRoutes = () => (
+  <Suspense fallback={<div style={{ padding: 80, textAlign: 'center' }}><Spin tip="加载页面…" /></div>}>
+    <Routes>
+      <Route path="/" element={<ProjectsPage />} />
+      <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      <Route path="/folders/:folderId" element={<FolderDetailPage />} />
+      <Route path="/approvals" element={<ApprovalsPage />} />
+      <Route path="/dev-login" element={<DevLoginPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  </Suspense>
+);
+
 function AppShell() {
   const { data: me, isLoading, isError } = useMe();
   const location = useLocation();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  if (location.pathname === '/dev-login') {
-    return (
-      <Routes>
-        <Route path="/dev-login" element={<DevLoginPage />} />
-      </Routes>
-    );
-  }
+  if (location.pathname === '/dev-login') return <RouterRoutes />;
 
   if (isLoading) return <div style={{ padding: 100, textAlign: 'center' }}><Spin size="large" tip="加载中…" /></div>;
   if (isError || !me) {
-    if (import.meta.env.DEV || window.location.search.includes('dev=1') || window.location.hash.includes('dev=1')) {
-      window.location.hash = '#/dev-login';
-      window.location.reload();
+    if (import.meta.env.DEV || window.location.search.includes('dev=1')) {
+      window.location.href = '/ms-static/web/dev-login';
       return null;
     }
-    const next = window.location.pathname + window.location.hash;
+    const next = window.location.pathname + window.location.search;
     window.location.href = `${apiBase}/api/v1/auth/login?next=${encodeURIComponent(next)}`;
     return null;
   }
 
   const selectedKey = location.pathname.startsWith('/approvals') ? 'approvals' : 'projects';
+  const menuItems = [
+    { key: 'projects', label: <Link to="/" onClick={() => setMenuOpen(false)}>项目</Link> },
+    { key: 'approvals', label: <Link to="/approvals" onClick={() => setMenuOpen(false)}>审批</Link> },
+  ];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Layout.Header style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '0 24px' }}>
-        <Typography.Text strong style={{ color: '#fff', fontSize: 16 }}>material-storage</Typography.Text>
-        <Menu theme="dark" mode="horizontal" selectedKeys={[selectedKey]} style={{ flex: 1, minWidth: 0 }}
-              items={[
-                { key: 'projects', label: <Link to="/">项目</Link> },
-                { key: 'approvals', label: <Link to="/approvals">审批</Link> },
-              ]}/>
+      <Layout.Header style={{ display: 'flex', alignItems: 'center', gap: 16, padding: isMobile ? '0 12px' : '0 24px' }}>
+        {isMobile && (
+          <Button type="text" icon={<MenuOutlined style={{ color: '#fff' }} />}
+                  onClick={() => setMenuOpen(true)} />
+        )}
+        <Typography.Text strong style={{ color: '#fff', fontSize: 16, whiteSpace: 'nowrap' }}>
+          material-storage
+        </Typography.Text>
+        {!isMobile && (
+          <Menu theme="dark" mode="horizontal" selectedKeys={[selectedKey]} items={menuItems}
+                style={{ flex: 1, minWidth: 0 }} />
+        )}
+        <div style={{ flex: 1 }} />
         <UserMenu me={me} />
       </Layout.Header>
-      <Layout.Content style={{ padding: '24px', maxWidth: 1400, margin: '0 auto', width: '100%' }}>
-        <Routes>
-          <Route path="/" element={<ProjectsPage />} />
-          <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-          <Route path="/folders/:folderId" element={<FolderDetailPage />} />
-          <Route path="/approvals" element={<ApprovalsPage />} />
-          <Route path="/dev-login" element={<DevLoginPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+      {isMobile && (
+        <Drawer title="导航" placement="left" open={menuOpen} onClose={() => setMenuOpen(false)}
+                width={260} styles={{ body: { padding: 0 } }}>
+          <Menu mode="inline" selectedKeys={[selectedKey]} items={menuItems} style={{ borderInlineEnd: 0 }} />
+        </Drawer>
+      )}
+      <Layout.Content style={{ padding: isMobile ? 12 : 24, maxWidth: 1400, margin: '0 auto', width: '100%' }}>
+        <RouterRoutes />
       </Layout.Content>
-      <Layout.Footer style={{ textAlign: 'center', color: '#999', fontSize: 12 }}>
+      <Layout.Footer style={{ textAlign: 'center', color: '#999', fontSize: 12, padding: '16px 12px' }}>
         material-storage Phase B-3 · {new Date().getFullYear()}
       </Layout.Footer>
     </Layout>
@@ -94,9 +115,9 @@ export default function App() {
     }}>
       <AntApp>
         <QueryClientProvider client={qc}>
-          <HashRouter>
+          <BrowserRouter basename="/ms-static/web">
             <AppShell />
-          </HashRouter>
+          </BrowserRouter>
         </QueryClientProvider>
       </AntApp>
     </ConfigProvider>
