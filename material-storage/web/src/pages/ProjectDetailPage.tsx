@@ -1,94 +1,99 @@
-import { Button, Empty, Modal, Form, Input, InputNumber, List, Space, Spin, Tag, Typography, App } from 'antd';
-import { LockOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import { Button, Empty, List, Skeleton, Space, Tag, Typography } from 'antd';
+import { LockOutlined, FolderOpenOutlined, KeyOutlined, ArrowRightOutlined } from '@ant-design/icons';
 import { Link, useParams } from 'react-router-dom';
 import { useState } from 'react';
-import { useCreateApproval, useFolders, useProject } from '../api/hooks';
+import { useFolders, useProject } from '../api/hooks';
+import { AppBreadcrumb } from '../components/AppBreadcrumb';
+import { RequestAccessModal } from '../components/RequestAccessModal';
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { data: project } = useProject(projectId);
   const { data: folders, isLoading } = useFolders(projectId);
-  const [applyTarget, setApplyTarget] = useState<{ id: string; name: string } | null>(null);
-  const create = useCreateApproval();
-  const { message } = App.useApp();
-  const [form] = Form.useForm();
+  const [applyFor, setApplyFor] = useState<{ id: string; name: string } | null>(null);
 
-  if (isLoading) return <Spin />;
+  // folder 列表分两组:可见的(普通 + 已邀请 sensitive),不可见的 sensitive(从 list 拿不到,这里不知道)
+  // 业务侧:用户看不到的 sensitive folder 当然不知道存在,所以这里只列可见 folders。
+  // 不可见的 sensitive 通过"全局申请入口"(顶部审批页)或管理员通知告知。
+
+  const sortedFolders = folders ? [...folders].sort((a, b) => {
+    // sensitive 在前(更突出邀请态),其次按名称
+    if (a.is_sensitive !== b.is_sensitive) return a.is_sensitive ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  }) : [];
 
   return (
     <div>
-      <Typography.Title level={3}>
-        {project?.name} <Tag>{project?.code}</Tag>
-      </Typography.Title>
-      <Typography.Paragraph type="secondary">{project?.description}</Typography.Paragraph>
-
-      <List
-        bordered
-        dataSource={folders ?? []}
-        locale={{
-          emptyText: (
-            <Empty description="本项目没有可见 folder(可能 sensitive 待邀请)" />
-          ),
-        }}
-        renderItem={(f) => (
-          <List.Item
-            actions={[
-              <Link to={`/folders/${f.id}`} key="open">
-                <Button type="link">打开</Button>
-              </Link>,
-            ]}
-          >
-            <List.Item.Meta
-              avatar={f.is_sensitive ? <LockOutlined /> : <FolderOpenOutlined />}
-              title={
-                <Space>
-                  <span>{f.name}</span>
-                  {f.is_sensitive && <Tag color="volcano">sensitive</Tag>}
-                </Space>
-              }
-              description={<Typography.Text type="secondary" code>{f.minio_prefix}</Typography.Text>}
-            />
-          </List.Item>
+      <AppBreadcrumb />
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        {project?.name ?? <Skeleton.Input active size="small" />}
+        {project && (
+          <Tag style={{ marginLeft: 12 }}
+               color={project.visibility === 'public' ? 'green' : project.visibility === 'stealth' ? 'volcano' : 'blue'}>
+            {project.visibility}
+          </Tag>
         )}
-      />
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
+        {project?.description ?? '—'} <Typography.Text code style={{ marginLeft: 8 }}>{project?.code}</Typography.Text>
+      </Typography.Paragraph>
 
-      <div style={{ marginTop: 16 }}>
-        <Button onClick={() => setApplyTarget({ id: projectId!, name: project?.name ?? '' })}>
-          没有看到想要的 folder?发起 access 申请
-        </Button>
+      {isLoading ? (
+        <Skeleton active />
+      ) : sortedFolders.length === 0 ? (
+        <Empty description="此项目暂无可见文件夹(或都是 sensitive 待邀请)" />
+      ) : (
+        <List
+          bordered
+          dataSource={sortedFolders}
+          renderItem={(f) => (
+            <List.Item
+              actions={[
+                <Link to={`/folders/${f.id}`} key="open">
+                  <Button type="primary" ghost icon={<ArrowRightOutlined />}>打开</Button>
+                </Link>,
+              ]}
+            >
+              <List.Item.Meta
+                avatar={f.is_sensitive
+                  ? <LockOutlined style={{ fontSize: 18, color: '#fa541c' }} />
+                  : <FolderOpenOutlined style={{ fontSize: 18, color: '#1677ff' }} />}
+                title={
+                  <Space>
+                    <Typography.Text strong>{f.name}</Typography.Text>
+                    {f.is_sensitive && <Tag color="volcano">sensitive — 已邀请可见</Tag>}
+                  </Space>
+                }
+                description={<Typography.Text type="secondary" code style={{ fontSize: 12 }}>{f.minio_prefix}</Typography.Text>}
+              />
+            </List.Item>
+          )}
+        />
+      )}
+
+      <div style={{ marginTop: 20, padding: 12, background: '#fafafa', borderRadius: 4 }}>
+        <Space>
+          <KeyOutlined />
+          <Typography.Text type="secondary">
+            没看到想要的 sensitive 目录?向项目管理员索取 folder UUID 后点击下面按钮申请。
+          </Typography.Text>
+          <Button size="small" onClick={() => {
+            const fid = prompt('请输入 sensitive folder UUID');
+            if (fid) setApplyFor({ id: fid, name: fid.slice(0, 8) + '…' });
+          }}>申请 sensitive 目录访问</Button>
+        </Space>
       </div>
 
-      <Modal
-        title={`申请进入 sensitive folder(需 admin 批准)`}
-        open={!!applyTarget}
-        onCancel={() => setApplyTarget(null)}
-        onOk={async () => {
-          const vals = await form.validateFields();
-          await create.mutateAsync({
-            target_type: 'sensitive_folder',
-            target_id: vals.target_id,
-            action: 'access',
-            duration_seconds: vals.duration_seconds || undefined,
-            reason: vals.reason,
-          });
-          message.success('申请已提交');
-          form.resetFields();
-          setApplyTarget(null);
-        }}
-        confirmLoading={create.isPending}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item name="target_id" label="Sensitive Folder ID" rules={[{ required: true }]}>
-            <Input placeholder="UUID" />
-          </Form.Item>
-          <Form.Item name="duration_seconds" label="有效期(秒,留空=永久)">
-            <InputNumber min={60} style={{ width: '100%' }} placeholder="86400 = 24h" />
-          </Form.Item>
-          <Form.Item name="reason" label="申请理由" rules={[{ required: true, min: 4 }]}>
-            <Input.TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {applyFor && (
+        <RequestAccessModal
+          open
+          onClose={() => setApplyFor(null)}
+          targetId={applyFor.id}
+          targetName={applyFor.name}
+          targetType="sensitive_folder"
+          defaultAction="access"
+        />
+      )}
     </div>
   );
 }

@@ -94,19 +94,26 @@ export function UploadDrawer({ open, onClose, folderId }: Props) {
   }, [open, uppy]);
 
   useEffect(() => {
-    const onSuccess = () => {
-      message.success('上传成功');
+    const onSuccess = (file: { name?: string } | undefined) => {
+      message.success(`上传成功:${file?.name ?? ''}`);
       qc.invalidateQueries({ queryKey: ['assets', folderId] });
     };
     const onError = (_file: unknown, err: { message?: string }) =>
       message.error(`上传失败:${err?.message ?? '未知错误'}`);
+    const onComplete = (result: { successful?: unknown[]; failed?: unknown[] }) => {
+      const ok = result.successful?.length ?? 0;
+      const fail = result.failed?.length ?? 0;
+      if (fail === 0 && ok > 0) setTimeout(() => onClose(), 1500);
+    };
     uppy.on('upload-success', onSuccess);
     uppy.on('upload-error', onError);
+    uppy.on('complete', onComplete);
     return () => {
       uppy.off('upload-success', onSuccess);
       uppy.off('upload-error', onError);
+      uppy.off('complete', onComplete);
     };
-  }, [uppy, message, qc, folderId]);
+  }, [uppy, message, qc, folderId, onClose]);
 
   return (
     <Drawer title="上传文件" open={open} onClose={onClose} width={720} destroyOnClose>

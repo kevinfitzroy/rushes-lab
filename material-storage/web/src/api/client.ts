@@ -1,8 +1,8 @@
 /**
  * axios client — withCredentials 走 cookie session(prod);
- * VITE_DEV_USER_ID 设置时附加 X-User-Id header(dev,backend env=dev 才接)。
+ * VITE_DEV_USER_ID / localStorage 设置时附加 X-User-Id header(dev,backend env=dev 才接)。
  */
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 
 export const apiBase = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '');
 
@@ -31,7 +31,7 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (r) => r,
-  (err) => {
+  (err: AxiosError) => {
     if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
       // HashRouter 下需带 hash 完整路径回业务前端;否则 callback 跳 /(MinIO Console)
       const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
@@ -40,3 +40,14 @@ http.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
+/** 从 axios error 抽 user-friendly message,优先取 detail。*/
+export function errorMessage(err: unknown, fallback = '请求失败'): string {
+  if (axios.isAxiosError(err)) {
+    const d = err.response?.data as { detail?: string } | undefined;
+    if (d?.detail) return d.detail;
+    if (err.response?.status) return `${fallback}(HTTP ${err.response.status})`;
+    if (err.message) return err.message;
+  }
+  return fallback;
+}
