@@ -38,7 +38,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.feishu_client = await create_feishu_client(settings)
     # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
     # iter1:noop;iter2 起按 intent 注册具体 handler
-    import app.services.feishu_card_handlers  # noqa: F401
+    # 注:用 from-import 以免 `app` 名 shadow lifespan 参数 (Python 名字解析坑)
+    from app.services import feishu_card_handlers as _h  # noqa: F401
     log.info("startup complete — permissions + presign + auth + feishu_client ready")
 
     yield
