@@ -4,8 +4,8 @@
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://localhost:8200}"
-MEMBER="${MEMBER_USER_ID:-00000000-0000-0000-0000-00000000u002}"
-NORMAL_F="${NORMAL_FOLDER_ID:-00000000-0000-0000-0000-00000000f001}"
+MEMBER="${MEMBER_USER_ID:-00000000-0000-0000-0000-000000000002}"
+NORMAL_F="${NORMAL_FOLDER_ID:-00000000-0000-0000-0000-0000000000c1}"
 BUCKET="${BUCKET:-ms-dev}"
 SIZE_MB="${SIZE_MB:-500}"
 PART_MB=16
@@ -54,7 +54,7 @@ for ((i=1; i<=NUM_PARTS; i++)); do
 
   # PUT
   ETAG=$(curl -sS -i -X PUT --data-binary @"$PART_FILE" "$PART_URL" 2>/dev/null \
-    | grep -i '^etag:' | head -1 | sed 's/^[Ee]tag: //; s/\r$//; s/"//g')
+    | awk 'BEGIN{IGNORECASE=1} /^etag:/{gsub(/\r/,"");gsub(/"/,"");sub(/^[^:]+: */,"");print;exit}')
   [[ -n "$ETAG" ]] || fail "part $i upload failed (no ETag)"
   rm -f "$PART_FILE"
 

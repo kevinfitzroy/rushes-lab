@@ -9,11 +9,11 @@
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://localhost:8200}"
-ADMIN="${ADMIN_USER_ID:-00000000-0000-0000-0000-00000000u001}"
-MEMBER="${MEMBER_USER_ID:-00000000-0000-0000-0000-00000000u002}"
-PROJECT="${PROJECT_ID:-00000000-0000-0000-0000-00000000p001}"
-NORMAL_F="${NORMAL_FOLDER_ID:-00000000-0000-0000-0000-00000000f001}"
-SENSITIVE_F="${SENSITIVE_FOLDER_ID:-00000000-0000-0000-0000-00000000f002}"
+ADMIN="${ADMIN_USER_ID:-00000000-0000-0000-0000-000000000001}"
+MEMBER="${MEMBER_USER_ID:-00000000-0000-0000-0000-000000000002}"
+PROJECT="${PROJECT_ID:-00000000-0000-0000-0000-0000000000b1}"
+NORMAL_F="${NORMAL_FOLDER_ID:-00000000-0000-0000-0000-0000000000c1}"
+SENSITIVE_F="${SENSITIVE_FOLDER_ID:-00000000-0000-0000-0000-0000000000c2}"
 BUCKET="${BUCKET:-ms-dev}"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YEL='\033[0;33m'; NC='\033[0m'
@@ -47,9 +47,13 @@ extract_json() {
   echo "$1" | sed '/__HTTP_/d'
 }
 
-step "S0 健康检查"
+step "S0 健康检查 + cleanup 残留 invitations"
 r=$(curl -sS "${API_BASE}/healthz")
 echo "$r" | grep -q '"status":"ok"' && ok "/healthz ok" || fail "healthz failed: $r"
+# 撤销 bob 的 sensitive_folder 邀请(both permanent + temporary;404 也 OK)
+curl -sS -X DELETE -H "X-User-Id: $ADMIN" "${API_BASE}/api/v1/folders/$SENSITIVE_F/invite/user/$MEMBER?permanent=true" -o /dev/null
+curl -sS -X DELETE -H "X-User-Id: $ADMIN" "${API_BASE}/api/v1/folders/$SENSITIVE_F/invite/user/$MEMBER?permanent=false" -o /dev/null
+ok "cleanup done"
 
 step "S1 admin (alice) 看 /auth/me"
 r=$(as "$ADMIN" GET /api/v1/auth/me)
@@ -104,7 +108,7 @@ HTTP=$(curl -sS -o /tmp/put.out -w "%{http_code}" -X PUT --data-binary @/tmp/hel
 [[ "$HTTP" == "200" ]] && ok "PUT part 1 OK" || fail "PUT part 1 HTTP=$HTTP"
 ETAG=$(curl -sI "$PART_URL" 2>/dev/null | grep -i etag | tr -d '\r' || true)
 # 重新 PUT 拿到 etag(curl -i)
-ETAG=$(curl -sS -i -X PUT --data-binary @/tmp/hello.bin "$PART_URL" 2>/dev/null | grep -i '^etag:' | head -1 | sed 's/^[Ee]tag: //; s/\r$//; s/"//g')
+ETAG=$(curl -sS -i -X PUT --data-binary @/tmp/hello.bin "$PART_URL" 2>/dev/null | awk 'BEGIN{IGNORECASE=1} /^etag:/{gsub(/\r/,"");gsub(/"/,"");sub(/^[^:]+: */,"");print;exit}')
 ok "part 1 ETag=$ETAG"
 
 # complete
@@ -148,21 +152,31 @@ r=$(as "$MEMBER" GET "/api/v1/folders?project_id=$PROJECT")
 extract_json "$r" | grep -q "$SENSITIVE_F" && ok "bob NOW sees sensitive folder" \
   || fail "bob still doesn't see sensitive folder (approval grant failed?)"
 
-step "S14 bob 上传到 sensitive folder"
+step "S14a bob 试图上传到 sensitive folder — 应 403(invited 只可 view,不可 edit)"
 r=$(as "$MEMBER" POST /api/v1/assets/uploads \
   "{\"folder_id\":\"$SENSITIVE_F\",\"filename\":\"vip-clip.dat\",\"content_type\":\"application/octet-stream\",\"size_bytes\":512}")
-assert_status "$r" 200 "bob create upload (sensitive)"
+assert_status "$r" 403 "bob upload sensitive denied (model: invited 不 can_edit)"
+
+step "S14b alice (admin) 上传到 sensitive folder"
+r=$(as "$ADMIN" POST /api/v1/assets/uploads \
+  "{\"folder_id\":\"$SENSITIVE_F\",\"filename\":\"vip-clip.dat\",\"content_type\":\"application/octet-stream\",\"size_bytes\":512}")
+assert_status "$r" 200 "alice create upload (sensitive)"
 UPLOAD2=$(extract_json "$r" | python3 -c 'import sys,json;print(json.load(sys.stdin)["upload_id"])')
 KEY2=$(extract_json "$r" | python3 -c 'import sys,json;print(json.load(sys.stdin)["key"])')
 
-# sign + put + complete sensitive
-PART_URL2=$(as "$MEMBER" GET "/api/v1/assets/uploads/$UPLOAD2/parts/1?bucket=$BUCKET&key=$(printf %s "$KEY2" | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read()))')" \
+# sign + put + complete sensitive (alice)
+PART_URL2=$(as "$ADMIN" GET "/api/v1/assets/uploads/$UPLOAD2/parts/1?bucket=$BUCKET&key=$(printf %s "$KEY2" | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read()))')" \
   | sed '/__HTTP_/d' | python3 -c 'import sys,json;print(json.load(sys.stdin)["url"])')
 dd if=/dev/urandom of=/tmp/vip.bin bs=512 count=1 2>/dev/null
-ETAG2=$(curl -sS -i -X PUT --data-binary @/tmp/vip.bin "$PART_URL2" 2>/dev/null | grep -i '^etag:' | head -1 | sed 's/^[Ee]tag: //; s/\r$//; s/"//g')
-r=$(as "$MEMBER" POST "/api/v1/assets/uploads/$UPLOAD2/complete" \
+ETAG2=$(curl -sS -i -X PUT --data-binary @/tmp/vip.bin "$PART_URL2" 2>/dev/null | awk 'BEGIN{IGNORECASE=1} /^etag:/{gsub(/\r/,"");gsub(/"/,"");sub(/^[^:]+: */,"");print;exit}')
+r=$(as "$ADMIN" POST "/api/v1/assets/uploads/$UPLOAD2/complete" \
   "{\"upload_id\":\"$UPLOAD2\",\"bucket\":\"$BUCKET\",\"key\":\"$KEY2\",\"parts\":[{\"PartNumber\":1,\"ETag\":\"$ETAG2\"}]}")
-assert_status "$r" 200 "complete sensitive upload"
+assert_status "$r" 200 "alice complete sensitive upload"
+SENSITIVE_ASSET_ID=$(extract_json "$r" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+
+step "S14c bob (invited, can_view) 下载 alice 上传的 sensitive asset"
+r=$(as "$MEMBER" POST "/api/v1/assets/$SENSITIVE_ASSET_ID/download-link" "{}")
+assert_status "$r" 200 "bob download sensitive asset (via invited can_view)"
 
 step "S15 admin 直接邀请测试(/folders/{id}/invite)— 撤销 + 重新邀请验证"
 # 撤销刚才 approval 给的 invited

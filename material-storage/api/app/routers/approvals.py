@@ -219,13 +219,19 @@ async def _enforce_admin_for_target(
     audit: AuditService,
     ctx: dict,
 ) -> None:
-    """admin check:user 对申请目标必须 can_admin。"""
+    """admin check:user 对申请目标必须有 admin 权限。
+
+    model v3:
+      project / sensitive_folder → can_admin relation
+      asset → can_delete(= can_admin from parent;model 没 asset.can_admin)
+    """
     object_type = approval.target_type
     object_id = str(approval.target_id)
 
+    admin_relation = "can_delete" if object_type == "asset" else "can_admin"
     allowed = await permissions.check(
         user_id=str(user_id),
-        relation="can_admin",
+        relation=admin_relation,
         object_type=object_type,
         object_id=object_id,
     )

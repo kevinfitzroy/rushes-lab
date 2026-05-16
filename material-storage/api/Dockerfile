@@ -3,7 +3,8 @@
 
 FROM python:3.12-slim
 
-RUN apt-get update -qq \
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update -qq \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
