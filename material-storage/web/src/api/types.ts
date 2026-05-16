@@ -70,3 +70,22 @@ export interface DownloadLink {
   expires_in: number;
   is_sensitive: boolean;
 }
+
+// ─── share(iter3)──────────────────────────────────────────────────────────
+export interface ShareCreateOut {
+  token: string;
+  landing_url: string;
+  expires_at: string;
+  sent: { open_id: string; message_id?: string; error?: string }[];
+}
+
+export interface ShareResolve {
+  kind: 'asset' | 'folder';
+  target_id: string;
+  sharer_name: string | null;
+  expires_at: string;
+  asset?: { id: string; filename: string; size_bytes: number; content_type: string | null };
+  download_url?: string;
+  download_expires_in?: number;
+  folder?: { id: string; project_id: string; name: string; is_sensitive: boolean };
+}

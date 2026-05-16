@@ -76,7 +76,9 @@ class AuditService:
             index_elements=["dedup_key"]
         )
         await self._session.execute(stmt)
-        await self._session.flush()
+        # audit 是 fire-and-forget:get_audit 给我们独立 session,这里独立 commit
+        # 否则 session.close() 时事务回滚,event 丢失(历史 systemic bug, iter3 修)
+        await self._session.commit()
         return AuditEvent(**record)
 
     async def upload(self, **kwargs: Any) -> AuditEvent:

@@ -23,7 +23,9 @@ from openfga_sdk.client.models import (
     ClientTuple,
     ClientWriteRequest,
 )
-from openfga_sdk.models import RelationshipCondition
+from openfga_sdk.client.models.list_users_request import ClientListUsersRequest
+from openfga_sdk.models import FgaObject, RelationshipCondition
+from openfga_sdk.models.user_type_filter import UserTypeFilter
 
 from app.settings import Settings
 
@@ -103,6 +105,38 @@ class PermissionsService:
         # OpenFGA 返回 ["project:abc-123", "project:def-456"];strip type prefix
         prefix = f"{object_type}:"
         return [obj.removeprefix(prefix) for obj in resp.objects if obj.startswith(prefix)]
+
+    # ─── list_users:取对某 object 拥有指定 relation 的 user 列表 ────────────
+    async def list_users_with_relation(
+        self,
+        object_type: str,
+        object_id: str,
+        relation: Relation,
+        *,
+        current_time: datetime | None = None,
+    ) -> list[str]:
+        """返回 type=user 的 internal user_id 列表(stripped prefix)。
+
+        典型用法:approval 推卡片 → 找 target 的 admin → 反查 feishu_open_id 推送。
+        """
+        ctx = {"current_time": (current_time or datetime.now(timezone.utc)).isoformat()}
+        resp = await self._client.list_users(
+            ClientListUsersRequest(
+                object=FgaObject(type=object_type, id=object_id),
+                relation=relation,
+                user_filters=[UserTypeFilter(type="user")],
+                context=ctx,
+            )
+        )
+        out: list[str] = []
+        for u in resp.users:
+            obj = getattr(u, "object", None)
+            if obj is None:
+                continue
+            uid = getattr(obj, "id", None)
+            if uid:
+                out.append(uid)
+        return out
 
     # ─── grant 临时下载(model 简化 v2 后,通用 project / asset 级)──────────
     async def grant_explicit_download(

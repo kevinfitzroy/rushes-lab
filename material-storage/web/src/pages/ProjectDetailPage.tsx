@@ -13,7 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import {
   useAssets, useDeleteAsset, useDownloadLink,
-  useFolder, useFolders, useProject,
+  useFolder, useFolders, useMe, useProject,
 } from '../api/hooks';
 import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { FolderTree } from '../components/FolderTree';
@@ -39,6 +39,7 @@ export default function ProjectDetailPage() {
   const isMobile = !screens.md;
 
   const { data: project } = useProject(projectId);
+  const { data: me } = useMe();
   const { data: folders, isLoading: foldersLoading } = useFolders(projectId);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(paramFolderId ?? null);
 
@@ -276,7 +277,7 @@ export default function ProjectDetailPage() {
       {/* 右:summary */}
       {!isMobile && (
         <Layout.Sider width={320} theme="light" style={{ borderLeft: '1px solid #f0f0f0', overflow: 'auto' }}>
-          <AssetSummaryPanel selected={selectedAssets} />
+          <AssetSummaryPanel selected={selectedAssets} me={me} />
         </Layout.Sider>
       )}
 

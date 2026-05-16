@@ -1,9 +1,12 @@
 /**
  * 右侧选中文件 summary。0/1/N 选时不同显示。
+ * 单选时显示"分享给飞书"按钮 → ShareModal。
  */
-import { Descriptions, Empty, Statistic, Tag, Typography } from 'antd';
-import { FileOutlined } from '@ant-design/icons';
-import type { Asset } from '../api/types';
+import { Button, Descriptions, Empty, Space, Statistic, Tag, Typography } from 'antd';
+import { FileOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import type { Asset, Me } from '../api/types';
+import { ShareModal } from './ShareModal';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -14,9 +17,12 @@ function fmtBytes(n: number): string {
 
 interface Props {
   selected: Asset[];
+  me?: Me;
 }
 
-export function AssetSummaryPanel({ selected }: Props) {
+export function AssetSummaryPanel({ selected, me }: Props) {
+  const [shareOpen, setShareOpen] = useState(false);
+
   if (selected.length === 0) {
     return (
       <div style={{ padding: 24 }}>
@@ -35,6 +41,18 @@ export function AssetSummaryPanel({ selected }: Props) {
         <Typography.Title level={5} style={{ marginTop: 0 }}>
           <FileOutlined /> {a.filename}
         </Typography.Title>
+        {me && (
+          <Space style={{ marginBottom: 12 }}>
+            <Button
+              icon={<ShareAltOutlined />}
+              type="primary"
+              ghost
+              onClick={() => setShareOpen(true)}
+            >
+              分享给飞书
+            </Button>
+          </Space>
+        )}
         <Descriptions size="small" column={1} bordered styles={{ label: { width: 96 } }}>
           <Descriptions.Item label="ID"><code style={{ fontSize: 11 }}>{a.id}</code></Descriptions.Item>
           <Descriptions.Item label="大小">{fmtBytes(a.size_bytes)}</Descriptions.Item>
@@ -45,6 +63,14 @@ export function AssetSummaryPanel({ selected }: Props) {
           <Descriptions.Item label="version">{a.minio_version_id?.slice(0, 16) ?? '—'}</Descriptions.Item>
           <Descriptions.Item label="创建">{new Date(a.created_at).toLocaleString('zh-CN')}</Descriptions.Item>
         </Descriptions>
+        {me && (
+          <ShareModal
+            open={shareOpen}
+            onClose={() => setShareOpen(false)}
+            target={{ kind: 'asset', id: a.id, label: a.filename }}
+            me={me}
+          />
+        )}
       </div>
     );
   }

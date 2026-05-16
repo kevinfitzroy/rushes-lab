@@ -40,6 +40,21 @@ class Settings(BaseSettings):
     feishu_bridge_url: str | None = Field(None, description="可选;iter6 webhook handler 在 ms-api 内,不再依赖 bridge")
     feishu_verification_token: str | None = Field(None, description="飞书事件订阅 Verification Token,prod 必填(env!=dev 时强制 verify)")
 
+    # ─── 飞书 OpenAPI(IM 卡片推送 — iter7 卡片基础设施)─────────────────────
+    feishu_open_api_base: str = Field(
+        "https://open.feishu.cn",
+        description="飞书 OpenAPI base URL;海外租户用 https://open.larksuite.com",
+    )
+    feishu_im_enabled: bool = Field(
+        True,
+        description="false 时所有 IM 推送变 no-op(本地开发/无 app_secret 时关掉)",
+    )
+    # web 前端 base URL — 卡片中按钮 deeplink 用(打开项目 / 文件夹 / 短链页)
+    web_app_base_url: str = Field(
+        ...,
+        description="e.g. https://rusheslab.taoxiplan.com/ms-static/web/ — 末尾带斜杠",
+    )
+
     # ─── session JWT ─────────────────────────────────────────────────────────
     session_jwt_secret: str = Field(..., description="HS256 签名密钥,至少 32 字节随机")
     session_jwt_alg: str = "HS256"

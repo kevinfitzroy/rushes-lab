@@ -19,6 +19,7 @@ const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
 const FolderDetailPage = lazy(() => import('./pages/FolderDetailPage'));
 const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
 const DevLoginPage = lazy(() => import('./pages/DevLoginPage'));
+const ShareLandingPage = lazy(() => import('./pages/ShareLandingPage'));
 
 // 全局 query/mutation 错误统一 toast(401 axios interceptor 已处理跳 OIDC,这里跳过 401)
 const qc = new QueryClient({
@@ -48,6 +49,7 @@ const RouterRoutes = () => (
       <Route path="/projects/:projectId/folders/:folderId" element={<ProjectDetailPage />} />
       <Route path="/folders/:folderId" element={<FolderDetailPage />} />
       <Route path="/approvals" element={<ApprovalsPage />} />
+      <Route path="/s/:token" element={<ShareLandingPage />} />
       <Route path="/dev-login" element={<DevLoginPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

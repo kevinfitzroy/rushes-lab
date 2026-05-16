@@ -10,6 +10,8 @@ import type {
   Folder,
   Me,
   Project,
+  ShareCreateOut,
+  ShareResolve,
 } from './types';
 
 // ─── auth ──────────────────────────────────────────────────────────────────
@@ -178,3 +180,40 @@ export const useRejectApproval = () => {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['approvals'] }),
   });
 };
+
+// ─── share(iter3)──────────────────────────────────────────────────────────
+export const useShareAsset = () =>
+  useMutation({
+    mutationFn: async (args: {
+      asset_id: string;
+      receive_open_ids: string[];
+      message?: string;
+      expires_in_seconds: number;
+      requires_login?: boolean;
+    }) => {
+      const { asset_id, ...body } = args;
+      return (await http.post<ShareCreateOut>(`/api/v1/share/assets/${asset_id}`, body)).data;
+    },
+  });
+
+export const useShareFolder = () =>
+  useMutation({
+    mutationFn: async (args: {
+      folder_id: string;
+      receive_open_ids: string[];
+      message?: string;
+      expires_in_seconds: number;
+      requires_login?: boolean;
+    }) => {
+      const { folder_id, ...body } = args;
+      return (await http.post<ShareCreateOut>(`/api/v1/share/folders/${folder_id}`, body)).data;
+    },
+  });
+
+export const useResolveShare = (token: string | undefined) =>
+  useQuery({
+    queryKey: ['share', token],
+    queryFn: async () => (await http.get<ShareResolve>(`/api/v1/share/${token}`)).data,
+    enabled: !!token,
+    retry: false,
+  });

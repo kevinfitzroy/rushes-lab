@@ -7,6 +7,7 @@ from fastapi import Header, HTTPException, Request
 
 from app.services.audit import AuditService
 from app.services.auth import FeishuOIDCService
+from app.services.feishu_client import FeishuClient
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
 from app.settings import Settings, get_settings
@@ -26,6 +27,10 @@ def get_presign(request: Request) -> PresignService:
 
 def get_auth(request: Request) -> FeishuOIDCService:
     return request.app.state.auth
+
+
+def get_feishu_client(request: Request) -> FeishuClient:
+    return request.app.state.feishu_client
 
 
 async def get_audit(request: Request):

@@ -15,7 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.routers import admin, approvals, assets, auth, folders, projects, webhooks
+from app.routers import (
+    admin, approvals, assets, auth, folders, projects, share, webhooks,
+)
 from app.settings import get_settings
 
 log = structlog.get_logger()
@@ -28,19 +30,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Phase B-2:wire 服务到 app.state
     from app.services.auth import create_auth_service
+    from app.services.feishu_client import create_feishu_client
     from app.services.permissions import create_permissions_service
     from app.services.presign import PresignService
 
     app.state.permissions = await create_permissions_service(settings)
     app.state.presign = PresignService(settings)
     app.state.auth = await create_auth_service(settings)
-    log.info("startup complete — permissions + presign + auth ready")
+    app.state.feishu_client = await create_feishu_client(settings)
+    # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
+    # iter1:noop;iter2 起按 intent 注册具体 handler
+    # 注:用 from-import 以免 `app` 名 shadow lifespan 参数 (Python 名字解析坑)
+    from app.services import feishu_card_handlers as _h  # noqa: F401
+    log.info("startup complete — permissions + presign + auth + feishu_client ready")
 
     yield
 
     log.info("shutting down")
     await app.state.permissions.close()
     await app.state.auth.close()
+    await app.state.feishu_client.close()
 
 
 def create_app() -> FastAPI:
@@ -67,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(folders.router, prefix="/api/v1/folders", tags=["folders"])
     app.include_router(assets.router, prefix="/api/v1/assets", tags=["assets"])
     app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["approvals"])
+    app.include_router(share.router, prefix="/api/v1/share", tags=["share"])
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 
