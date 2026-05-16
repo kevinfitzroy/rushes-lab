@@ -82,6 +82,18 @@ EOF
 
 **Phase A.2 出口条件 ✅ 全部通过**(浏览器实测 uppy UX / 100GB+ 真实场景 / 断网恢复留作 follow-up,需用户参与)。
 
+## Phase A.3 — nginx 反代 80 公网直连(2026-05-16 实测)
+
+| 验证 | 状态 |
+| --- | --- |
+| Local(server-side) curl `http://localhost/health` | ✅ |
+| **跨境(Claude Code → 阿里云 8.156.34.238)curl `/health`** | ✅ 24ms |
+| **公网 跨境完整 uppy multipart(create / sign / PUT / complete)经 nginx** | ✅ ETag `e9cc...-2`,webhook `s3:ObjectCreated:CompleteMultipartUpload bucket=incoming key=uppy-test%2Fnginx-test-50m.bin` |
+| MinIO Console `http://8.156.34.238/console/` | ✅ 200 |
+| `http://8.156.34.238/uppy/` → uppy 前端 | ✅ |
+
+→ **公网直连完全 work,SSH tunnel 退役为 fallback**。详 P-14 配置。
+
 ## Finding P-8 ~ P-13(2026-05-16,Phase A.2 实测追加)
 
 | # | Finding | 影响 | 处理 |
@@ -91,18 +103,26 @@ EOF
 | **P-10** | **Presigned URL sig v4 把 host 头进 canonical request,host:port 必须 客户端 与 签发时 一致**;否则 `SignatureDoesNotMatch` 403 | mc share download 默认用 alias endpoint 签;若客户端从别的 host 访问(SSH tunnel / 公网 / proxy)→ 全失败 | **presigner 用双 boto3 client** :`s3_internal` (docker DNS) 调 admin API(create/complete/abort/list);`s3_signer` (公网 host) 仅签 URL,不发请求 — 签出的 URL host = 客户端视角 host,签名匹配。MINIO_PUBLIC_HOST 环境变量配置可达 host(SSH tunnel = `http://localhost:6100`;直连 = `http://<server-ip>:6100`)|
 | **P-11** | **Webhook 事件 key 是 URL-encoded**(`/` → `%2F`),例 `bucket=incoming key=uppy-test%2Fuppy-test-50m.bin` | audit handler / 业务消费者直接用 key 查会 miss(URL-encoded ≠ 实际 object key) | 业务后端 webhook handler 必须 `urllib.parse.unquote(key)` 后再用 |
 | **P-12** | **Python 3.14-alpine 是 latest 但 boto3 / urllib3 没 prebuild wheel,pip install 从源码 build 卡 > 5 min**;3.12-alpine 有 prebuild,< 60 s 完成 | 容器启动延迟 → 误判失败 | pin `python:3.12-alpine`;pip mirror `https://mirrors.aliyun.com/pypi/simple/`(env `PIP_INDEX_URL`);mount pip cache volume 避免每次 install |
-| **P-13** | **阿里云安全组实际只对 22 开放**(与 server.md 描述"6000-7000/80/443 都开"不一致)— 本地 curl 6100/6101/6083/6901/80/443 全 timeout | 用户浏览器无法访问 MinIO Console / uppy 前端 | **临时**:用户走 SSH tunnel `ssh -L 6100:localhost:6100 -L 6101:localhost:6101 -L 8080:localhost:8080 root@<server>`;**长期**:阿里云控制台开 6000-7000 入站 |
+| **P-13** | **阿里云安全组实际开放 22/80/443**(6000-7000 全段 1001 端口阻断,与 server.md 描述不一致)| user-facing 必须走 80/443 | **方案**(P-14):nginx 反代 80 → MinIO Console + uppy + presigner + S3 API,公网直连不需 SSH tunnel(2026-05-16 实测 24ms 延迟跨境通) |
+| **P-14** | **nginx 反代 MinIO + sig v4 host 一致性** — 三联配置缺一不可:(1) MinIO `MINIO_SERVER_URL=http://<public-host>` 让 MinIO 签 presigned URL 用公网 host;(2) `MINIO_BROWSER_REDIRECT_URL=http://<public-host>/console` 让 Console UI base URL 正确;(3) presigner `MINIO_PUBLIC_HOST=http://<public-host>` 让 boto3 s3_signer client 签 URL host 与浏览器访问一致;(4) nginx `proxy_set_header Host $host` 保留浏览器 host 头给后端验签 | 任一缺 → SignatureDoesNotMatch 403 | 完整配置见 `nginx/default.conf` + docker-compose env;实测 uppy 5-endpoint 多 part 上传通过 80 端到端 OK(50 MiB,2 parts,ETag `e9cc...-2`,webhook 触发)|
+| **P-15** | docker compose `depends_on` 必须用 **service name**(yaml 顶级 key),不是 `container_name`(单独字段) | `depends_on: poc-pigsty-minio` → "depends on undefined service" 错 | 改 `depends_on: pigsty-minio`;container_name 用于 docker ps 显示 + DNS,**与 service name 解耦** |
 
-## 用户访问指南(SSH tunnel)
+## 用户访问指南(2026-05-16 后:**公网直连**,无需 SSH tunnel)
 
+阿里云安全组实测**只对 22/80/443 开放**(6000-7000 全段阻断,详 P-13)。改用 nginx 反代 80,所有 user-facing endpoints **公网可达**:
+
+| URL | 用途 |
+| --- | --- |
+| **http://8.156.34.238/** | 自动 redirect → `/uppy/` |
+| **http://8.156.34.238/uppy/** | uppy 大文件上传前端(拖拽即用,< 100 MiB single PUT,≥ 100 MiB multipart)|
+| **http://8.156.34.238/console/** | MinIO Console — user `minioadmin` pass `minioadmin-poc-2026` |
+| http://8.156.34.238/health | presigner health(JSON)|
+| http://8.156.34.238/s3/multipart* | uppy AwsS3 plugin API endpoint(presigner)|
+| http://8.156.34.238/`<bucket>`/`<key>`?X-Amz-... | MinIO S3 API,presigned URL 直传通道(nginx 反代 → MinIO :9000)|
+
+**SSH tunnel 仍保留作 fallback**(若 nginx 出问题或需要直接访问 6100/6101):
 ```bash
-# 在本地终端跑(保持 session 开)
 ssh -L 6100:localhost:6100 -L 6101:localhost:6101 -L 8080:localhost:8080 root@8.156.34.238
-
-# 然后浏览器访问:
-#   MinIO Console:  http://localhost:6101   user=minioadmin pass=minioadmin-poc-2026
-#   uppy 前端:     http://localhost:8080   (拖拽文件即可,< 100 MiB 走 single PUT,≥ 100 MiB 走 multipart)
-#   webhook events: docker logs -f poc-webhook (在 server 上看)
 ```
 
 ## 后续(超出 Phase A 验收)
