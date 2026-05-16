@@ -25,19 +25,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     log.info("starting material-storage-api", env=settings.env, version=__version__)
 
-    # TODO Phase B-1:
-    #   - connect db pool
-    #   - connect redis
-    #   - connect openfga(verify store / model id)
-    #   - connect feishu bridge(health check)
-    #   - connect MinIO(health check)
-    #   挂到 app.state
-    log.info("startup complete")
+    # Phase B-2:wire 服务到 app.state
+    from app.services.permissions import create_permissions_service
+    from app.services.presign import PresignService
+
+    app.state.permissions = await create_permissions_service(settings)
+    app.state.presign = PresignService(settings)
+    log.info("startup complete — permissions + presign ready")
 
     yield
 
     log.info("shutting down")
-    # TODO: cleanup pools
+    await app.state.permissions.close()
 
 
 def create_app() -> FastAPI:
