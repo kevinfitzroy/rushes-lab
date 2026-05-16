@@ -113,6 +113,12 @@ async def feishu_test_card(
     try:
         data = await feishu.send_im_card(receive_id, card, receive_id_type="open_id")
     except FeishuAPIError as e:
-        raise HTTPException(502, f"feishu api error: code={e.code} msg={e.msg}") from e
+        # 把飞书完整 error body 透传给调用方,便于定位权限/参数问题
+        raise HTTPException(
+            502,
+            {"feishu_code": e.code, "feishu_msg": e.msg,
+             "feishu_error": e.raw.get("error"),
+             "hint": "权限问题去 https://open.feishu.cn/app/<app_id>/auth 申请"},
+        ) from e
     return {"ok": True, "receive_id": receive_id, "message_id": data.get("message_id"),
             "template": payload.template}

@@ -184,10 +184,18 @@ class FeishuClient:
 
     # ─── internals ───────────────────────────────────────────────────────────
     def _raise_or_data(self, resp: httpx.Response) -> dict[str, Any]:
-        resp.raise_for_status()
-        body = resp.json()
-        if body.get("code") != 0:
-            raise FeishuAPIError(body.get("code", -1), body.get("msg", ""), body)
+        # 飞书业务错误也走 200 + code != 0;同时 4xx/5xx 也有结构化 body,
+        # 优先按飞书 code 解析,拿到完整 msg + log_id 便于排查
+        try:
+            body = resp.json()
+        except ValueError:
+            resp.raise_for_status()
+            raise FeishuAPIError(-1, f"non-json response: {resp.text[:200]}", {})
+        code = body.get("code")
+        if code != 0:
+            msg = body.get("msg", "")
+            log.warning("feishu api code=%s msg=%s body=%s", code, msg, body)
+            raise FeishuAPIError(code if isinstance(code, int) else -1, msg, body)
         return body.get("data") or {}
 
 
