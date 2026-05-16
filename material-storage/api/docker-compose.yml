@@ -1,0 +1,70 @@
+# material-storage-api dev/local — Phase B-1 skeleton
+#
+# 启动:
+#   1. 先确保 ../poc/minio/docker-compose 已起(poc-pigsty-minio + poc-openfga)
+#   2. cp .env.example .env  并填实际值
+#   3. docker compose up -d
+#   4. docker compose exec api alembic upgrade head    # Phase B-2 后有 migration
+
+services:
+  ms-db:
+    image: postgres:16-alpine
+    container_name: ms-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: material_storage
+      POSTGRES_USER: msuser
+      POSTGRES_PASSWORD: mspass
+    volumes:
+      - ms-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U msuser"]
+      interval: 5s
+      retries: 10
+    networks:
+      - poc-net  # 与 ../poc/minio 的 docker network 互通(MinIO / OpenFGA)
+
+  ms-redis:
+    image: redis:7-alpine
+    container_name: ms-redis
+    restart: unless-stopped
+    volumes:
+      - ms-redis-data:/data
+    networks:
+      - poc-net
+
+  ms-api:
+    build: .
+    container_name: ms-api
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      ms-db:
+        condition: service_healthy
+      ms-redis:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8200:8000"   # SSH tunnel access / 后续 nginx 反代到这
+    networks:
+      - poc-net
+
+  ms-worker:
+    build: .
+    container_name: ms-worker
+    restart: unless-stopped
+    command: arq app.workers.main.WorkerSettings
+    env_file: .env
+    depends_on:
+      ms-redis:
+        condition: service_started
+    networks:
+      - poc-net
+
+volumes:
+  ms-db-data:
+  ms-redis-data:
+
+networks:
+  poc-net:
+    external: true      # 来自 ../poc/minio/docker-compose
+    name: poc-pigsty-minio_poc-net
