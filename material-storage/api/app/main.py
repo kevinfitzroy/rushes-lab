@@ -26,17 +26,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("starting material-storage-api", env=settings.env, version=__version__)
 
     # Phase B-2:wire 服务到 app.state
+    from app.services.auth import create_auth_service
     from app.services.permissions import create_permissions_service
     from app.services.presign import PresignService
 
     app.state.permissions = await create_permissions_service(settings)
     app.state.presign = PresignService(settings)
-    log.info("startup complete — permissions + presign ready")
+    app.state.auth = await create_auth_service(settings)
+    log.info("startup complete — permissions + presign + auth ready")
 
     yield
 
     log.info("shutting down")
     await app.state.permissions.close()
+    await app.state.auth.close()
 
 
 def create_app() -> FastAPI:
