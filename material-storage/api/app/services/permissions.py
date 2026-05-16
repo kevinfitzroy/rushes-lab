@@ -168,17 +168,24 @@ class PermissionsService:
     async def bootstrap_folder(
         self,
         folder_id: str,
-        parent_type: Literal["project", "folder"],
+        parent_type: Literal["project", "folder", "sensitive_folder"],
         parent_id: str,
+        is_sensitive: bool,
     ) -> None:
-        """新建 folder 写 parent tuple(model 简化 v2 后,统一 folder type)。"""
+        """新建 folder 写 parent tuple(model v3:sensitive_folder 邀请制 type 重新引入)。
+
+        is_sensitive=True:folder 用 sensitive_folder type,默认 project member 看不到;
+                          必须 admin 显式 invite_to_sensitive_folder
+        is_sensitive=False:普通 folder,project member 自动可见
+        """
+        folder_type = "sensitive_folder" if is_sensitive else "folder"
         await self._client.write(
             ClientWriteRequest(
                 writes=[
                     ClientTuple(
                         user=f"{parent_type}:{parent_id}",
                         relation="parent",
-                        object=f"folder:{folder_id}",
+                        object=f"{folder_type}:{folder_id}",
                     )
                 ]
             )
@@ -188,19 +195,115 @@ class PermissionsService:
         self,
         asset_id: str,
         parent_folder_id: str,
+        parent_is_sensitive: bool,
     ) -> None:
-        """新建 asset 写 parent tuple(parent 永远是 folder)。"""
+        """新建 asset 写 parent tuple(parent 按 folder.is_sensitive 决定 type)。"""
+        parent_type = "sensitive_folder" if parent_is_sensitive else "folder"
         await self._client.write(
             ClientWriteRequest(
                 writes=[
                     ClientTuple(
-                        user=f"folder:{parent_folder_id}",
+                        user=f"{parent_type}:{parent_folder_id}",
                         relation="parent",
                         object=f"asset:{asset_id}",
                     )
                 ]
             )
         )
+
+    # ─── sensitive_folder 邀请制(v3 新加)───────────────────────────────────
+    async def invite_to_sensitive_folder(
+        self,
+        sensitive_folder_id: str,
+        *,
+        user_id: str | None = None,
+        group_id: str | None = None,
+        duration_seconds: int | None = None,
+    ) -> None:
+        """邀请 user / group 进入 sensitive_folder 可见名单。
+
+        - duration_seconds=None  → 永久邀请(invited relation,无 condition)
+        - duration_seconds=int   → 时间限定邀请(explicit_invited relation + non_expired_grant)
+                                   过期自动失效
+
+        二选一:user_id 或 group_id(group#member 形式)。
+        """
+        if (user_id is None) == (group_id is None):
+            raise ValueError("must specify exactly one of user_id / group_id")
+
+        subject = f"user:{user_id}" if user_id else f"group:{group_id}#member"
+
+        if duration_seconds is None:
+            # 永久邀请 - invited relation
+            await self._client.write(
+                ClientWriteRequest(
+                    writes=[
+                        ClientTuple(
+                            user=subject,
+                            relation="invited",
+                            object=f"sensitive_folder:{sensitive_folder_id}",
+                        )
+                    ]
+                )
+            )
+            log.info("permanent invite to sensitive_folder subject=%s folder=%s",
+                     subject, sensitive_folder_id)
+        else:
+            # 临时邀请 - explicit_invited + condition
+            grant_time = datetime.now(timezone.utc).isoformat()
+            await self._client.write(
+                ClientWriteRequest(
+                    writes=[
+                        ClientTuple(
+                            user=subject,
+                            relation="explicit_invited",
+                            object=f"sensitive_folder:{sensitive_folder_id}",
+                            condition=RelationshipCondition(
+                                name="non_expired_grant",
+                                context={
+                                    "grant_time": grant_time,
+                                    "grant_duration": f"{duration_seconds}s",
+                                },
+                            ),
+                        )
+                    ]
+                )
+            )
+            log.info("temporary invite to sensitive_folder subject=%s folder=%s ttl=%ds",
+                     subject, sensitive_folder_id, duration_seconds)
+
+    async def revoke_from_sensitive_folder(
+        self,
+        sensitive_folder_id: str,
+        *,
+        user_id: str | None = None,
+        group_id: str | None = None,
+        permanent: bool = True,
+    ) -> None:
+        """撤销 sensitive_folder 邀请。
+
+        permanent=True → 删 invited(永久)tuple
+        permanent=False → 删 explicit_invited(临时)tuple
+        """
+        if (user_id is None) == (group_id is None):
+            raise ValueError("must specify exactly one of user_id / group_id")
+
+        subject = f"user:{user_id}" if user_id else f"group:{group_id}#member"
+        relation = "invited" if permanent else "explicit_invited"
+
+        await self._client.write(
+            ClientWriteRequest(
+                deletes=[
+                    ClientTuple(
+                        user=subject,
+                        relation=relation,
+                        object=f"sensitive_folder:{sensitive_folder_id}",
+                    )
+                ]
+            )
+        )
+        log.info("revoked %s invite subject=%s folder=%s",
+                 "permanent" if permanent else "temporary", subject, sensitive_folder_id)
 
     # ─── group / org membership ──────────────────────────────────────────────
     async def add_user_to_group(self, user_id: str, group_id: str) -> None:

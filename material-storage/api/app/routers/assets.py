@@ -94,10 +94,11 @@ async def complete_upload(
     folder = await db.get(Folder, folder_id)
     if folder:
         permissions = request.app.state.permissions
-        # Phase B-2 next iter:model 简化后无需 parent_is_sensitive 参数
+        # v3 重新引入 sensitive_folder type(邀请制可见性)— parent_is_sensitive 必传
         await permissions.bootstrap_asset(
             asset_id=str(asset.id),
             parent_folder_id=str(folder.id),
+            parent_is_sensitive=folder.is_sensitive,
         )
 
     return AssetOut.model_validate(asset)

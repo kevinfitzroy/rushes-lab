@@ -1,13 +1,19 @@
 name: material-storage-poc
 
-# v2(Phase B-2 next iteration 简化):
-#   - 取消 sensitive_folder type(用户反馈:不必区分敏感/普通)
-#   - 单一 folder type;权限粒度通过 grant 的 object 级别(project/asset)区分
-#   - 临时下载 grant 在 **两层**:
-#       project 级:批量(实习生 30d / 单次申请下载整 project)
-#       asset 级:文件级(申请单个文件)
-#   - project.visibility 字段(public/private/stealth)由 material-storage backend
-#     处理,不进 OpenFGA model(metadata 是 DB 层 filter,不是 ReBAC 关系)
+# v3(Phase B-2 iter3):重新引入 sensitive_folder 但新语义为 "邀请制可见性"
+#   - 普通 folder:project member 自动可见 + 可下载(从 project 继承)
+#   - sensitive_folder:即使 project member 也必须显式邀请才能看到 folder + 内容
+#     * invited: [user, group#member]    永久邀请(owner/admin grant)
+#     * explicit_invited: [user with non_expired_grant]   临时邀请(time-limited)
+#     * admin from parent:project admin / owner 自然继承(管理权)
+#   - 文件级 explicit_downloader 保留:跨 folder 单文件审批下载(asset 级临时 grant)
+#   - project.visibility 由 material-storage backend DB 层处理,不进 model
+#
+# 4 层粒度:
+#   1. project.visibility(metadata 列表,DB filter)
+#   2. project member(普通 folder 全权)
+#   3. sensitive_folder invited / explicit_invited(项目内敏感目录隔离)
+#   4. asset explicit_downloader(单文件跨 folder 申请下载)
 
 model: |
   model
@@ -30,7 +36,7 @@ model: |
       define admin: [user, group#member] or admin from organization
       define editor: [user, group#member] or admin
       define member: [user, group#member] or editor
-      # 临时下载 grant(project 级:申请通过后批量下载)
+      # project 级临时下载 grant(实习生 30d / 批量场景)
       define explicit_downloader: [user with non_expired_grant]
       define can_view: member
       define can_download: member or explicit_downloader
@@ -45,10 +51,25 @@ model: |
       define can_edit: can_edit from parent
       define can_admin: can_admin from parent
 
+  type sensitive_folder
+    relations
+      define parent: [project, folder, sensitive_folder]
+      # 显式邀请的 member(永久邀请)— admin / owner grant
+      define invited: [user, group#member]
+      # 临时邀请(time-limited)— admin grant 的限期访问
+      define explicit_invited: [user with non_expired_grant]
+      # admin 从 parent 项目继承(owner / project admin 自然可见可管理)
+      define admin: can_admin from parent
+      # 可见 = admin + invited(永久)+ explicit_invited(临时)
+      define can_view: admin or invited or explicit_invited
+      define can_download: can_view
+      define can_edit: admin
+      define can_admin: admin
+
   type asset
     relations
-      define parent: [project, folder]
-      # 文件级临时下载 grant(申请单个文件,审批通过后短期)
+      define parent: [project, folder, sensitive_folder]
+      # 跨 folder 单文件审批下载 grant
       define explicit_downloader: [user with non_expired_grant]
       define can_view: can_view from parent or explicit_downloader
       define can_download: can_download from parent or explicit_downloader
@@ -70,59 +91,68 @@ tuples:
     relation: member
     object: group:photographers
 
-  # ─── project organization ─────────────────────
+  # ─── eve(普通 project member 同 photographers)─
+  - user: user:eve
+    relation: member
+    object: group:photographers
+
+  # ─── project ──────────────────────────────────
   - user: organization:my-clinic
     relation: organization
     object: project:case-2025-q4
 
-  # ─── photographers group in project = editor ───
   - user: group:photographers#member
     relation: editor
     object: project:case-2025-q4
 
-  # ─── 文件夹层次(普通 folder,不再 sensitive_folder)─
+  # ─── 普通 folder(project member 自动可见)─────
   - user: project:case-2025-q4
     relation: parent
     object: folder:raw
 
+  # ─── 敏感 folder(邀请制)──────────────────────
   - user: project:case-2025-q4
     relation: parent
-    object: folder:client-private
+    object: sensitive_folder:client-vips
 
-  # ─── asset 归属 ─────────────────────────────────
-  - user: folder:raw
-    relation: parent
-    object: asset:clip-1-raw
+  # ─── alice 显式邀请 bob 永久访问 sensitive_folder ─
+  - user: user:bob
+    relation: invited
+    object: sensitive_folder:client-vips
 
-  - user: folder:client-private
-    relation: parent
-    object: asset:clip-99-secret
-
-  # ─── charlie (org 外人 / 低权限 user) 申请下载 clip-99-secret ─
-  # 飞书审批通过 → 写 file-level 1h grant
+  # ─── alice 临时邀请 charlie(实习生)30d 访问 sensitive_folder ─
   - user: user:charlie
-    relation: explicit_downloader
-    object: asset:clip-99-secret
-    condition:
-      name: non_expired_grant
-      context:
-        grant_time: "2026-05-16T10:00:00Z"
-        grant_duration: 1h
-
-  # ─── david(实习生) 申请加入 project 30d ─────
-  - user: user:david
-    relation: explicit_downloader
-    object: project:case-2025-q4
+    relation: explicit_invited
+    object: sensitive_folder:client-vips
     condition:
       name: non_expired_grant
       context:
         grant_time: "2026-05-16T10:00:00Z"
         grant_duration: 720h    # 30 day
 
+  # ─── assets ───────────────────────────────────
+  - user: folder:raw
+    relation: parent
+    object: asset:clip-1-raw
+
+  - user: sensitive_folder:client-vips
+    relation: parent
+    object: asset:clip-99-vip-secret
+
+  # ─── david(org 外人) 申请下载单个文件 1h ─────
+  - user: user:david
+    relation: explicit_downloader
+    object: asset:clip-99-vip-secret
+    condition:
+      name: non_expired_grant
+      context:
+        grant_time: "2026-05-16T10:00:00Z"
+        grant_duration: 1h
+
 tests:
-  - name: v2 简化模型 e2e
+  - name: v3 4-layer 模型 e2e
     check:
-      # ─── alice 全权 ─────────────────────────────
+      # ─── alice(org admin)全权 ─────────────────
       - user: user:alice
         object: project:case-2025-q4
         assertions:
@@ -131,13 +161,20 @@ tests:
           member: true
 
       - user: user:alice
-        object: asset:clip-99-secret
+        object: sensitive_folder:client-vips
+        assertions:
+          admin: true       # 从 project admin 继承
+          can_view: true    # admin OR invited OR explicit_invited
+          can_admin: true
+
+      - user: user:alice
+        object: asset:clip-99-vip-secret
         assertions:
           can_view: true
           can_download: true
-          can_delete: true
+          can_delete: true   # admin from parent (sensitive_folder.admin)
 
-      # ─── bob(project editor)看下所有 ─────────
+      # ─── bob(project editor + 显式 invited 到 sensitive)─
       - user: user:bob
         object: project:case-2025-q4
         assertions:
@@ -145,71 +182,102 @@ tests:
           member: true
 
       - user: user:bob
-        object: asset:clip-1-raw
+        object: folder:raw
+        assertions:
+          can_view: true       # project member 自然可见
+          can_download: true
+          can_edit: true
+
+      - user: user:bob
+        object: sensitive_folder:client-vips
+        assertions:
+          can_view: true       # invited (永久)
+          can_download: true
+          can_admin: false     # 非 project admin
+          can_edit: false      # editor 是 admin only(敏感 folder editor = admin)
+
+      - user: user:bob
+        object: asset:clip-99-vip-secret
+        assertions:
+          can_view: true       # via sensitive_folder.can_view
+          can_download: true
+          can_delete: false
+
+      # ─── eve(project editor 同 group,但 NOT invited 到 sensitive)─
+      - user: user:eve
+        object: project:case-2025-q4
+        assertions:
+          editor: true
+          member: true
+
+      - user: user:eve
+        object: folder:raw
+        assertions:
+          can_view: true       # project member 自动可见 普通 folder
+          can_download: true
+
+      - user: user:eve
+        object: sensitive_folder:client-vips
+        assertions:
+          can_view: false      # ❌ 即使是 project editor,sensitive 必须 invited
+          can_download: false
+
+      - user: user:eve
+        object: asset:clip-99-vip-secret
+        assertions:
+          can_view: false      # ❌ 看不到 sensitive folder 内文件
+          can_download: false
+
+      # ─── charlie(实习生临时邀请 30d)─────────
+      - user: user:charlie
+        object: sensitive_folder:client-vips
+        context:
+          current_time: "2026-05-20T10:00:00Z"   # grant + 4 day,在 30d 内
+        assertions:
+          can_view: true       # explicit_invited (时间内)
+          can_download: true
+          can_admin: false
+
+      - user: user:charlie
+        object: asset:clip-99-vip-secret
+        context:
+          current_time: "2026-05-20T10:00:00Z"
         assertions:
           can_view: true
           can_download: true
-          can_edit: true
-          can_delete: false
 
-      - user: user:bob
-        object: asset:clip-99-secret
-        assertions:
-          can_view: true       # bob 是 project member,自然 view 项目内所有 asset
-          can_download: true   # member 默认可下
-          can_delete: false
-
-      # ─── charlie(file-level grant 期内)──────
+      # ─── charlie 实习期满 31d 后 ──────────────
       - user: user:charlie
-        object: asset:clip-99-secret
+        object: sensitive_folder:client-vips
+        context:
+          current_time: "2026-06-16T11:00:00Z"   # grant + 31 day,过期
+        assertions:
+          can_view: false      # explicit_invited 过期失效
+          can_download: false
+
+      # ─── david(file-level grant 1h 内)──────
+      - user: user:david
+        object: asset:clip-99-vip-secret
         context:
           current_time: "2026-05-16T10:30:00Z"   # grant + 30 min
         assertions:
-          can_view: true       # via explicit_downloader
+          can_view: true       # explicit_downloader on asset
           can_download: true
-          can_delete: false
 
-      # ─── charlie(file-level grant 边界 11:00)─
-      - user: user:charlie
-        object: asset:clip-99-secret
+      # ─── david(file-level grant 过期)────────
+      - user: user:david
+        object: asset:clip-99-vip-secret
         context:
           current_time: "2026-05-16T11:00:00Z"   # 到期边界
         assertions:
-          can_view: false      # grant 失效,charlie 非 project member
+          can_view: false
           can_download: false
 
-      # ─── charlie 别的 asset(没 grant)─────────
-      - user: user:charlie
+      # ─── david(没 grant 别的 sensitive 文件)─
+      - user: user:david
         object: asset:clip-1-raw
         context:
           current_time: "2026-05-16T10:30:00Z"
         assertions:
-          can_view: false
-          can_download: false
-
-      # ─── david(project-level grant 期内,30 day)─
-      - user: user:david
-        object: project:case-2025-q4
-        context:
-          current_time: "2026-05-20T10:00:00Z"   # grant + 4 day
-        assertions:
-          member: false        # 不是真 member,只有临时下载权
-          can_view: false      # can_view 只 member,无临时
-          can_download: true   # 通过 explicit_downloader
-
-      - user: user:david
-        object: asset:clip-1-raw
-        context:
-          current_time: "2026-05-20T10:00:00Z"
-        assertions:
-          can_view: false      # 同上,project 级 grant 不传 view 给 asset 级
-          can_download: true   # asset.can_download = can_download from parent or explicit_downloader
-
-      # ─── david(grant 过期,grant + 31 day)──
-      - user: user:david
-        object: asset:clip-1-raw
-        context:
-          current_time: "2026-06-16T11:00:00Z"
-        assertions:
-          can_view: false
+          can_view: false      # 非 project member,无 grant
           can_download: false
