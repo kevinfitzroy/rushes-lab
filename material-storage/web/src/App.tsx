@@ -44,6 +44,7 @@ const RouterRoutes = () => (
     <Routes>
       <Route path="/" element={<ProjectsPage />} />
       <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+      <Route path="/projects/:projectId/folders/:folderId" element={<ProjectDetailPage />} />
       <Route path="/folders/:folderId" element={<FolderDetailPage />} />
       <Route path="/approvals" element={<ApprovalsPage />} />
       <Route path="/dev-login" element={<DevLoginPage />} />

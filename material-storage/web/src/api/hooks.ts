@@ -93,6 +93,16 @@ export const useDownloadLink = () =>
       (await http.post<DownloadLink>(`/api/v1/assets/${assetId}/download-link`, {})).data,
   });
 
+export const useDeleteAsset = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (assetId: string) => {
+      await http.delete(`/api/v1/assets/${assetId}`);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['assets'] }),
+  });
+};
+
 // ─── approvals ─────────────────────────────────────────────────────────────
 export const useApprovals = (scope: 'self' | 'all', status?: string) =>
   useQuery({

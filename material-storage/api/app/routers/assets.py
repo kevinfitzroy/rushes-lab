@@ -268,6 +268,52 @@ async def get_download_link(
     return DownloadLinkOut(url=url, expires_in=ttl, is_sensitive=False)
 
 
+# ─── delete(soft)──────────────────────────────────────────────────────────
+@router.delete("/{asset_id}", status_code=204)
+async def delete_asset(
+    asset_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    audit: AuditService = Depends(get_audit),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    ctx: dict = Depends(get_request_context),
+) -> None:
+    """soft delete:置 deleted_at;MinIO object 保留(由 bucket lifecycle 异步清)。
+
+    权限:asset.can_delete(model v3:= can_admin from parent folder/project)。
+    """
+    from datetime import datetime, timezone
+    asset = await db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(404, "asset not found")
+
+    allowed = await permissions.check(
+        user_id=str(user_id), relation="can_delete",
+        object_type="asset", object_id=str(asset_id),
+    )
+    if not allowed:
+        await audit.write(
+            event_type="access_denied", actor_user_id=user_id,
+            target_asset_id=asset_id, target_minio_key=asset.minio_key,
+            details={"action": "delete_asset", "reason": "openfga can_delete false"},
+            **ctx,
+        )
+        raise HTTPException(403, "no delete permission")
+
+    if asset.deleted_at is not None:
+        return  # idempotent
+
+    asset.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await audit.write(
+        event_type="asset_deleted", actor_user_id=user_id,
+        target_asset_id=asset_id, target_minio_key=asset.minio_key,
+        details={"filename": asset.filename, "soft": True},
+        **ctx,
+    )
+
+
 # ─── helpers ──────────────────────────────────────────────────────────────────
 async def _project_bucket(db: AsyncSession, project_id: uuid.UUID) -> str:
     project = await db.get(Project, project_id)
