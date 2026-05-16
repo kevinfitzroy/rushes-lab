@@ -7,6 +7,9 @@ import { Suspense, lazy, useState } from 'react';
 import { useMe } from './api/hooks';
 import { apiBase, errorMessage } from './api/client';
 import { UserMenu } from './components/UserMenu';
+import { PersistentUploadDrawer } from './components/PersistentUploadDrawer';
+import { UploadFloatingIndicator } from './components/UploadFloatingIndicator';
+import { UploadProvider } from './lib/upload-store';
 
 // (2) route-level lazy:首屏只加载当前路由 chunk
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
@@ -103,6 +106,8 @@ function AppShell() {
       <Layout.Footer style={{ textAlign: 'center', color: '#999', fontSize: 12, padding: '16px 12px' }}>
         material-storage Phase B-3 · {new Date().getFullYear()}
       </Layout.Footer>
+      <PersistentUploadDrawer />
+      <UploadFloatingIndicator />
     </Layout>
   );
 }
@@ -115,9 +120,11 @@ export default function App() {
     }}>
       <AntApp>
         <QueryClientProvider client={qc}>
-          <BrowserRouter basename="/ms-static/web">
-            <AppShell />
-          </BrowserRouter>
+          <UploadProvider>
+            <BrowserRouter basename="/ms-static/web">
+              <AppShell />
+            </BrowserRouter>
+          </UploadProvider>
         </QueryClientProvider>
       </AntApp>
     </ConfigProvider>

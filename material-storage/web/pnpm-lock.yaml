@@ -23,6 +23,9 @@ importers:
       '@uppy/dashboard':
         specifier: '4'
         version: 4.4.3(@uppy/core@4.5.3)
+      '@uppy/locales':
+        specifier: ^5.1.1
+        version: 5.1.1
       antd:
         specifier: ^6.4.2
         version: 6.4.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -774,6 +777,9 @@ packages:
     peerDependencies:
       '@uppy/core': ^4.5.2
 
+  '@uppy/locales@5.1.1':
+    resolution: {integrity: sha512-zSbDU27JzfdssRJoa5/xmGOsrEtS+2Z9j41weaoCa/NoK4wqZzkFNQ0Z44etbTg3PDVFakZVDu/Z+c+vsJCfdQ==}
+
   '@uppy/provider-views@4.5.3':
     resolution: {integrity: sha512-zExJSlkqRPl65KKG+SMTdP0OCawYMpo/FaKE8xjqHhx/rkACe6QNExCahpEGGjLo7Rr2j7FooAuA3UWmYiyWCg==}
     peerDependencies:
@@ -794,6 +800,9 @@ packages:
 
   '@uppy/utils@6.2.2':
     resolution: {integrity: sha512-9mYJtbcngv2HOJIECkyfmdXTI5dW/ObCyvWP1Iti3E5bKtsa4sMmbx5Yh/tGCj8k/lBNhfvWyZuYnvnjmzNLSQ==}
+
+  '@uppy/utils@7.2.0':
+    resolution: {integrity: sha512-6lC246qszMv6bTyl/+QyHwrudgeguWkA94ME1wHn+a6uRAvmtAEaUManIfGqTJfoKvWAiCJqdJPl5xRJjhAloQ==}
 
   '@vitejs/plugin-react@6.0.2':
     resolution: {integrity: sha512-DlSMqo4WhThw4vB8Mpn0Woe9J+Jfq1geJ61AKW0QEgLzGMNwtIMdxbDUzLxcun8W7NbJO0e2Jg/Nxm3cCSVzzg==}
@@ -2343,6 +2352,10 @@ snapshots:
       '@uppy/utils': 6.2.2
       preact: 10.29.1
 
+  '@uppy/locales@5.1.1':
+    dependencies:
+      '@uppy/utils': 7.2.0
+
   '@uppy/provider-views@4.5.3(@uppy/core@4.5.3)':
     dependencies:
       '@uppy/core': 4.5.3
@@ -2369,6 +2382,11 @@ snapshots:
       exifr: 7.1.3
 
   '@uppy/utils@6.2.2':
+    dependencies:
+      lodash: 4.18.1
+      preact: 10.29.1
+
+  '@uppy/utils@7.2.0':
     dependencies:
       lodash: 4.18.1
       preact: 10.29.1

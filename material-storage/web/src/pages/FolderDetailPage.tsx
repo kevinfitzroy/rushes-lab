@@ -3,9 +3,9 @@ import { CloudDownloadOutlined, KeyOutlined, UploadOutlined } from '@ant-design/
 import { useParams } from 'react-router-dom';
 import { useState } from 'react';
 import { useAssets, useDownloadLink, useFolder } from '../api/hooks';
-import { UploadDrawer } from '../components/UploadDrawer';
 import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { RequestAccessModal } from '../components/RequestAccessModal';
+import { useUpload } from '../lib/upload-store';
 import { errorMessage } from '../api/client';
 import type { Asset } from '../api/types';
 
@@ -33,7 +33,7 @@ export default function FolderDetailPage() {
   const { data: assets, isLoading } = useAssets(folderId);
   const dlLink = useDownloadLink();
   const { message } = App.useApp();
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const upload = useUpload();
   const [applyAsset, setApplyAsset] = useState<Asset | null>(null);
 
   const handleDownload = async (a: Asset) => {
@@ -63,11 +63,12 @@ export default function FolderDetailPage() {
       <Typography.Paragraph type="secondary" code style={{ fontSize: 12 }}>{folder?.minio_prefix}</Typography.Paragraph>
 
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+        <Button type="primary" icon={<UploadOutlined />}
+                onClick={() => folderId && upload.open(folderId)}>
           上传文件
         </Button>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          上传走 16MB part multipart,5GB 上限
+          后台上传:关掉抽屉/换页面不打断,右下浮窗可查进度
         </Typography.Text>
       </Space>
 
@@ -104,7 +105,6 @@ export default function FolderDetailPage() {
         />
       )}
 
-      {folderId && <UploadDrawer open={uploadOpen} onClose={() => setUploadOpen(false)} folderId={folderId} />}
       {applyAsset && (
         <RequestAccessModal
           open
