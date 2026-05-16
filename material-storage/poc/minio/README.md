@@ -109,13 +109,16 @@ EOF
 | **P-16** | **uppy v4 CDN 路径** — `https://releases.transloadit.com/uppy/v4.16.1/uppy.min.mjs` 实测 HTTP 404(transloadit CDN 只有 v3.27.1 ✓,**v4 全段不发布**,uppy.io quickstart 文档滞后)| 浏览器 ES module import 失败,Dashboard 永远不 instantiate,前端 UI 空白(没有拖拽区) | 改用 esm.sh:`import Uppy from "https://esm.sh/@uppy/core@4"` / `import Dashboard from "https://esm.sh/@uppy/dashboard@4"` / `import AwsS3 from "https://esm.sh/@uppy/aws-s3@4"`(均 `export default`);CSS 走 jsdelivr@npm `https://cdn.jsdelivr.net/npm/@uppy/dashboard@4/dist/style.min.css`;HTTP 页面 import HTTPS 模块**允许**(active mixed content from secure source) |
 | **P-17** | **server2 (8.156.34.238) HTTP 80** 与 **server1 (47.109.30.236) HTTPS 443 + Caddy + Let's Encrypt + 域名 `rusheslab.taoxiplan.com`** 的三层反代:浏览器 HTTPS → Caddy → HTTP → server2 nginx → docker network → MinIO/presigner | 单机自签 cert 浏览器警告;Caddy 自动 Let's Encrypt 真证书 + HTTP/2 + 同 VPC 内 1.3 ms RTT 无性能损失 | Caddyfile 用 `reverse_proxy 8.156.34.238:80 { header_up Host {host} ... }`(透传 Host 给后端 nginx,sig v4 验签需);保留原 Caddy site 配置或加 `import` 兼容已有(rusheslab.taoxiplan.com 之前反代到 127.0.0.1:8080 已 supersede)。server2 envs 改 `MINIO_SERVER_URL=https://rusheslab.taoxiplan.com` + `MINIO_BROWSER_REDIRECT_URL=...` + `MINIO_PUBLIC_HOST=...`,sig v4 host 通过三层 proxy 一路保留为 `rusheslab.taoxiplan.com`,验签成功 |
 | **P-18** | **uppy v4 event 签名变了**:`'upload'` event callback 从 v3 的 `(data: {fileIDs, id})` 改为 v4 的 `(uploadID: string, files: UppyFile[])` 双参数 | 旧 handler `(data) => data.fileIDs.length` → `undefined.length` TypeError → uppy 内部 emit chain 异常 → **upload 流程整体卡住,文件没真上传**(只在 console 报错,UI 看不出) | 所有 handler 用 `safe(name, fn)` wrap(try/catch + log 错误),不让单个 handler 异常影响 upload chain;所有 property access 用 `?.` 防御性;`'upload'` handler 改 `(uploadID, files) =>` 双参数 |
+| **P-19** | **Pigsty 内嵌 MinIO Console 401 invalid login**(任何凭据 root / alice IAM user / svc account 全拒)— georgmangold/console fork 需要 `CONSOLE_MINIO_SERVER` env 指向 MinIO endpoint,Pigsty 嵌入时 **没自动 wire 此 env** | Web Console 完全无法登录(直接 admin UI 不可用)| 部署 **standalone Console 容器** (`ghcr.io/georgmangold/console:latest`),显式配 `CONSOLE_MINIO_SERVER=http://poc-pigsty-minio:9000` + `CONSOLE_MINIO_REGION=us-east-1`(login 立即 work,任何 IAM admin user OK)。`MINIO_BROWSER_SUBPATH=/console` 只改 base href 不改 API path,不能用 nginx subpath 反代 → 让 Console 占根 `/`,nginx 路径分发:`/api/`, `/static/`, `/styles/`, `/Loader.svg`, `/manifest.json`, `/favicon-*`, `/apple-icon-*`, `/login`, `/buckets`, `/users` 等 SPA route → Console;`/uppy/`, `/health`, `/s3/multipart` → presigner;**catch-all `/`** → MinIO S3(bucket 名 `public/private-internal/private-sensitive/incoming/rushes-poc` 与 Console paths 不冲突)|
+| **P-20** | nginx `proxy_pass` **用变量**(`set $x ...; proxy_pass http://$x;`)需要显式 `resolver` directive(docker DNS 127.0.0.11) | nginx error `no resolver defined to resolve poc-console` → 全 location 502 | 改用**硬编码** `proxy_pass http://poc-console:9090;`(启动时一次解析 + 缓存),不用变量;or 加 `resolver 127.0.0.11 valid=30s;` 在 nginx http/server block |
 
 ## 用户访问指南(2026-05-16 后:**HTTPS 公网直连**,域名 + Let's Encrypt 真证书)
 
 | URL | 用途 |
 | --- | --- |
-| **https://rusheslab.taoxiplan.com/uppy/** | **uppy 大文件上传前端(主入口)** — 真证书,无浏览器警告 |
-| **https://rusheslab.taoxiplan.com/console/** | MinIO Console — user `minioadmin` pass `minioadmin-poc-2026` |
+| **https://rusheslab.taoxiplan.com/** | **MinIO Console**(P-19:standalone fork 占根 path)— 推荐用 `alice` / `bob` 登录(不推荐 root)|
+| **https://rusheslab.taoxiplan.com/uppy/** | **uppy 大文件上传前端** — 真证书,无浏览器警告 |
+| **https://rusheslab.taoxiplan.com/uppy/clients.html** | 桌面客户端下载(Cyberduck / rclone / mc 配置)|
 | https://rusheslab.taoxiplan.com/health | presigner health |
 | https://rusheslab.taoxiplan.com/`<bucket>`/`<key>`?X-Amz-... | MinIO S3 API presigned URL 直传通道 |
 

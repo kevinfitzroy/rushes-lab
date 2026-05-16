@@ -22,6 +22,7 @@
 </head>
 <body>
   <h1>Pigsty MinIO PoC — uppy 大文件 multipart 上传 <span id="status">加载中…</span></h1>
+  <p style="font-size:13px; margin:-6px 0 16px;">→ <a href="./clients.html">桌面客户端(Cyberduck / rclone / mc)+ 配置下载</a></p>
   <div class="info">
     <p>ADR-0005 Phase A.2 验证(§11.2 Gap 2)。后端 = MinIO,bucket = <code>incoming/</code>,prefix = <code>uppy-test/</code>。</p>
     <p>uppy AwsS3 plugin → 走 5 endpoint 协议(create / signPart / complete / abort / listParts)。Backend = 自实现 Python presigner(stdlib http.server + boto3)。</p>
