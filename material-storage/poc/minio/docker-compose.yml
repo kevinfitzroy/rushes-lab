@@ -10,8 +10,8 @@ services:
       MINIO_NOTIFY_WEBHOOK_ENABLE_RUSHES: "on"
       MINIO_NOTIFY_WEBHOOK_ENDPOINT_RUSHES: "http://poc-webhook:8000/minio-event"
       # 让 MinIO 知道公网 URL — 签 presigned URL / Console redirect 用此(P-13 nginx 反代关键)
-      MINIO_SERVER_URL: "http://8.156.34.238"
-      MINIO_BROWSER_REDIRECT_URL: "http://8.156.34.238/console"
+      MINIO_SERVER_URL: "https://rusheslab.taoxiplan.com"
+      MINIO_BROWSER_REDIRECT_URL: "https://rusheslab.taoxiplan.com/console"
     ports:
       - "6100:9000"   # S3 API(SSH tunnel fallback,见 P-13;阿里云 6000-7000 实测全断,主路径走 nginx 80)
       - "6101:9001"   # Console SSH tunnel fallback
@@ -64,7 +64,7 @@ services:
       MINIO_ENDPOINT: "http://poc-pigsty-minio:9000"
       MINIO_ACCESS_KEY: "alice"
       MINIO_SECRET_KEY: "alicesecret-poc-2026-32chars-pad"
-      MINIO_PUBLIC_HOST: "http://8.156.34.238"   # 公网 host;sig v4 签 URL host 必须与浏览器访问一致(P-10)
+      MINIO_PUBLIC_HOST: "https://rusheslab.taoxiplan.com"   # 公网 host;sig v4 签 URL host 必须与浏览器访问一致(P-10)
       DEFAULT_BUCKET: "incoming"
       DEFAULT_PREFIX: "uppy-test/"
       PIP_INDEX_URL: "https://mirrors.aliyun.com/pypi/simple/"

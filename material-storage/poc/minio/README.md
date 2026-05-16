@@ -107,24 +107,34 @@ EOF
 | **P-14** | **nginx 反代 MinIO + sig v4 host 一致性** — 三联配置缺一不可:(1) MinIO `MINIO_SERVER_URL=http://<public-host>` 让 MinIO 签 presigned URL 用公网 host;(2) `MINIO_BROWSER_REDIRECT_URL=http://<public-host>/console` 让 Console UI base URL 正确;(3) presigner `MINIO_PUBLIC_HOST=http://<public-host>` 让 boto3 s3_signer client 签 URL host 与浏览器访问一致;(4) nginx `proxy_set_header Host $host` 保留浏览器 host 头给后端验签 | 任一缺 → SignatureDoesNotMatch 403 | 完整配置见 `nginx/default.conf` + docker-compose env;实测 uppy 5-endpoint 多 part 上传通过 80 端到端 OK(50 MiB,2 parts,ETag `e9cc...-2`,webhook 触发)|
 | **P-15** | docker compose `depends_on` 必须用 **service name**(yaml 顶级 key),不是 `container_name`(单独字段) | `depends_on: poc-pigsty-minio` → "depends on undefined service" 错 | 改 `depends_on: pigsty-minio`;container_name 用于 docker ps 显示 + DNS,**与 service name 解耦** |
 | **P-16** | **uppy v4 CDN 路径** — `https://releases.transloadit.com/uppy/v4.16.1/uppy.min.mjs` 实测 HTTP 404(transloadit CDN 只有 v3.27.1 ✓,**v4 全段不发布**,uppy.io quickstart 文档滞后)| 浏览器 ES module import 失败,Dashboard 永远不 instantiate,前端 UI 空白(没有拖拽区) | 改用 esm.sh:`import Uppy from "https://esm.sh/@uppy/core@4"` / `import Dashboard from "https://esm.sh/@uppy/dashboard@4"` / `import AwsS3 from "https://esm.sh/@uppy/aws-s3@4"`(均 `export default`);CSS 走 jsdelivr@npm `https://cdn.jsdelivr.net/npm/@uppy/dashboard@4/dist/style.min.css`;HTTP 页面 import HTTPS 模块**允许**(active mixed content from secure source) |
+| **P-17** | **server2 (8.156.34.238) HTTP 80** 与 **server1 (47.109.30.236) HTTPS 443 + Caddy + Let's Encrypt + 域名 `rusheslab.taoxiplan.com`** 的三层反代:浏览器 HTTPS → Caddy → HTTP → server2 nginx → docker network → MinIO/presigner | 单机自签 cert 浏览器警告;Caddy 自动 Let's Encrypt 真证书 + HTTP/2 + 同 VPC 内 1.3 ms RTT 无性能损失 | Caddyfile 用 `reverse_proxy 8.156.34.238:80 { header_up Host {host} ... }`(透传 Host 给后端 nginx,sig v4 验签需);保留原 Caddy site 配置或加 `import` 兼容已有(rusheslab.taoxiplan.com 之前反代到 127.0.0.1:8080 已 supersede)。server2 envs 改 `MINIO_SERVER_URL=https://rusheslab.taoxiplan.com` + `MINIO_BROWSER_REDIRECT_URL=...` + `MINIO_PUBLIC_HOST=...`,sig v4 host 通过三层 proxy 一路保留为 `rusheslab.taoxiplan.com`,验签成功 |
 
-## 用户访问指南(2026-05-16 后:**公网直连**,无需 SSH tunnel)
-
-阿里云安全组实测**只对 22/80/443 开放**(6000-7000 全段阻断,详 P-13)。改用 nginx 反代 80,所有 user-facing endpoints **公网可达**:
+## 用户访问指南(2026-05-16 后:**HTTPS 公网直连**,域名 + Let's Encrypt 真证书)
 
 | URL | 用途 |
 | --- | --- |
-| **http://8.156.34.238/** | 自动 redirect → `/uppy/` |
-| **http://8.156.34.238/uppy/** | uppy 大文件上传前端(拖拽即用,< 100 MiB single PUT,≥ 100 MiB multipart)|
-| **http://8.156.34.238/console/** | MinIO Console — user `minioadmin` pass `minioadmin-poc-2026` |
-| http://8.156.34.238/health | presigner health(JSON)|
-| http://8.156.34.238/s3/multipart* | uppy AwsS3 plugin API endpoint(presigner)|
-| http://8.156.34.238/`<bucket>`/`<key>`?X-Amz-... | MinIO S3 API,presigned URL 直传通道(nginx 反代 → MinIO :9000)|
+| **https://rusheslab.taoxiplan.com/uppy/** | **uppy 大文件上传前端(主入口)** — 真证书,无浏览器警告 |
+| **https://rusheslab.taoxiplan.com/console/** | MinIO Console — user `minioadmin` pass `minioadmin-poc-2026` |
+| https://rusheslab.taoxiplan.com/health | presigner health |
+| https://rusheslab.taoxiplan.com/`<bucket>`/`<key>`?X-Amz-... | MinIO S3 API presigned URL 直传通道 |
 
-**SSH tunnel 仍保留作 fallback**(若 nginx 出问题或需要直接访问 6100/6101):
+**架构**(三层反代):
+```
+浏览器 (HTTPS)
+  ↓ TLS 1.3 + HTTP/2
+Caddy 2.11 (server1 47.109.30.236:443) — Let's Encrypt rusheslab.taoxiplan.com
+  ↓ HTTP(VPC 内网 routing,RTT 1.3 ms)
+nginx (server2 8.156.34.238:80) — path 分发
+  ↓ HTTP(docker network)
+MinIO / presigner / webhook (docker containers)
+```
+
+**SSH tunnel 仍保留作 fallback**:
 ```bash
 ssh -L 6100:localhost:6100 -L 6101:localhost:6101 -L 8080:localhost:8080 root@8.156.34.238
 ```
+
+**直连 server2 HTTP** 也仍 work:`http://8.156.34.238/uppy/`(无 HTTPS,适合内部测试 / 验证 server2 nginx 单独工作)。
 
 ## 后续(超出 Phase A 验收)
 
