@@ -4,9 +4,12 @@
 "消息卡片请求网址"均填同一个 `/api/v1/webhooks/feishu`):
 
 - url_verification               — 飞书后台首次验证 challenge
-- contact.user.deleted_v3        — 离职闭环 → permissions.revoke_user_completely
+- contact.user.created_v3        — 入职:upsert + 加部门 tuples
+- contact.user.updated_v3        — 资料变更(含换部门)— diff dept_ids
+- contact.user.deleted_v3        — 离职闭环 → revoke_user_completely
+- contact.department.updated_v3  — 部门 parent 变更 → 重写 nesting
 - approval_instance              — 飞书审批 instance 状态变更(iter7 真审批闭环)
-- card.action.trigger            — 飞书 IM 卡片按钮点击 → dispatch 到 services/feishu_card_handlers
+- card.action.trigger            — 飞书 IM 卡片按钮点击 → dispatch
 
 签名校验:飞书 Verification Token(应用后台 → 事件订阅)
   - Header `X-Lark-Signature` = HMAC-SHA256(verification_token, timestamp + nonce + body)
@@ -24,6 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.deps import get_permissions
+from app.services.contact_sync import (
+    get_default_organization,
+    handle_user_deleted,
+    sync_department_parent,
+    sync_user,
+)
 from app.services.feishu_card_handlers import dispatch_card_action
 from app.services.permissions import PermissionsService
 from app.settings import get_settings
@@ -44,7 +53,6 @@ async def feishu_event(
     raw_body = await request.body()
     settings = get_settings()
 
-    # ─── 1) signature verify(prod enforce)──────────────────────────────────
     verification_token = getattr(settings, "feishu_verification_token", None)
     if settings.env != "dev" and verification_token:
         if not _verify_signature(
@@ -61,54 +69,116 @@ async def feishu_event(
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"invalid json: {e}") from e
 
-    # ─── 2) URL 验证 challenge(飞书后台 webhook 注册时)─────────────────────
     if payload.get("type") == "url_verification":
         challenge = payload.get("challenge", "")
         log.info("feishu url_verification challenge=%s", challenge)
         return {"challenge": challenge}
 
-    # 飞书新版 v2 事件结构:{"schema": "2.0", "header": {...}, "event": {...}}
     header = payload.get("header") or {}
     event_type = header.get("event_type")
     event_data = payload.get("event") or {}
     log.info("feishu event_type=%s tenant=%s", event_type, header.get("tenant_key"))
 
-    # ─── 3) 路由具体事件 ─────────────────────────────────────────────────────
-    if event_type == "contact.user.deleted_v3":
-        return await _handle_user_deleted(event_data, permissions)
+    # ─── contact events ──────────────────────────────────────────────────────
+    if event_type == "contact.user.created_v3":
+        return await _handle_user_created(event_data, db, permissions)
 
+    if event_type == "contact.user.updated_v3":
+        return await _handle_user_updated(event_data, db, permissions)
+
+    if event_type == "contact.user.deleted_v3":
+        return await _handle_user_deleted(event_data, db, permissions)
+
+    if event_type == "contact.department.updated_v3":
+        return await _handle_department_updated(event_data, permissions)
+
+    # ─── existing handlers ───────────────────────────────────────────────────
     if event_type == "approval_instance":
-        # iter7:approval_instance.status 转换 → 调 internal approve/reject
         log.info("approval_instance event(iter7 接业务):%s", event_data)
         return {"status": "ack", "todo": "iter7 wire approval_instance → internal decision"}
 
     if event_type == "card.action.trigger":
-        # IM 卡片按钮点击 → dispatch 到 services/feishu_card_handlers
-        # 飞书要求同步返回 {toast?, card?} 完成"toast + 卡片更新";否则返 {}
         result = await dispatch_card_action(event_data, request)
         return result
 
-    # 未识别事件:ack 防止飞书重试
     log.info("feishu event unhandled type=%s", event_type)
     return {"status": "ack"}
 
 
-async def _handle_user_deleted(event: dict, permissions: PermissionsService) -> dict:
-    """contact.user.deleted_v3 → OpenFGA 删该 user 所有 tuple。
+# ─── contact handlers ────────────────────────────────────────────────────────
+async def _handle_user_created(
+    event: dict, db: AsyncSession, permissions: PermissionsService,
+) -> dict:
+    user_obj = event.get("object") or {}
+    open_id = user_obj.get("open_id")
+    if not open_id:
+        return {"status": "ack", "warning": "no open_id"}
+    org = await get_default_organization(db)
+    if org is None:
+        log.warning("user_created %s: no default org configured", open_id)
+        return {"status": "ack", "warning": "no default org"}
+    org_id, tenant_key = org
+    await sync_user(
+        db, permissions,
+        user_obj=user_obj,
+        organization_tenant_key=tenant_key,
+        organization_id=org_id,
+        previous_department_ids=None,   # 全量
+    )
+    return {"status": "ack", "open_id": open_id}
 
-    event payload:
-      {"object": {"open_id": "ou_xxx", "user_id": "...", "union_id": "..."}}
-    """
+
+async def _handle_user_updated(
+    event: dict, db: AsyncSession, permissions: PermissionsService,
+) -> dict:
+    user_obj = event.get("object") or {}
+    open_id = user_obj.get("open_id")
+    if not open_id:
+        return {"status": "ack", "warning": "no open_id"}
+    old_obj = event.get("old_object") or {}
+    prev_deps = old_obj.get("department_ids") if old_obj else None
+
+    org = await get_default_organization(db)
+    if org is None:
+        return {"status": "ack", "warning": "no default org"}
+    org_id, tenant_key = org
+    await sync_user(
+        db, permissions,
+        user_obj=user_obj,
+        organization_tenant_key=tenant_key,
+        organization_id=org_id,
+        previous_department_ids=prev_deps,
+    )
+    return {"status": "ack", "open_id": open_id, "had_old": old_obj is not None}
+
+
+async def _handle_user_deleted(
+    event: dict, db: AsyncSession, permissions: PermissionsService,
+) -> dict:
     open_id = (event.get("object") or {}).get("open_id")
     if not open_id:
-        return {"status": "ack", "warning": "no open_id in event"}
+        return {"status": "ack", "warning": "no open_id"}
+    n = await handle_user_deleted(db, permissions, open_id=open_id)
+    return {"status": "ack", "open_id": open_id, "revoked_tuples": n}
 
-    # 注:OpenFGA tuple 用 open_id?还是 internal user_id?
-    # iter5 我们 user.id (UUID) 作 OpenFGA user 主键 → 这里需要 db lookup
-    # iter7 加 lookup + revoke;此处先 log
-    log.warning("contact.user.deleted_v3 open_id=%s — iter7 接 db lookup + revoke_user_completely",
-                open_id)
-    return {"status": "ack", "todo": "iter7 db lookup + revoke"}
+
+async def _handle_department_updated(
+    event: dict, permissions: PermissionsService,
+) -> dict:
+    obj = event.get("object") or {}
+    old = event.get("old_object") or {}
+    dept_id = obj.get("open_department_id") or obj.get("department_id")
+    if not dept_id:
+        return {"status": "ack", "warning": "no department_id"}
+    parent = obj.get("parent_department_id")
+    prev_parent = old.get("parent_department_id")
+    await sync_department_parent(
+        permissions,
+        department_id=dept_id,
+        parent_department_id=parent,
+        previous_parent_department_id=prev_parent,
+    )
+    return {"status": "ack", "department_id": dept_id, "parent": parent}
 
 
 def _verify_signature(
