@@ -16,6 +16,7 @@ action button 的 `value` 字段在点击时通过 card.action.trigger 事件回
 """
 from __future__ import annotations
 
+import urllib.parse
 from typing import Any, Literal
 
 CardTemplate = Literal["blue", "green", "orange", "red", "grey", "turquoise", "purple"]
@@ -48,7 +49,10 @@ def _button(
     value: dict[str, Any] | None = None,
     url: str | None = None,
 ) -> dict[str, Any]:
-    """callback button(value=)或 link button(url=)二选一。"""
+    """callback button(value=)或 link button(url=)二选一。
+
+    url 用 multi_url 形式:移动端飞书内 webview 打开(via applink),PC 端直接 web。
+    """
     btn: dict[str, Any] = {
         "tag": "button",
         "text": {"tag": "plain_text", "content": text},
@@ -57,8 +61,27 @@ def _button(
     if value is not None:
         btn["value"] = value
     if url is not None:
-        btn["url"] = url
+        applink = applink_open(url)
+        # multi_url:PC 直接 web(用户多窗口浏览舒服);移动端走 applink 在飞书内 webview 开
+        btn["multi_url"] = {
+            "url": applink,
+            "pc_url": url,
+            "android_url": applink,
+            "ios_url": applink,
+        }
     return btn
+
+
+def applink_open(target_url: str) -> str:
+    """把任意 URL 包成飞书 applink,飞书客户端点击会在内置 webview 打开,
+    不会跳出到系统浏览器。
+
+    ref: https://open.feishu.cn/document/uYjL24iN/uYjL24iN/applink-protocol/web-link
+    """
+    return (
+        "https://applink.feishu.cn/client/web_url/open?url="
+        + urllib.parse.quote(target_url, safe="")
+    )
 
 
 def _actions(*buttons: dict[str, Any]) -> dict[str, Any]:
