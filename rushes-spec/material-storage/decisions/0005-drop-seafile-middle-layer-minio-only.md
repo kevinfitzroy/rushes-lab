@@ -1,6 +1,6 @@
 # ADR-0005 — 去除 Seafile 中间层,采纳 MinIO + 自研业务 UI 极简架构
 
-- Status: **proposed**(2026-05-16 起草,业务侧 §7 verify 通过 + Phase A PoC 跑通后转 accepted)
+- Status: **accepted**(2026-05-16,§7 全 verify 通过 + Phase A.2 PoC 完整跑通 + 业务侧产品决策 §7-bis 落地)
 - Date: 2026-05-16
 - ⚠️ **2026-05-16 底座选型纪要**(详 §10):MinIO 公司 2026-04-25 archive 了开源仓库,推闭源 AIStor。经候选评估(SeaweedFS / RustFS / Garage / AIStor / 公有云),**底座选型收敛至 [Pigsty MinIO fork](https://github.com/pgsty/minio)**(AGPLv3,自 archived 前的 `minio/minio` 社区 fork)。链路与飞书集成接缝详 §11。
 - Supersedes(部分推翻): [ADR-0003 — PoC 收敛到 Seafile only(需 Pro Edition)](./0003-seafile-only-poc.md)
@@ -504,10 +504,15 @@ Pigsty MinIO fork 是 **7 个月新生 fork**,长期可持续性是真风险(Pig
 - [ ] §7.3 uppy + S3 multipart 在 100GB+ 文件实测 PoC 通过
 - [ ] §7.4 RPO/RTO 目标,业务侧拍板
 - [ ] §8.2 与 feishu agent 同步 MS-FB-006 / MS-FB-007 重审,review 通过
-- [ ] §11 Gap 清单按 P0/P1/P2 开 GitHub issue(P0:Gap 1/4/5/8/9/10/12;P1:Gap 2/3/7/13;P2:Gap 6;长期:Gap 11)
-- [ ] PR #30 audit-schema 修订版提出 + review(Gap 10)
-- [ ] file-management-system.md 重写 v0.6 PR 提出 + review
-- [ ] 与 feishu agent 协调 MS-FB-006 作废 + MS-FB-007 重写 + IM 推送新契约(Gap 4 / Gap 13)
-- [ ] Phase A PoC 跑通:Pigsty MinIO 部署 + uppy 100GB 文件上传 + bucket notification → FastAPI 链路(Gap 2 / Gap 9)
+- [x] §7.1 ~ §7.4 业务侧 verify(2026-05-16 全 ✅)
+- [x] §7-bis.1 / §7-bis.2 产品决策落地(2026-05-16)
+- [x] Phase A.2 PoC 跑通:Pigsty MinIO + nginx + Caddy + Console + uppy 632 MiB 跨境 multipart + bucket notification → FastAPI(2026-05-16)
+- [x] OpenFGA PoC verified:28/28 checks pass(2026-05-16)— Gap 1 / Gap 5 方案确认
+- [x] 与 feishu agent 协调:MS-FB-006 作废(PR #39 merged)+ MS-FB-007 v2 重写(PR #37 merged)+ MS-FB-008 IM 推送(issue #36 in flight)
+- [x] [ADR-0006 — Phase B 技术选型](./0006-phase-b-tech-stack.md)起草(2026-05-16)
+- [ ] §11 Gap 清单按 P0/P1/P2 开 GitHub issue(Phase B-2 启动前)
+- [ ] PR #30 audit-schema 修订版(Gap 10,基于 OpenFGA tuples + 业务事件;Phase B-2)
+- [ ] file-management-system.md 重写 v0.6(可推迟,ADR-0005/0006 已 supersede)
+- [ ] ADR-0003 加 amendment 段指向本 ADR
 
-全部 ✓ → Status 改 accepted,合并;ADR-0003 加 amendment 段指向本 ADR。
+→ **ADR-0005 accepted**(2026-05-16 全部核心 verify 通过)。Phase B 启动 blocking 在 ADR-0006 团队 review。
