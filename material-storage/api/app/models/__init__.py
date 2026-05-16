@@ -77,3 +77,35 @@ class DownloadLinkOut(BaseModel):
     url: str
     expires_in: int
     is_sensitive: bool
+
+
+# ─── approvals(iter6)────────────────────────────────────────────────────────
+class ApprovalCreateIn(BaseModel):
+    target_type: str = Field(..., pattern=r"^(sensitive_folder|asset|project)$")
+    target_id: uuid.UUID
+    action: str = Field(..., pattern=r"^(download|access)$",
+                        description="download=临时下载(grant_explicit_download);"
+                                    "access=邀请进 sensitive_folder")
+    duration_seconds: int | None = Field(None, ge=60, le=365 * 24 * 3600,
+                                         description="None=永久(仅 action=access 时)")
+    reason: str = Field(..., min_length=4, max_length=2000)
+
+
+class ApprovalDecisionIn(BaseModel):
+    decision_note: str | None = Field(None, max_length=2000)
+
+
+class ApprovalOut(ORMModel):
+    id: uuid.UUID
+    applicant_user_id: uuid.UUID
+    target_type: str
+    target_id: uuid.UUID
+    action: str
+    duration_seconds: int | None
+    reason: str
+    status: str
+    feishu_instance_code: str | None
+    approver_user_id: uuid.UUID | None
+    decided_at: datetime | None
+    decision_note: str | None
+    created_at: datetime

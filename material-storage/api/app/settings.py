@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     feishu_oidc_scope: str = "contact:user.base:readonly"
     feishu_redirect_uri: str = Field(..., description="OIDC callback,绝对 URL,需在飞书后台注册;e.g. https://rusheslab.taoxiplan.com/api/v1/auth/callback")
     feishu_bridge_url: str | None = Field(None, description="可选;iter6 webhook handler 在 ms-api 内,不再依赖 bridge")
+    feishu_verification_token: str | None = Field(None, description="飞书事件订阅 Verification Token,prod 必填(env!=dev 时强制 verify)")
 
     # ─── session JWT ─────────────────────────────────────────────────────────
     session_jwt_secret: str = Field(..., description="HS256 签名密钥,至少 32 字节随机")

@@ -146,6 +146,55 @@ class Asset(Base, TimestampMixin):
     )
 
 
+class ApprovalRequest(Base, TimestampMixin):
+    """审批申请 — iter6。
+
+    用户对 sensitive_folder / asset 发起下载/访问申请;
+    admin 批准 → 写 OpenFGA grant tuple(grant_explicit_download /
+    invite_to_sensitive_folder),并把 tuple 引用存在 granted_tuple_ref(JSONB),
+    撤销时直接定位删除。
+    """
+    __tablename__ = "approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+
+    applicant_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+    # 申请目标:('sensitive_folder' | 'asset' | 'project'),配合 target_id 定位
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+
+    # 申请的动作:'download'(临时下载)| 'access'(永久邀请 sensitive_folder)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    duration_seconds: Mapped[int | None]   # None = 永久(action=access 时)
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+
+    # pending / approved / rejected / revoked / expired
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False, index=True)
+
+    # 飞书审批集成(iter7):每个申请对应飞书审批一个 instance
+    feishu_instance_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+
+    # 决策
+    approver_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(String(2000))
+
+    # OpenFGA 写回的 tuple 引用(撤销/审计用)
+    # 形如 {"user":"user:X","relation":"explicit_downloader","object":"asset:Y","permanent":false}
+    granted_tuple_ref: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+    __table_args__ = (
+        Index("ix_approval_target", "target_type", "target_id"),
+        Index("ix_approval_status_created", "status", "created_at"),
+    )
+
+
 class AuditEvent(Base):
     """Audit 中心:所有业务事件落库;ADR-0005 §11.2 Gap 10。"""
     __tablename__ = "audit_events"
