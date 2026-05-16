@@ -45,6 +45,12 @@ services:
         condition: service_started
     ports:
       - "127.0.0.1:8200:8000"   # SSH tunnel access / 后续 nginx 反代到这
+    volumes:
+      # Phase B-3:web dist 通过 host bind mount(force-recreate 不丢);
+      # host /root/material-storage-api/app/static/{index.html,uppy.html,web/} 是 deploy 时 rsync 进来的
+      - ./app/static:/app/app/static:ro
+      # Phase B-2 dev scripts 也 bind 方便迭代(不必 docker cp);read-only
+      - ./scripts:/app/scripts:ro
     networks:
       - poc-net
 

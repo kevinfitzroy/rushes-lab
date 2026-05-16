@@ -33,7 +33,8 @@ http.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
-      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      // HashRouter 下需带 hash 完整路径回业务前端;否则 callback 跳 /(MinIO Console)
+      const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
       window.location.href = `${apiBase}/api/v1/auth/login?next=${next}`;
     }
     return Promise.reject(err);

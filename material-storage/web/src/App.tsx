@@ -36,7 +36,10 @@ function AppShell() {
       window.location.reload();
       return null;
     }
-    window.location.href = `${apiBase}/api/v1/auth/login?next=${encodeURIComponent(location.pathname)}`;
+    // next 必须是 window.location 完整 path+hash(HashRouter 下 React Router location.pathname 只是 hash 部分)
+    // 否则 callback 回的是域名根 /,会被 nginx 路由到 MinIO Console SPA
+    const next = window.location.pathname + window.location.hash;
+    window.location.href = `${apiBase}/api/v1/auth/login?next=${encodeURIComponent(next)}`;
     return null;
   }
 
