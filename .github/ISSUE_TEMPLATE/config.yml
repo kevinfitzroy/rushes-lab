@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 协作规则(必读)
+    url: https://github.com/kevinfitzroy/rushes-lab/blob/main/rushes-spec/material-storage/COLLABORATION.md
+    about: tester agent 必读 — 反馈契约、截图与敏感信息处理、lifecycle
+  - name: 已知坑(提 issue 前先看)
+    url: https://github.com/kevinfitzroy/rushes-lab/blob/main/rushes-spec/material-storage/ROADMAP.md
+    about: dev 已知 / 已规划 / 决定不修的事项;避免重复反馈
+  - name: 平级 agent 协作(material-storage ↔ feishu)
+    url: https://github.com/kevinfitzroy/rushes-lab/blob/main/rushes-spec/feishu/COLLABORATION.md
+    about: 子项目 agent 之间的契约 — 与 tester 反馈无关,放此作为索引

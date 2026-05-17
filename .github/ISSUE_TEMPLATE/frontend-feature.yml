@@ -1,0 +1,113 @@
+name: "[ui] UI / 视觉 / 体验改进"
+description: 报告 UI 视觉问题或提议体验改进(布局、配色、字体、动效、移动端适配)
+title: "[ui] "
+labels: ["enhancement", "area:material-storage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认:
+        - ✅ 已读 [COLLABORATION.md](../tree/main/rushes-spec/material-storage/COLLABORATION.md) §3.3 §4
+        - ✅ 已 `gh issue list --search "<keyword>" --state all` 搜重
+        - ℹ️ 如果是**功能 bug**(操作没反应 / 报错)请用 [bug template](?template=bug.yml);本 template 仅用于**视觉 / 体验**改进
+        - ✅ 截图已脱敏:无顾客真实数据(见 §4.3)
+
+  - type: textarea
+    id: location
+    attributes:
+      label: 页面 / 组件
+      description: 路由 URL + 涉及的组件(可选);越具体越好
+      placeholder: |
+        - 路由: /projects
+        - 组件: ProjectsPage.tsx → Card 网格
+        - 或: 全局 Header → UserMenu dropdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: 当前现象(文字描述)
+      description: 用文字说明现在长什么样 / 怎么交互。截图作为辅助附在下方,**不能代替文字**。
+      placeholder: |
+        - 项目卡片在 desktop 三列网格,卡片之间无 hover 反馈
+        - 卡片底部"创建时间"字号过小(11px),与正文层级混乱
+        - 移动端(< 768px)三列挤压,创建时间被截断
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望效果
+      description: 你希望改成什么样;可文字描述,也可附参考图
+      placeholder: |
+        - desktop: hover 时卡片上浮 + 阴影加深 + 封面图微缩放
+        - 时间字号 → 13px,与描述同级
+        - 移动端: 一列布满,卡片高度自适应
+
+        参考: Linear 项目列表卡片 hover 反馈
+    validations:
+      required: true
+
+  - type: textarea
+    id: device
+    attributes:
+      label: 测试的设备 / 端
+      description: 至少填一个;如多端有差异请都列出
+      value: |
+        - **desktop**: (浏览器 + 分辨率,如 Chrome 120, 1920x1080)
+        - **mobile**: (iOS Safari 17, iPhone 15 / 飞书 webview iOS)
+        - **飞书 webview**: (macOS 飞书 7.x / iOS 飞书)
+    validations:
+      required: true
+
+  - type: textarea
+    id: cross_device_impact
+    attributes:
+      label: 改完是否影响其他端
+      description: 如果只在 desktop 测了改动建议,可能影响 mobile / webview 吗?
+      placeholder: |
+        - desktop hover 改动: 不影响 mobile (无 hover)
+        - 三列 → 一列: mobile 受益,desktop 不变
+        - 字号改动: 全端一致
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot_current
+    attributes:
+      label: 当前截图(可选,但 UI 问题强烈推荐)
+      description: |
+        - 拖拽图片到此框上传
+        - **必须配 caption**(图1/图2 + 一句话说明看哪里)
+        - 单张 ≤ 2MB
+        - **严禁**:顾客面部/手机/姓名/术前后照
+      placeholder: |
+        图1: desktop 当前项目卡片三列布局,创建时间字号偏小
+        <拖拽截图>
+
+        图2: 移动端 375px 宽度,创建时间被截断
+        <拖拽截图>
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: 视觉参考(可选)
+      description: 其他产品的实现 / 设计稿 / Figma 链接
+      placeholder: |
+        - Linear 项目列表: https://linear.app/...
+        - Frame.io 媒体卡片 hover: <截图>
+        - 自己画的草图: <拖拽>
+
+  - type: dropdown
+    id: priority_ui
+    attributes:
+      label: 优先级建议(tester 视角)
+      options:
+        - blocking (UI 错误导致功能不可用,如按钮被遮挡)
+        - major (明显影响体验,但还能用)
+        - minor (有不爽,可以接受)
+        - nit (洁癖级,有空再改)
+    validations:
+      required: true
