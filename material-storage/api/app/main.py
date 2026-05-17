@@ -65,9 +65,17 @@ def create_app() -> FastAPI:
     )
 
     # CORS(给业务前端 React + 飞书 H5 内嵌 webview 用)
+    # 默认从 web_app_base_url derive 同源 origin;`allow_credentials=True` 时
+    # CORS spec 不允许 `*` wildcard,所以 explicit list 是必须的
+    from urllib.parse import urlparse
+    if settings.cors_allow_origins:
+        allow_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+    else:
+        parsed = urlparse(settings.web_app_base_url)
+        allow_origins = [f"{parsed.scheme}://{parsed.netloc}"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],   # TODO Phase B:严格限制到业务前端 origin
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

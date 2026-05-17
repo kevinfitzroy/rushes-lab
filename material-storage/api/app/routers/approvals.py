@@ -34,6 +34,7 @@ from app.deps import (
     CurrentUser,
     get_current_user,
     get_feishu_client,
+    get_is_system_admin,
     get_permissions,
     get_request_context,
 )
@@ -162,6 +163,7 @@ async def approve(
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> ApprovalOut:
     user_id, user_open_id = user.id, user.open_id
@@ -176,6 +178,7 @@ async def approve(
             permissions=permissions,
             audit=audit,
             ctx=DecisionContext(**ctx),
+            is_system_admin=is_system_admin,
         )
     except ApprovalDecisionError as e:
         raise HTTPException(e.status_code, e.message) from e
@@ -199,6 +202,7 @@ async def reject(
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> ApprovalOut:
     user_id, user_open_id = user.id, user.open_id
@@ -213,6 +217,7 @@ async def reject(
             permissions=permissions,
             audit=audit,
             ctx=DecisionContext(**ctx),
+            is_system_admin=is_system_admin,
         )
     except ApprovalDecisionError as e:
         raise HTTPException(e.status_code, e.message) from e

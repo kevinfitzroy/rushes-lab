@@ -55,6 +55,13 @@ class Settings(BaseSettings):
         description="e.g. https://rusheslab.taoxiplan.com/ms-static/web/ — 末尾带斜杠",
     )
 
+    # CORS — 默认从 web_app_base_url derive(同源场景够用);需要额外 origin 时
+    # 设 env CORS_ALLOW_ORIGINS=https://a.com,https://b.com(逗号分隔)
+    cors_allow_origins: str | None = Field(
+        None,
+        description="逗号分隔的 origin allow list;留空 = 自动从 web_app_base_url derive",
+    )
+
     # ─── session JWT ─────────────────────────────────────────────────────────
     session_jwt_secret: str = Field(..., description="HS256 签名密钥,至少 32 字节随机")
     session_jwt_alg: str = "HS256"

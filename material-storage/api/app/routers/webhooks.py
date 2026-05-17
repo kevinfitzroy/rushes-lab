@@ -67,7 +67,8 @@ async def feishu_event(
     try:
         payload = json.loads(raw_body)
     except json.JSONDecodeError as e:
-        raise HTTPException(400, f"invalid json: {e}") from e
+        log.warning("feishu webhook invalid json: %s", e)
+        raise HTTPException(400, "invalid event payload") from e
 
     if payload.get("type") == "url_verification":
         challenge = payload.get("challenge", "")
