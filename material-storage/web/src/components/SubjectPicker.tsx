@@ -177,7 +177,7 @@ function GroupPicker({
       }}
       placeholder="搜用户组名"
       showSearch filterOption={false} onSearch={search}
-      notFoundContent={fetching ? <Spin size="small" /> : '无匹配 / 未开 contact:group:readonly 权限'}
+      notFoundContent={fetching ? <Spin size="small" /> : '无匹配项'}
       options={options.map(g => ({
         value: g.id,
         label: (
