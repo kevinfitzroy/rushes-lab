@@ -32,7 +32,8 @@ def get_auth_service(request: Request) -> FeishuOIDCService:
 
 _OIDC_STATE_COOKIE = "ms_oidc_state"
 _OIDC_NEXT_COOKIE = "ms_oidc_next"
-_DEFAULT_AFTER_LOGIN = "/"
+# 默认回 SPA 入口;nginx `/` 路由到 MinIO Console,不能用 "/"
+_DEFAULT_AFTER_LOGIN = "/ms-static/web/"
 
 
 @router.get("/login")

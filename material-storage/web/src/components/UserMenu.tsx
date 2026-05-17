@@ -30,7 +30,9 @@ export function UserMenu({ me }: { me: Me }) {
       return;
     }
     try { await http.post('/api/v1/auth/logout'); } catch { /* ignore */ }
-    window.location.href = `${apiBase}/api/v1/auth/login`;
+    // 显式传 next 回 SPA 根,避免 callback fallback 到 nginx /(MinIO Console)
+    const next = encodeURIComponent('/ms-static/web/');
+    window.location.href = `${apiBase}/api/v1/auth/login?next=${next}`;
   };
 
   // 头像 fallback:用名字首字
