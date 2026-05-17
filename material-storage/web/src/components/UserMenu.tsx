@@ -1,11 +1,27 @@
-import { Avatar, Dropdown } from 'antd';
-import { LogOut, User as UserIcon } from 'lucide-react';
+import { App, Avatar, Dropdown } from 'antd';
+import { Check, Copy, LogOut, User as UserIcon } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiBase, setDevUserId, getDevUserId, http } from '../api/client';
 import type { Me } from '../api/types';
 
 export function UserMenu({ me }: { me: Me }) {
   const isDev = !!getDevUserId();
+  const { message } = App.useApp();
+  const [copied, setCopied] = useState(false);
+
+  const copyOpenId = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!me.open_id) return;
+    try {
+      await navigator.clipboard.writeText(me.open_id);
+      setCopied(true);
+      message.success('open_id 已复制');
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      message.error('复制失败');
+    }
+  };
 
   const handleLogout = async () => {
     if (isDev) {
@@ -27,12 +43,48 @@ export function UserMenu({ me }: { me: Me }) {
           {
             key: 'me',
             label: (
-              <div style={{ padding: '4px 0', minWidth: 200 }}>
+              <div style={{ padding: '4px 0', minWidth: 260, maxWidth: 360 }}>
                 <div style={{ fontWeight: 500, color: 'var(--ms-ink)' }}>{me.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--ms-ink-subtle)',
-                              fontFamily: 'var(--ms-font-mono)', marginTop: 2 }}>
-                  {me.open_id?.slice(0, 16)}…
-                </div>
+                {me.open_id && (
+                  <div style={{
+                    marginTop: 4,
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    fontSize: 11, color: 'var(--ms-ink-subtle)',
+                    fontFamily: 'var(--ms-font-mono)',
+                  }}>
+                    <span style={{
+                      flex: 1, minWidth: 0,
+                      overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }} title={me.open_id}>
+                      {me.open_id}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyOpenId}
+                      title={copied ? '已复制' : '复制 open_id'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: 22, height: 22, flexShrink: 0,
+                        padding: 0, border: 'none', cursor: 'pointer',
+                        background: 'transparent',
+                        color: copied ? 'var(--ms-emerald)' : 'var(--ms-ink-subtle)',
+                        borderRadius: 4,
+                        transition: 'background var(--ms-dur-fast) var(--ms-ease)',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.background = 'var(--ms-hairline-soft)';
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      {copied
+                        ? <Check size={13} strokeWidth={2.2} />
+                        : <Copy size={12} strokeWidth={1.8} />}
+                    </button>
+                  </div>
+                )}
               </div>
             ),
             disabled: true,
