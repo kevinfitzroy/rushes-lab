@@ -302,6 +302,107 @@ async def invite(
             )
 
 
+@router.get("/{folder_id}/members")
+async def list_members(
+    folder_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """sensitive_folder 当前成员列表 — D iter3 前端 FolderInvitePanel 用。
+
+    返:[{subject, kind, name, level, permanent, expires_at?}]
+    subject 形如 "user:ou_xxx" / "group:gid#member" / "department:did#member"
+    需 can_admin folder。
+    """
+    user_id, user_open_id = user.id, user.open_id
+    folder = await db.get(Folder, folder_id)
+    if not folder:
+        raise HTTPException(404, "folder not found")
+    if not folder.is_sensitive:
+        raise HTTPException(400, "not a sensitive_folder")
+
+    allowed = await permissions.check(
+        user_subject=f"user:{user_open_id}", relation="can_admin",
+        object_type="sensitive_folder", object_id=str(folder_id),
+    )
+    if not allowed:
+        raise HTTPException(403, "no admin permission")
+
+    # OpenFGA read 所有 tuples for sensitive_folder:<id>
+    from openfga_sdk.models import ReadRequestTupleKey
+    from app.db.tables import User as _User
+    resp = await permissions._client.read(  # type: ignore[attr-defined]
+        ReadRequestTupleKey(object=f"sensitive_folder:{folder_id}")
+    )
+
+    members: list[dict] = []
+    user_subject_open_ids: list[str] = []
+    user_records: list[dict] = []   # 后面合并 db 名
+
+    INVITE_RELATIONS = {
+        "invited_viewer":            ("viewer", True),
+        "invited_downloader":        ("downloader", True),
+        "explicit_invited_viewer":   ("viewer", False),
+        "explicit_invited_downloader": ("downloader", False),
+    }
+    for t in resp.tuples:
+        rel = t.key.relation
+        if rel not in INVITE_RELATIONS:
+            continue
+        level, permanent = INVITE_RELATIONS[rel]
+        subject = t.key.user            # e.g. "user:ou_xxx" or "group:gid#member"
+        kind, rest = subject.split(":", 1)
+        sid = rest.rsplit("#", 1)[0]    # 去 #member 后缀
+
+        expires_at = None
+        cond = getattr(t.key, "condition", None)
+        if cond and not permanent:
+            try:
+                ctx = cond.context or {}
+                gt = ctx.get("grant_time")
+                dur = ctx.get("grant_duration", "0s")
+                if gt:
+                    from datetime import datetime, timedelta
+                    seconds = int(dur.rstrip("s"))
+                    expires_at = (
+                        datetime.fromisoformat(gt.replace("Z", "+00:00"))
+                        + timedelta(seconds=seconds)
+                    ).isoformat()
+            except (ValueError, AttributeError):
+                pass
+
+        record = {
+            "subject": subject,
+            "kind": kind,            # user / group / department
+            "subject_id": sid,
+            "name": None,            # 后面 db 查
+            "level": level,
+            "permanent": permanent,
+            "expires_at": expires_at,
+        }
+        if kind == "user":
+            user_subject_open_ids.append(sid)
+            user_records.append(record)
+        else:
+            # group / department:目前没拉 db,显示 id
+            record["name"] = f"{('用户组' if kind == 'group' else '部门')} {sid[:12]}…"
+            members.append(record)
+
+    # user 批量查 db 拿 name
+    if user_subject_open_ids:
+        stmt = select(_User).where(_User.feishu_open_id.in_(user_subject_open_ids))
+        res = await db.execute(stmt)
+        name_by_open_id = {u.feishu_open_id: u.name for u in res.scalars().all()}
+        for r in user_records:
+            r["name"] = name_by_open_id.get(r["subject_id"], r["subject_id"][:12] + "…")
+        members.extend(user_records)
+
+    # 排序:user 在前,group/department 在后;name 字典序
+    members.sort(key=lambda m: (0 if m["kind"] == "user" else 1, m["name"] or ""))
+    return members
+
+
 @router.delete("/{folder_id}/invite", status_code=204)
 async def revoke_invite(
     folder_id: uuid.UUID,
