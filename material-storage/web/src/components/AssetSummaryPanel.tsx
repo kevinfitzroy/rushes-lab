@@ -1,11 +1,17 @@
 /**
- * 右侧选中文件 summary。0/1/N 选时不同显示。
- * 单选时显示"分享给飞书"按钮 → ShareModal。
+ * 右栏 — 选中文件 summary + 快速操作。
+ * 0:Empty 自绘 / 1:meta + 快速操作 / N:类型分布 + 批量统计。
  */
-import { Button, Descriptions, Empty, Space, Statistic, Tag, Typography } from 'antd';
-import { FileOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { App, Tag } from 'antd';
+import {
+  Copy, Download as DownloadIcon, FileText, Files,
+  Hash, Share2,
+} from 'lucide-react';
 import { useState } from 'react';
 import type { Asset, Me } from '../api/types';
+import { useDownloadLink } from '../api/hooks';
+import { useDownloads } from '../lib/download-store';
+import { errorMessage } from '../api/client';
 import { ShareModal } from './ShareModal';
 
 function fmtBytes(n: number): string {
@@ -22,47 +28,130 @@ interface Props {
 
 export function AssetSummaryPanel({ selected, me }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
+  const { message } = App.useApp();
+  const dlLink = useDownloadLink();
+  const downloads = useDownloads();
 
   if (selected.length === 0) {
     return (
-      <div style={{ padding: 24 }}>
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={<Typography.Text type="secondary">选中文件查看详情</Typography.Text>}
-        />
+      <div style={{
+        padding: '60px 20px', textAlign: 'center',
+      }}>
+        <svg width="40" height="40" viewBox="0 0 40 40" style={{ marginBottom: 16 }}>
+          <rect x="6" y="10" width="22" height="26" rx="2"
+                fill="none" stroke="var(--ms-hairline)" strokeWidth="1.5" />
+          <rect x="14" y="4" width="22" height="26" rx="2"
+                fill="none" stroke="var(--ms-ink-subtle)" strokeWidth="1.5" />
+        </svg>
+        <div style={{
+          fontSize: 12.5, color: 'var(--ms-ink-muted)', lineHeight: 1.6,
+        }}>
+          选中文件后<br/>查看详情和快速操作
+        </div>
       </div>
     );
   }
 
+  // ─── 单选 ─────────────────────────────────────────────────────────────────
   if (selected.length === 1) {
     const a = selected[0];
+
+    const handleDownload = async () => {
+      try {
+        const link = await dlLink.mutateAsync(a.id);
+        await downloads.start(link.url, a.filename);
+      } catch (e) {
+        message.error(errorMessage(e, '下载失败'));
+      }
+    };
+    const handleCopyId = async () => {
+      try {
+        await navigator.clipboard.writeText(a.id);
+        message.success('Asset ID 已复制');
+      } catch { message.error('复制失败'); }
+    };
+
     return (
-      <div style={{ padding: 16 }}>
-        <Typography.Title level={5} style={{ marginTop: 0 }}>
-          <FileOutlined /> {a.filename}
-        </Typography.Title>
-        {me && (
-          <Space style={{ marginBottom: 12 }}>
-            <Button
-              icon={<ShareAltOutlined />}
-              type="primary"
-              ghost
-              onClick={() => setShareOpen(true)}
-            >
-              分享给飞书
-            </Button>
-          </Space>
-        )}
-        <Descriptions size="small" column={1} bordered styles={{ label: { width: 96 } }}>
-          <Descriptions.Item label="ID"><code style={{ fontSize: 11 }}>{a.id}</code></Descriptions.Item>
-          <Descriptions.Item label="大小">{fmtBytes(a.size_bytes)}</Descriptions.Item>
-          <Descriptions.Item label="类型">{a.content_type ?? <Tag>未知</Tag>}</Descriptions.Item>
-          <Descriptions.Item label="ETag">{a.etag ? <code style={{ fontSize: 11 }}>{a.etag.slice(0, 16)}…</code> : '—'}</Descriptions.Item>
-          <Descriptions.Item label="bucket"><code style={{ fontSize: 11 }}>{a.minio_bucket}</code></Descriptions.Item>
-          <Descriptions.Item label="key"><code style={{ fontSize: 11, wordBreak: 'break-all' }}>{a.minio_key}</code></Descriptions.Item>
-          <Descriptions.Item label="version">{a.minio_version_id?.slice(0, 16) ?? '—'}</Descriptions.Item>
-          <Descriptions.Item label="创建">{new Date(a.created_at).toLocaleString('zh-CN')}</Descriptions.Item>
-        </Descriptions>
+      <div>
+        {/* Section header */}
+        <div style={{
+          padding: '14px 20px 10px',
+          borderBottom: '1px solid var(--ms-hairline-soft)',
+        }}>
+          <div style={{
+            fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+            color: 'var(--ms-ink-subtle)', fontFamily: 'var(--ms-font-mono)',
+            fontWeight: 500,
+          }}>Selected</div>
+          <div style={{
+            marginTop: 6, display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 32, height: 32, flexShrink: 0,
+              background: 'var(--ms-hairline-soft)',
+              borderRadius: 'var(--ms-radius-sm)',
+              color: 'var(--ms-ink-subtle)',
+            }}><FileText size={14} strokeWidth={1.5} /></span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{
+                fontFamily: 'var(--ms-font-display)',
+                fontSize: 15, fontWeight: 500, lineHeight: 1.3,
+                color: 'var(--ms-ink)',
+                wordBreak: 'break-word',
+              }}>{a.filename}</div>
+              <div style={{
+                marginTop: 2,
+                fontSize: 11.5, color: 'var(--ms-ink-muted)',
+              }}>
+                <span className="ms-mono">{fmtBytes(a.size_bytes)}</span>
+                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
+                <span>{new Date(a.created_at).toLocaleDateString('zh-CN')}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick actions */}
+        <div style={{
+          padding: '12px 16px',
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 4,
+          borderBottom: '1px solid var(--ms-hairline-soft)',
+        }}>
+          <QuickAction icon={<DownloadIcon size={14} strokeWidth={1.8} />}
+                       label="下载"
+                       loading={dlLink.isPending}
+                       onClick={handleDownload} />
+          {me && (
+            <QuickAction icon={<Share2 size={14} strokeWidth={1.8} />}
+                         label="分享给飞书"
+                         onClick={() => setShareOpen(true)} />
+          )}
+          <QuickAction icon={<Copy size={14} strokeWidth={1.8} />}
+                       label="复制 ID"
+                       onClick={handleCopyId} />
+          <QuickAction icon={<Hash size={14} strokeWidth={1.8} />}
+                       label="复制 key"
+                       onClick={async () => {
+                         await navigator.clipboard.writeText(a.minio_key);
+                         message.success('MinIO key 已复制');
+                       }} />
+        </div>
+
+        {/* Meta list */}
+        <div style={{ padding: '14px 20px' }}>
+          <SectionLabel>详情</SectionLabel>
+          <MetaRow label="类型" value={a.content_type ?? <Tag>未知</Tag>} mono={!!a.content_type} />
+          <MetaRow label="ID" value={a.id} mono small />
+          <MetaRow label="ETag" value={a.etag ? a.etag.slice(0, 16) + '…' : '—'} mono small />
+          <MetaRow label="Bucket" value={a.minio_bucket} mono />
+          <MetaRow label="Key" value={a.minio_key} mono small breakAll />
+          <MetaRow label="Version" value={a.minio_version_id?.slice(0, 16) ?? '—'} mono small />
+          <MetaRow label="创建" value={new Date(a.created_at).toLocaleString('zh-CN')} />
+        </div>
+
         {me && (
           <ShareModal
             open={shareOpen}
@@ -75,7 +164,7 @@ export function AssetSummaryPanel({ selected, me }: Props) {
     );
   }
 
-  // 多选 → 汇总统计
+  // ─── 多选 ─────────────────────────────────────────────────────────────────
   const totalBytes = selected.reduce((s, a) => s + a.size_bytes, 0);
   const types = new Map<string, number>();
   for (const a of selected) {
@@ -84,15 +173,134 @@ export function AssetSummaryPanel({ selected, me }: Props) {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <Typography.Title level={5} style={{ marginTop: 0 }}>已选 {selected.length} 个文件</Typography.Title>
-      <Statistic title="总大小" value={fmtBytes(totalBytes)} />
-      <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>类型分布</Typography.Paragraph>
-      <div>
-        {Array.from(types.entries()).map(([t, c]) => (
-          <Tag key={t} style={{ marginBottom: 4 }}>{t} · {c}</Tag>
-        ))}
+    <div>
+      <div style={{
+        padding: '14px 20px 12px',
+        borderBottom: '1px solid var(--ms-hairline-soft)',
+      }}>
+        <div style={{
+          fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+          color: 'var(--ms-ink-subtle)', fontFamily: 'var(--ms-font-mono)',
+          fontWeight: 500,
+        }}>Selection</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
+          <span style={{
+            fontFamily: 'var(--ms-font-display)',
+            fontSize: 28, fontWeight: 500,
+            color: 'var(--ms-ink)',
+          }}>{selected.length}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--ms-ink-muted)' }}>个文件</span>
+        </div>
+        <div style={{
+          marginTop: 4, fontSize: 12, color: 'var(--ms-ink-muted)',
+        }}>
+          总大小 <span className="ms-mono" style={{ color: 'var(--ms-ink)' }}>
+            {fmtBytes(totalBytes)}
+          </span>
+        </div>
       </div>
+
+      <div style={{ padding: '14px 20px' }}>
+        <SectionLabel>类型分布</SectionLabel>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {Array.from(types.entries()).map(([t, c]) => (
+            <span key={t} style={{
+              padding: '4px 10px',
+              background: 'var(--ms-hairline-soft)',
+              borderRadius: 'var(--ms-radius-sm)',
+              fontSize: 11.5,
+              color: 'var(--ms-ink-muted)',
+            }}>
+              <Files size={10} strokeWidth={1.8}
+                     style={{ marginRight: 6, verticalAlign: -1 }} />
+              <span className="ms-mono">{t.split('/').pop() || t}</span>
+              <span style={{ marginLeft: 8, color: 'var(--ms-ink)' }}>×{c}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── 子组件 ─────────────────────────────────────────────────────────────────
+function QuickAction({
+  icon, label, onClick, loading,
+}: {
+  icon: React.ReactNode; label: string;
+  onClick: () => void; loading?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '8px 10px',
+        background: 'transparent', border: '1px solid transparent',
+        borderRadius: 'var(--ms-radius-sm)',
+        color: 'var(--ms-ink)', fontSize: 12.5, fontFamily: 'inherit',
+        cursor: loading ? 'wait' : 'pointer',
+        opacity: loading ? 0.5 : 1,
+        transition: 'all var(--ms-dur-fast) var(--ms-ease)',
+      }}
+      onMouseEnter={e => {
+        if (!loading) {
+          e.currentTarget.style.background = 'var(--ms-hairline-soft)';
+          e.currentTarget.style.borderColor = 'var(--ms-hairline)';
+        }
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.borderColor = 'transparent';
+      }}
+    >
+      <span style={{ color: 'var(--ms-ink-muted)' }}>{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+      color: 'var(--ms-ink-subtle)', fontFamily: 'var(--ms-font-mono)',
+      fontWeight: 500, marginBottom: 10,
+    }}>{children}</div>
+  );
+}
+
+function MetaRow({
+  label, value, mono, small, breakAll,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+  small?: boolean;
+  breakAll?: boolean;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'baseline',
+      padding: '6px 0',
+      gap: 12,
+      borderBottom: '1px solid var(--ms-hairline-soft)',
+    }}>
+      <span style={{
+        flexShrink: 0, width: 56,
+        fontSize: 11, color: 'var(--ms-ink-subtle)',
+      }}>{label}</span>
+      <span style={{
+        flex: 1, minWidth: 0,
+        fontSize: small ? 11 : 12.5,
+        color: 'var(--ms-ink)',
+        fontFamily: mono ? 'var(--ms-font-mono)' : undefined,
+        wordBreak: breakAll ? 'break-all' : undefined,
+        overflow: breakAll ? undefined : 'hidden',
+        textOverflow: breakAll ? undefined : 'ellipsis',
+        whiteSpace: breakAll ? undefined : 'nowrap',
+      }}>{value}</span>
     </div>
   );
 }

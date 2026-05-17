@@ -2,13 +2,13 @@
  * 三栏 workspace:左 FolderTree / 中 AssetTable / 右 AssetSummaryPanel,顶 ActionsBar。
  */
 import {
-  App, Button, Checkbox, Empty, Grid, Layout, Modal, Popconfirm, Skeleton,
-  Space, Table, Tag, Tooltip, Typography,
+  App, Button, Checkbox, Grid, Layout, Modal, Popconfirm, Skeleton,
+  Space, Table, Tooltip,
 } from 'antd';
 import {
-  CloudDownloadOutlined, DeleteOutlined, KeyOutlined,
-  ReloadOutlined, UploadOutlined,
-} from '@ant-design/icons';
+  Download, FileText, Folder as FolderIcon, FolderPlus, Key,
+  Lock, RotateCw, Trash2, Upload,
+} from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -111,14 +111,29 @@ export default function ProjectDetailPage() {
     return (
       <div>
         <AppBreadcrumb />
-        <Empty description="本项目还没有 folder — 新建一个开始" style={{ marginTop: 60 }} />
-        <div style={{ textAlign: 'center', marginTop: 16 }}>
-          <Space>
-            <Button type="primary" icon={<UploadOutlined />} onClick={() => setNewFolderMode('root')}>
+        <div style={{
+          marginTop: 60, padding: '60px 40px', textAlign: 'center',
+          background: 'var(--ms-surface)', border: '1px dashed var(--ms-hairline)',
+          borderRadius: 'var(--ms-radius-lg)',
+        }}>
+          <FolderIcon size={36} strokeWidth={1.3}
+                      style={{ color: 'var(--ms-hairline)', marginBottom: 18 }} />
+          <div style={{
+            fontFamily: 'var(--ms-font-display)', fontSize: 18, fontWeight: 500,
+            color: 'var(--ms-ink)', marginBottom: 8,
+          }}>本项目还没有文件夹</div>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--ms-ink-muted)',
+                      maxWidth: 320, marginInline: 'auto' }}>
+            新建一个开始管理素材,或申请加入已有的 sensitive 目录。
+          </p>
+          <Space style={{ marginTop: 24 }}>
+            <Button type="primary" icon={<FolderPlus size={14} strokeWidth={2} />}
+                    onClick={() => setNewFolderMode('root')}>
               新建第一个文件夹
             </Button>
-            <Button onClick={() => setApplySensitive(true)} icon={<KeyOutlined />}>
-              申请 sensitive 目录访问
+            <Button onClick={() => setApplySensitive(true)}
+                    icon={<Key size={14} strokeWidth={2} />}>
+              申请 sensitive 目录
             </Button>
           </Space>
         </div>
@@ -147,33 +162,68 @@ export default function ProjectDetailPage() {
   // ─── 列定义 ─────────────────────────────────────────────────────────────
   const cols = [
     {
-      title: '文件名', dataIndex: 'filename', ellipsis: true,
-      render: (v: string) => <Typography.Text strong>{v}</Typography.Text>,
+      title: '文件', dataIndex: 'filename', ellipsis: true,
+      render: (v: string, a: Asset) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* 缩略图占位 — 等 B-4 worker 出图后替换为真 thumbnail */}
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 32, height: 32,
+            background: 'var(--ms-hairline-soft)',
+            borderRadius: 'var(--ms-radius-sm)',
+            color: 'var(--ms-ink-subtle)',
+            flexShrink: 0,
+          }}>
+            <FileText size={14} strokeWidth={1.5} />
+          </span>
+          <span style={{
+            fontWeight: 500, color: 'var(--ms-ink)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{v}</span>
+          {a.content_type && (
+            <span style={{
+              fontFamily: 'var(--ms-font-mono)', fontSize: 10.5,
+              color: 'var(--ms-ink-subtle)',
+              padding: '1px 6px',
+              background: 'var(--ms-hairline-soft)',
+              borderRadius: 3,
+              flexShrink: 0,
+            }}>{a.content_type.split('/').pop()}</span>
+          )}
+        </div>
+      ),
     },
     {
       title: '大小', dataIndex: 'size_bytes', width: 96,
-      render: (n: number) => fmtBytes(n),
+      render: (n: number) => (
+        <span className="ms-mono" style={{ color: 'var(--ms-ink-muted)', fontSize: 12.5 }}>
+          {fmtBytes(n)}
+        </span>
+      ),
       sorter: (a: Asset, b: Asset) => a.size_bytes - b.size_bytes,
     },
     {
-      title: '类型', dataIndex: 'content_type', width: 140,
-      ellipsis: true,
-      render: (v: string | null) => v ?? <Tag>未知</Tag>,
-      responsive: ['md' as const],
-    },
-    {
       title: '创建', dataIndex: 'created_at', width: 160,
-      render: (v: string) => new Date(v).toLocaleString('zh-CN'),
+      render: (v: string) => (
+        <span style={{ color: 'var(--ms-ink-muted)', fontSize: 12.5 }}>
+          {new Date(v).toLocaleString('zh-CN', {
+            month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+          })}
+        </span>
+      ),
       responsive: ['lg' as const],
       sorter: (a: Asset, b: Asset) => a.created_at.localeCompare(b.created_at),
     },
     {
-      title: '操作', width: 90, fixed: 'right' as const,
+      title: '', width: 56, fixed: 'right' as const,
       render: (_: unknown, a: Asset) => (
         <Tooltip title="下载">
-          <Button type="text" icon={<CloudDownloadOutlined />}
+          <Button type="text" size="small" icon={<Download size={14} strokeWidth={1.8} />}
                   loading={dlLink.isPending && dlLink.variables === a.id}
-                  onClick={() => handleDownload(a)} />
+                  onClick={(e) => { e.stopPropagation(); handleDownload(a); }}
+                  style={{ color: 'var(--ms-ink-muted)' }}
+          />
         </Tooltip>
       ),
     },
@@ -184,10 +234,20 @@ export default function ProjectDetailPage() {
   // mobile 退化:tree drawer + 单栏 file 列表
   // 桌面:三栏 layout
   return (
-    <Layout style={{ minHeight: 'calc(100vh - 64px - 50px - 24px)', background: '#fff', borderRadius: 6, overflow: 'hidden' }}>
+    <Layout className="ms-enter" style={{
+      minHeight: 'calc(100vh - 56px - 80px)',
+      background: 'var(--ms-surface)',
+      borderRadius: 'var(--ms-radius-lg)',
+      overflow: 'hidden',
+      boxShadow: 'var(--ms-shadow-sm)',
+    }}>
       {/* 左:folder tree */}
       {!isMobile && (
-        <Layout.Sider width={260} theme="light" style={{ borderRight: '1px solid #f0f0f0', overflow: 'auto' }}>
+        <Layout.Sider width={260} theme="light" style={{
+          background: 'var(--ms-surface)',
+          borderRight: '1px solid var(--ms-hairline)',
+          overflow: 'auto',
+        }}>
           <FolderTree
             folders={folders}
             projectName={project?.name}
@@ -199,27 +259,77 @@ export default function ProjectDetailPage() {
         </Layout.Sider>
       )}
 
-      {/* 中:actions bar + asset table */}
-      <Layout.Content style={{ background: '#fff', display: 'flex', flexDirection: 'column' }}>
+      {/* 中:folder header + actions bar + asset table */}
+      <Layout.Content style={{
+        background: 'var(--ms-surface)',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {/* folder header — sensitive 标记用 accent dot */}
+        <div style={{
+          padding: '16px 24px 12px',
+          borderBottom: '1px solid var(--ms-hairline-soft)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {folder?.is_sensitive && (
+              <span title="敏感目录" style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px',
+                background: 'var(--ms-accent-soft)',
+                color: 'var(--ms-accent)',
+                borderRadius: 3,
+                fontSize: 10.5, fontWeight: 500, letterSpacing: '0.02em',
+              }}>
+                <Lock size={10} strokeWidth={2.2} />
+                SENSITIVE
+              </span>
+            )}
+            <span style={{
+              fontFamily: 'var(--ms-font-display)',
+              fontSize: 18, fontWeight: 500,
+              color: 'var(--ms-ink)',
+              letterSpacing: '-0.01em',
+            }}>{folder?.name ?? '—'}</span>
+          </div>
+          {folder?.minio_prefix && (
+            <div style={{
+              marginTop: 4,
+              fontFamily: 'var(--ms-font-mono)',
+              fontSize: 11,
+              color: 'var(--ms-ink-subtle)',
+            }}>{folder.minio_prefix}</div>
+          )}
+        </div>
+
         {/* actions bar */}
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex',
-                      alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{
+          padding: '10px 24px',
+          borderBottom: '1px solid var(--ms-hairline-soft)',
+          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+          background: 'var(--ms-canvas)',
+        }}>
           <Checkbox
             indeterminate={hasSelection && selectedIds.length < (assets?.length ?? 0)}
             checked={hasSelection && selectedIds.length === (assets?.length ?? 0) && (assets?.length ?? 0) > 0}
             onChange={(e) => setSelectedIds(e.target.checked ? (assets ?? []).map(a => a.id) : [])}
-          >全选</Checkbox>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {hasSelection ? `已选 ${selectedIds.length} / ${assets?.length ?? 0}` : `共 ${assets?.length ?? 0} 个文件`}
-          </Typography.Text>
+          />
+          <span style={{ fontSize: 12.5, color: 'var(--ms-ink-muted)' }}>
+            {hasSelection ? (
+              <>已选 <span className="ms-mono" style={{ color: 'var(--ms-accent)', fontWeight: 500 }}>
+                {selectedIds.length}</span> / {assets?.length ?? 0}</>
+            ) : (
+              <>共 <span className="ms-mono">{assets?.length ?? 0}</span> 个文件</>
+            )}
+          </span>
           <div style={{ flex: 1 }} />
-          <Space>
-            <Button type="primary" size="small" icon={<UploadOutlined />}
+          <Space size={6}>
+            <Button type="primary" size="small"
+                    icon={<Upload size={13} strokeWidth={2} />}
                     onClick={() => activeFolderId && upload.open(activeFolderId)}>上传</Button>
-            <Button size="small" icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button>
-            <Button size="small" icon={<CloudDownloadOutlined />}
+            <Button size="small" icon={<RotateCw size={13} strokeWidth={2} />}
+                    onClick={() => refetch()}>刷新</Button>
+            <Button size="small" icon={<Download size={13} strokeWidth={2} />}
                     disabled={!hasSelection} onClick={handleBulkDownload}>
-              下载 {hasSelection ? `(${selectedIds.length})` : ''}
+              下载{hasSelection ? ` ${selectedIds.length}` : ''}
             </Button>
             <Popconfirm
               title={`删除 ${selectedIds.length} 个文件?`}
@@ -228,33 +338,22 @@ export default function ProjectDetailPage() {
               disabled={!hasSelection}
               onConfirm={handleBulkDelete}
             >
-              <Button size="small" danger icon={<DeleteOutlined />}
+              <Button size="small" danger icon={<Trash2 size={13} strokeWidth={2} />}
                       disabled={!hasSelection} loading={del.isPending}>
-                删除 {hasSelection ? `(${selectedIds.length})` : ''}
+                删除{hasSelection ? ` ${selectedIds.length}` : ''}
               </Button>
             </Popconfirm>
           </Space>
         </div>
 
-        {/* folder header */}
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid #fafafa' }}>
-          <Space>
-            {folder?.is_sensitive && <Tag color="volcano" icon={<KeyOutlined />}>sensitive</Tag>}
-            <Typography.Text>{folder?.name ?? '—'}</Typography.Text>
-            <Typography.Text type="secondary" code style={{ fontSize: 11 }}>
-              {folder?.minio_prefix ?? ''}
-            </Typography.Text>
-          </Space>
-        </div>
-
         {/* asset table */}
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '0 8px' }}>
           <Table
             dataSource={assets ?? []}
             rowKey="id"
             loading={assetsLoading}
             columns={cols}
-            size="small"
+            size="middle"
             scroll={{ x: 600 }}
             pagination={{ pageSize: 30, hideOnSinglePage: true }}
             rowSelection={{
@@ -263,20 +362,33 @@ export default function ProjectDetailPage() {
             }}
             onRow={(record) => ({
               onClick: () => {
-                // 行点击 toggle select(避免按住 ctrl 才行)
                 setSelectedIds(prev =>
                   prev.includes(record.id) ? prev.filter(x => x !== record.id) : [...prev, record.id]);
               },
               style: { cursor: 'pointer' },
             })}
-            locale={{ emptyText: <Empty description="空文件夹" /> }}
+            locale={{
+              emptyText: (
+                <div style={{ padding: '60px 16px' }}>
+                  <FileText size={32} strokeWidth={1.3}
+                            style={{ color: 'var(--ms-hairline)' }} />
+                  <div style={{
+                    marginTop: 12, fontSize: 13, color: 'var(--ms-ink-muted)',
+                  }}>空文件夹 — 上传文件开始</div>
+                </div>
+              ),
+            }}
           />
         </div>
       </Layout.Content>
 
       {/* 右:summary */}
       {!isMobile && (
-        <Layout.Sider width={320} theme="light" style={{ borderLeft: '1px solid #f0f0f0', overflow: 'auto' }}>
+        <Layout.Sider width={320} theme="light" style={{
+          background: 'var(--ms-surface)',
+          borderLeft: '1px solid var(--ms-hairline)',
+          overflow: 'auto',
+        }}>
           <AssetSummaryPanel selected={selectedAssets} me={me} />
         </Layout.Sider>
       )}

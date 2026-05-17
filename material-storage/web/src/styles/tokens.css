@@ -1,0 +1,173 @@
+/**
+ * material-storage design tokens(iter b1 — Curated Archive)
+ * 编辑部档案馆 × 现代媒体公司:暖中性 + 焦糖橙 accent + 衬线点缀
+ *
+ * 配色原则:70% 中性 + 25% 黑白 + 5% accent
+ * accent 只用 CTA / 焦点状态 / sensitive 标记,绝不大面积 fill。
+ */
+
+@import '@fontsource/fraunces/400.css';
+@import '@fontsource/fraunces/500.css';
+@import '@fontsource/fraunces/600.css';
+@import '@fontsource/geist-sans/400.css';
+@import '@fontsource/geist-sans/500.css';
+@import '@fontsource/geist-sans/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+/* 中文字体走 CDN(免打包) — 引在 index.html link 标签里更稳;也可 @import */
+@import url('https://cdn.jsdelivr.net/gh/lxgw/LxgwWenkaiScreen/style.css');
+
+:root {
+  /* ── Palette · Light ─────────────────────────────────────────── */
+  --ms-canvas: #FAFAF7;
+  --ms-surface: #FFFFFF;
+  --ms-surface-elevated: #FFFFFF;
+  --ms-ink: #1A1A1A;
+  --ms-ink-muted: #6B6B68;
+  --ms-ink-subtle: #9A9A95;
+  --ms-hairline: #E8E6E1;
+  --ms-hairline-soft: #F0EEE9;
+
+  --ms-accent: #C2410C;            /* 焦糖橙 */
+  --ms-accent-hover: #9A3412;
+  --ms-accent-soft: #FEE4D0;
+  --ms-accent-faint: #FEF3E8;
+
+  --ms-emerald: #047857;
+  --ms-emerald-soft: #D1FAE5;
+  --ms-amber: #B45309;
+  --ms-crimson: #9F1239;
+  --ms-crimson-soft: #FEE2E2;
+
+  /* visibility 色块条 */
+  --ms-vis-public: #047857;        /* 翡翠 */
+  --ms-vis-private: #6B6B68;       /* 中性 */
+  --ms-vis-stealth: #9F1239;       /* 茶红 */
+
+  /* sensitive folder 标识色 */
+  --ms-sensitive: #C2410C;
+
+  /* ── Typography ──────────────────────────────────────────────── */
+  --ms-font-display: 'Fraunces', 'LXGW WenKai Screen', 'Songti SC', serif;
+  --ms-font-body: 'Geist Sans', 'OPPO Sans', 'HarmonyOS Sans', -apple-system,
+                  BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
+  --ms-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code',
+                  Menlo, monospace;
+
+  /* ── Spacing(4 step base + 黄金步进)────────────────────────── */
+  --ms-sp-xs: 4px;
+  --ms-sp-sm: 8px;
+  --ms-sp-md: 12px;
+  --ms-sp-lg: 20px;
+  --ms-sp-xl: 32px;
+  --ms-sp-2xl: 52px;
+  --ms-sp-3xl: 84px;
+
+  /* ── Radius(分层)──────────────────────────────────────────── */
+  --ms-radius-xs: 4px;
+  --ms-radius-sm: 6px;
+  --ms-radius-md: 8px;
+  --ms-radius-lg: 12px;
+  --ms-radius-xl: 16px;
+
+  /* ── Shadow + hairline(光不浓,描边明)─────────────────────── */
+  --ms-shadow-sm: 0 1px 2px rgba(26, 26, 26, 0.04),
+                  0 0 0 1px rgba(232, 230, 225, 1);
+  --ms-shadow-md: 0 2px 8px rgba(26, 26, 26, 0.06),
+                  0 0 0 1px rgba(232, 230, 225, 1);
+  --ms-shadow-lg: 0 12px 32px -8px rgba(26, 26, 26, 0.12),
+                  0 0 0 1px rgba(232, 230, 225, 1);
+  --ms-shadow-focus: 0 0 0 3px rgba(194, 65, 12, 0.18);
+
+  /* ── Motion ─────────────────────────────────────────────────── */
+  --ms-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ms-ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ms-dur-fast: 120ms;
+  --ms-dur-mid: 180ms;
+  --ms-dur-slow: 320ms;
+}
+
+/* ── Dark mode(留接口,未启用)──────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root[data-ms-theme="auto"] {
+    --ms-canvas: #0F0F0E;
+    --ms-surface: #1A1A18;
+    --ms-surface-elevated: #232320;
+    --ms-ink: #E8E6E1;
+    --ms-ink-muted: #9A9A95;
+    --ms-ink-subtle: #6B6B68;
+    --ms-hairline: #2A2A26;
+    --ms-hairline-soft: #1F1F1C;
+    --ms-accent-soft: #3F1D0A;
+    --ms-accent-faint: #2A1607;
+    --ms-shadow-sm: 0 0 0 1px rgba(42, 42, 38, 1);
+    --ms-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(42, 42, 38, 1);
+    --ms-shadow-lg: 0 24px 60px -16px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(42, 42, 38, 1);
+  }
+}
+
+/* ── 基础 reset / typography ──────────────────────────────────── */
+html, body {
+  background: var(--ms-canvas);
+  color: var(--ms-ink);
+  font-family: var(--ms-font-body);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--ms-accent-soft);
+  color: var(--ms-accent-hover);
+}
+
+/* utility class — 让 H1 / 数字用 Display */
+.ms-display { font-family: var(--ms-font-display); font-feature-settings: 'ss01', 'ss02'; }
+.ms-mono { font-family: var(--ms-font-mono); }
+
+/* hairline 横分隔 */
+.ms-hairline { border-top: 1px solid var(--ms-hairline); }
+
+/* page enter 动效 */
+@keyframes ms-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ms-enter { animation: ms-fade-up var(--ms-dur-mid) var(--ms-ease) both; }
+.ms-enter-stagger > * { animation: ms-fade-up var(--ms-dur-mid) var(--ms-ease) both; }
+.ms-enter-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.ms-enter-stagger > *:nth-child(2) { animation-delay: 60ms; }
+.ms-enter-stagger > *:nth-child(3) { animation-delay: 120ms; }
+.ms-enter-stagger > *:nth-child(4) { animation-delay: 180ms; }
+.ms-enter-stagger > *:nth-child(5) { animation-delay: 240ms; }
+.ms-enter-stagger > *:nth-child(n+6) { animation-delay: 300ms; }
+
+/* 抑制 antd 默认重阴影 */
+.ant-btn-primary { box-shadow: none !important; }
+.ant-btn-default { box-shadow: none !important; }
+
+/* 卡片 hover 微动 */
+.ms-card-hover {
+  transition: transform var(--ms-dur-fast) var(--ms-ease),
+              border-color var(--ms-dur-fast) var(--ms-ease),
+              box-shadow var(--ms-dur-mid) var(--ms-ease);
+}
+.ms-card-hover:hover {
+  transform: translateY(-1px);
+  border-color: var(--ms-ink-subtle);
+  box-shadow: var(--ms-shadow-md);
+}
+
+/* 命令栏 Modal 内容贴边 */
+.ms-cmd-modal .ant-modal-content { padding: 0 !important; border-radius: var(--ms-radius-lg) !important; overflow: hidden; }
+
+/* scrollbar(细线) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ms-hairline) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--ms-hairline); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--ms-ink-subtle); }
