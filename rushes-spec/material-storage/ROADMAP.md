@@ -2,6 +2,10 @@
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
 > 最后更新:2026-05-17
+>
+> 相关文档:
+> - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
+> - [`ops-manual.md`](./ops-manual.md) — **运维手册**(系统 admin / 部署 / 排查 / 灾后恢复)
 
 ## Phase B 完成里程碑
 
