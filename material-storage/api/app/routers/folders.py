@@ -12,6 +12,7 @@ endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Literal
@@ -200,14 +201,40 @@ async def get_folder(
     folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
-    allowed = await permissions.check(
-        user_subject=f"user:{user_open_id}", relation="can_view",
-        object_type="sensitive_folder" if folder.is_sensitive else "folder",
-        object_id=str(folder.id),
-    )
-    if not allowed:
+    obj_type = "sensitive_folder" if folder.is_sensitive else "folder"
+    # 一次过 check 4 个 can_*(系统 admin 全 true)
+    from app.services.contact_sync import get_default_organization
+    org = await get_default_organization(db)
+    is_system_admin = False
+    if org:
+        _, tenant_key = org
+        try:
+            is_system_admin = await permissions.is_org_admin(
+                user_open_id=user_open_id, organization_tenant_key=tenant_key,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    if is_system_admin:
+        can_view = can_download = can_upload = can_admin = True
+    else:
+        async def _c(rel: str) -> bool:
+            return await permissions.check(
+                user_subject=f"user:{user_open_id}", relation=rel,
+                object_type=obj_type, object_id=str(folder.id),
+            )
+        can_view, can_download, can_upload, can_admin = await asyncio.gather(
+            _c("can_view"), _c("can_download"), _c("can_upload"), _c("can_admin"),
+        )
+
+    if not can_view:
         raise HTTPException(403, "no permission")
-    return FolderOut.model_validate(folder)
+    out = FolderOut.model_validate(folder)
+    out.my_can_view = can_view
+    out.my_can_download = can_download
+    out.my_can_upload = can_upload
+    out.my_can_admin = can_admin
+    return out
 
 
 @router.post("/{folder_id}/invite", status_code=204)

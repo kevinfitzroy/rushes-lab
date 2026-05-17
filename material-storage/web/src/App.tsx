@@ -20,6 +20,7 @@ const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
 const DevLoginPage = lazy(() => import('./pages/DevLoginPage'));
 const ShareLandingPage = lazy(() => import('./pages/ShareLandingPage'));
 const AdminAuditPage = lazy(() => import('./pages/AdminAuditPage'));
+const MyPermissionsPage = lazy(() => import('./pages/MyPermissionsPage'));
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: false } },
@@ -51,6 +52,7 @@ const RouterRoutes = () => (
       <Route path="/projects/:projectId/folders/:folderId" element={<ProjectDetailPage />} />
       <Route path="/folders/:folderId" element={<FolderDetailPage />} />
       <Route path="/approvals" element={<ApprovalsPage />} />
+      <Route path="/my-permissions" element={<MyPermissionsPage />} />
       <Route path="/admin/audit" element={<AdminAuditPage />} />
       <Route path="/s/:token" element={<ShareLandingPage />} />
       <Route path="/dev-login" element={<DevLoginPage />} />
