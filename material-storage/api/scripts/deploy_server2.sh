@@ -9,6 +9,12 @@
 #   ! cd /Users/foxer/claude/rushes-lab-workspace/rushes-lab/material-storage/api && bash scripts/deploy_server2.sh
 #
 # 如果只想兜底用密码,设 SSH_PASS 即走 sshpass 路径(需要 brew install sshpass)。
+#
+# ⚠️ .env 处理(踩过坑,2026-05-17):
+#   默认 *不会* 覆盖 server2 已有的 .env(怕 clobber 手工调过的飞书 app 凭据等)
+#   首次 bootstrap 或确实想重置时:`INIT_ENV=1 bash scripts/deploy_server2.sh`
+#   heredoc 里的默认值是"老 PoC app 一份示例" — 真实生产凭据请在本机
+#   server.md 维护,或通过 env 注入(FEISHU_APP_ID/FEISHU_APP_SECRET 等)。
 set -euo pipefail
 
 HOST="${HOST:-8.156.34.238}"
@@ -41,8 +47,10 @@ rsync_to --exclude='__pycache__' --exclude='.pytest_cache' --exclude='.venv' \
   ./ "$SSH_USER@$HOST:$REMOTE_DIR/"
 ok "代码已同步"
 
-step "2) 生成 server2 上的 .env"
-ssh_run "cat > $REMOTE_DIR/.env" <<'EOF'
+step "2) .env 处理"
+if [[ "${INIT_ENV:-0}" == "1" ]]; then
+  echo "INIT_ENV=1 — 用脚本默认值覆盖 server2 上的 .env(老 PoC app,务必校对!)"
+  ssh_run "cat > $REMOTE_DIR/.env" <<'EOF'
 ENV=dev
 LOG_LEVEL=INFO
 LOG_FORMAT=console
@@ -59,6 +67,7 @@ MINIO_DEFAULT_BUCKET=ms-dev
 OPENFGA_API_URL=http://poc-openfga:8080
 OPENFGA_STORE_ID=__WILL_FILL__
 
+# ⚠️ 仅老 PoC app 示例 — 生产请用 server.md 里"新的 feishu app"覆盖
 FEISHU_APP_ID=cli_aa8c58fae5391be7
 FEISHU_APP_SECRET=2T1QWnYdm2ayq0t4ByANNcIXEUFHwFMw
 FEISHU_REDIRECT_URI=https://rusheslab.taoxiplan.com/api/v1/auth/callback
@@ -70,13 +79,25 @@ SESSION_JWT_SECRET=dev-secret-do-not-use-in-prod-replace-with-openssl-rand-hex-3
 SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 EOF
-ok ".env 写入"
+  ok "INIT_ENV 模式:.env 已写入(下一步会自动填 OPENFGA_STORE_ID)"
+else
+  if ssh_run "test -f $REMOTE_DIR/.env"; then
+    ok "已存在 server2 .env,保留不动(如需重置:INIT_ENV=1)"
+  else
+    echo "❌ server2 $REMOTE_DIR/.env 不存在;首次部署请用 INIT_ENV=1 跑一次,然后人工核对飞书凭据等再正式 deploy"
+    exit 1
+  fi
+fi
 
-step "3) 找 OpenFGA store_id 并填进 .env"
+step "3) 找 OpenFGA store_id"
 STORE_ID=$(ssh_run "docker exec poc-openfga grpcurl -plaintext localhost:8081 openfga.v1.OpenFGAService/ListStores 2>/dev/null | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[\"stores\"][0][\"id\"])' 2>/dev/null || curl -sS http://127.0.0.1:8089/stores | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[\"stores\"][0][\"id\"])'")
 echo "STORE_ID=$STORE_ID"
-ssh_run "sed -i 's|__WILL_FILL__|$STORE_ID|' $REMOTE_DIR/.env"
-ok "OPENFGA_STORE_ID 写入"
+if [[ "${INIT_ENV:-0}" == "1" ]]; then
+  ssh_run "sed -i 's|__WILL_FILL__|$STORE_ID|' $REMOTE_DIR/.env"
+  ok "OPENFGA_STORE_ID 写入(INIT_ENV)"
+else
+  ok "STORE_ID 仅打印参考;不修改保留的 .env"
+fi
 
 step "4) docker compose build + up"
 ssh_run "cd $REMOTE_DIR && docker compose up -d --build ms-db ms-redis ms-api 2>&1 | tail -20"
