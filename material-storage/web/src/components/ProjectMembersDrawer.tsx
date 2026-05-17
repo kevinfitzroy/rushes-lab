@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { http, errorMessage } from '../api/client';
 import type { Me, Project } from '../api/types';
-import { UserPicker } from './UserPicker';
+import { SubjectPicker, type Subject } from './SubjectPicker';
 
 type ProjectRole = 'admin' | 'uploader' | 'downloader' | 'viewer';
 
@@ -215,34 +215,41 @@ function InviteModal({
   open: boolean; onClose: () => void;
   project: Project; me: Me; onSuccess: () => void;
 }) {
-  const [openIds, setOpenIds] = useState<string[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [role, setRole] = useState<ProjectRole>('viewer');
   const [loading, setLoading] = useState(false);
   const { message } = App.useApp();
 
+  // admin 角色 model 不接 department#member,SubjectPicker 隐藏 dept tab
+  const allowedKinds = role === 'admin'
+    ? (['user', 'group'] as const)
+    : (['user', 'group', 'department'] as const);
+
   const submit = async () => {
-    if (openIds.length === 0) {
-      message.warning('请选至少一个用户');
+    if (subjects.length === 0) {
+      message.warning('请选至少一个主体');
       return;
     }
     setLoading(true);
     let ok = 0, fail = 0;
-    for (const oid of openIds) {
+    for (const s of subjects) {
       try {
-        await http.post(`/api/v1/projects/${project.id}/members`, {
-          user_open_id: oid, role,
-        });
+        const body: Record<string, string> = { role };
+        if (s.kind === 'user') body.user_open_id = s.id;
+        else if (s.kind === 'group') body.group_id = s.id;
+        else body.department_id = s.id;
+        await http.post(`/api/v1/projects/${project.id}/members`, body);
         ok++;
       } catch (e) {
         fail++;
-        message.error(`${oid.slice(0, 8)}…: ${errorMessage(e)}`);
+        message.error(`${s.name || s.id}: ${errorMessage(e)}`);
       }
     }
     setLoading(false);
     if (ok > 0) {
-      message.success(`已添加 ${ok} 人为「${ROLE_META[role].label}」${fail > 0 ? ` · 失败 ${fail}` : ''}`);
+      message.success(`已添加 ${ok} 个主体为「${ROLE_META[role].label}」${fail > 0 ? ` · 失败 ${fail}` : ''}`);
       onSuccess();
-      setOpenIds([]);
+      setSubjects([]);
       onClose();
     }
   };
@@ -259,16 +266,18 @@ function InviteModal({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
         <div>
-          <FieldLabel>用户</FieldLabel>
-          <UserPicker
-            value={openIds}
-            onChange={(v) => setOpenIds(v as string[])}
-            preset={[{
-              id: me.id, open_id: me.open_id, union_id: me.union_id,
-              name: me.name + '(自己)', email: me.email,
-            }]}
-            placeholder="搜姓名 / 邮箱选一个或多个…"
+          <FieldLabel>添加主体(用户 / 用户组 / 部门)</FieldLabel>
+          <SubjectPicker
+            value={subjects}
+            onChange={setSubjects}
+            me={me}
+            allowedKinds={[...allowedKinds]}
           />
+          {role === 'admin' && (
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ms-ink-subtle)' }}>
+              admin 角色仅允许用户 / 用户组(部门不能直接作为 admin)
+            </div>
+          )}
         </div>
         <div>
           <FieldLabel>角色</FieldLabel>
