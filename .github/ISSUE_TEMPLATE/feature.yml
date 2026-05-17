@@ -1,0 +1,83 @@
+name: "[feat] 新功能 / 能力提议"
+description: 提议 material-storage 新增功能(非 UI 改进 — UI 走 frontend-feature)
+title: "[feat] "
+labels: ["enhancement", "area:material-storage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认:
+        - ✅ 已读 [COLLABORATION.md](../tree/main/rushes-spec/material-storage/COLLABORATION.md) §3.2
+        - ✅ 已 `gh issue list --search "<keyword>" --state all` 搜重
+        - ✅ 已检查 [ROADMAP.md](../tree/main/rushes-spec/material-storage/ROADMAP.md) "waitlist" — 已规划的不重复提
+        - ℹ️ 纯 UI 改进请用 [frontend-feature template](?template=frontend-feature.yml)
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: 用户故事
+      description: "格式: 作为 <角色>,我希望 <能力>,从而 <价值>"
+      placeholder: |
+        作为 项目 admin,
+        我希望 能批量给项目添加成员(从飞书通讯录选多人),
+        从而 不用一个个加 10+ 摄影师,新项目搭建时间从 10min → 1min
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 当前 workaround
+      description: 没有这个功能时,你/用户怎么完成同样的目标?或"无 workaround"
+      placeholder: |
+        当前只能逐个搜索 + 加成员,10 人要点 ~30 次,容易遗漏
+      value: |
+        当前:
+        ...
+
+        痛点:
+        ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority_suggestion
+    attributes:
+      label: 优先级建议(tester 视角)
+      description: 最终 priority 由 dev/产品 决定;这里是 tester 实际使用感受
+      options:
+        - must-have (没有则用不下去 / 阻塞核心场景)
+        - should-have (核心场景能用但常被卡)
+        - nice-to-have (锦上添花)
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 涉及面(可选)
+      description: 哪些角色受影响、哪些页面会改、是否需要后端 + 前端配合
+      placeholder: |
+        - 角色: project admin
+        - 页面: /projects/:id 成员管理 tab
+        - 后端: 新 batch endpoint
+        - 前端: 通讯录多选 picker 组件
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: 参考(可选)
+      description: 类似产品如何做 / 相关 issue / 截图(如果是流程参考)
+      placeholder: |
+        - Notion: workspace 成员管理 → "Add members" 弹窗支持搜索 + 多选
+        - 飞书群: @ 成员选择器交互
+        - 关联: #42 (类似的批量场景)
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: 明确**不需要**(可选)
+      description: 防止 dev 过度设计;明确哪些场景这次不要做
+      placeholder: |
+        - 不需要 csv 批量导入(用飞书通讯录就够)
+        - 不需要权限差异化(批量加进来都是 uploader)

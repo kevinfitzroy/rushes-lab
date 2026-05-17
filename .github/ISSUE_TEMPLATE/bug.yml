@@ -1,0 +1,129 @@
+name: "[bug] 现有功能行为不对"
+description: 报告 material-storage 已有功能的 bug
+title: "[bug] "
+labels: ["bug", "area:material-storage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认:
+        - ✅ 已读 [COLLABORATION.md](../tree/main/rushes-spec/material-storage/COLLABORATION.md) §3.1 §4 §7
+        - ✅ 已 `gh issue list --search "<keyword>" --state all` 搜重
+        - ✅ 已检查 [ROADMAP.md "已知坑"](../tree/main/rushes-spec/material-storage/ROADMAP.md) 和 [ops-manual.md](../tree/main/rushes-spec/material-storage/ops-manual.md)
+        - ✅ 已脱敏:无顾客真实姓名/手机/术前术后照(见 §4.3)
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 数字编号,从干净状态开始(登录 → ... → 触发 bug)
+      placeholder: |
+        1. 登录 (角色: sysadmin)
+        2. 进入项目 "测试项目A"
+        3. 点击上传 → 选 test.mp4 (10MB)
+        4. ...
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: 期望行为(一句话)
+      placeholder: 上传完成,文件出现在列表中,缩略图在 5s 内生成
+    validations:
+      required: true
+
+  - type: input
+    id: actual
+    attributes:
+      label: 实际行为(一句话)
+      placeholder: 上传进度卡在 95%,前端无报错,后端无响应
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 复现率
+      options:
+        - 必现 (100%)
+        - 偶发 (大约 N/M, 在正文备注具体次数)
+        - 仅 1 次
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重度
+      description: 与 priority label 解耦,这里是 tester 评估
+      options:
+        - blocker (功能完全无法使用,无 workaround)
+        - major (主要功能挂,有不优雅 workaround)
+        - minor (次要功能问题,workaround 可用)
+        - nit (美观/文案/边缘)
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: 必填环境信息
+      value: |
+        - **URL / 环境**: (server2: http://8.156.34.238/ms-static/web | 本地 | 飞书 webview)
+        - **浏览器 / 客户端**: (Chrome 120 / Safari iOS 17 / 飞书 macOS 7.x)
+        - **设备 / 分辨率**: (desktop 1920x1080 / iPhone 15)
+        - **登录用户角色**: (sysadmin / project admin / uploader / downloader / viewer)
+        - **App 版本 / 提交时间**: (URL build hash 或 提交 issue 时北京时间)
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: 控制台错误(文字,不要截图)
+      description: F12 → Console。**code-fence 文字**,不要贴截图。无错误则写 "无"。
+      render: shell
+      placeholder: |
+        Uncaught TypeError: Cannot read properties of undefined (reading 'id')
+            at ProjectsPage.tsx:142
+            ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: network
+    attributes:
+      label: 失败的网络请求(文字)
+      description: F12 → Network → 失败请求。**贴 URL + status + response body 文字**,不要截图。无失败请求则写 "无"。
+      render: shell
+      placeholder: |
+        POST /api/projects/abc/folders
+        Status: 403
+        Response: {"detail": "Forbidden"}
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图(可选,辅助 UI 视觉问题)
+      description: |
+        **不能代替**上方的文字内容。如加截图:
+        - 拖拽图片到此框上传(会生成 user-images URL)
+        - **必须配 caption**:一句话说明"看哪里 / 发生了什么"
+        - 单张 ≤ 2MB
+        - **严禁包含**:顾客面部/手机/姓名/术前后照(见 COLLABORATION §4.3)
+      placeholder: |
+        图1: 上传进度条卡在 95%,右上角无 toast 提示
+        <拖拽截图到此>
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其他(可选)
+      description: 影响范围(仅我自己 / 仅某角色 / 所有人)、临时 workaround、关联 issue 等
+      placeholder: |
+        - 影响范围: 仅 uploader 角色,sysadmin 不复现
+        - 关联: #42 可能是同一根因
