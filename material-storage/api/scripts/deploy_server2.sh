@@ -129,6 +129,13 @@ else
   warn "bootstrap 失败(#69 known stale,不阻塞);若不是 v3 attribute error 请人工 review"
 fi
 
+step "6.5) seed onboarding 项目(public,新用户上手用)"
+if ssh_run "set -o pipefail; cd $REMOTE_DIR && docker compose exec -T ms-api python -m scripts.seed_onboarding_project 2>&1 | tail -15"; then
+  ok "onboarding 项目 seed 完成"
+else
+  warn "onboarding seed 失败(不阻塞;查 /tmp/ms-api-*.log)"
+fi
+
 step "7) e2e test(允许失败 — 部分 case 依赖 bootstrap;关心红色 ✗ 才需 follow up)"
 if ssh_run "set -o pipefail; cd $REMOTE_DIR && API_BASE=http://localhost:8200 bash scripts/e2e_test.sh 2>&1 | tail -80"; then
   ok "e2e ok"
