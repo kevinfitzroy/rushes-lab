@@ -4,7 +4,7 @@
  */
 import { App, Tag } from 'antd';
 import {
-  Copy, Download as DownloadIcon, FileText, Files,
+  Copy, Download as DownloadIcon, Eye, FileText, Files,
   Hash, Share2,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -15,6 +15,7 @@ import { errorMessage } from '../api/client';
 import { ShareModal } from './ShareModal';
 import { FolderInvitePanel } from './FolderInvitePanel';
 import { FolderGrantsPanel } from './FolderGrantsPanel';
+import { AssetPreviewModal, isPreviewable } from './AssetPreviewModal';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -31,6 +32,7 @@ interface Props {
 
 export function AssetSummaryPanel({ selected, me, folder }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const { message } = App.useApp();
   const dlLink = useDownloadLink();
   const downloads = useDownloads();
@@ -133,6 +135,11 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
           gap: 4,
           borderBottom: '1px solid var(--ms-hairline-soft)',
         }}>
+          {isPreviewable(a) && (
+            <QuickAction icon={<Eye size={14} strokeWidth={1.8} />}
+                         label="预览"
+                         onClick={() => setPreviewOpen(true)} />
+          )}
           <QuickAction icon={<DownloadIcon size={14} strokeWidth={1.8} />}
                        label="下载"
                        loading={dlLink.isPending}
@@ -171,6 +178,13 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
             onClose={() => setShareOpen(false)}
             target={{ kind: 'asset', id: a.id, label: a.filename }}
             me={me}
+          />
+        )}
+        {isPreviewable(a) && (
+          <AssetPreviewModal
+            asset={a}
+            open={previewOpen}
+            onClose={() => setPreviewOpen(false)}
           />
         )}
       </div>
