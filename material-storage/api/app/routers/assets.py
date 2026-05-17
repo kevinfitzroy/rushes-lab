@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,6 +98,7 @@ async def sign_part(
 async def complete_upload(
     upload_id: str,
     payload: UploadCompleteIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     presign: PresignService = Depends(get_presign),
@@ -171,6 +172,11 @@ async def complete_upload(
         },
         **ctx,
     )
+
+    # B-4:enqueue thumbnail 生成(图片才会处理,worker 内 skip 非图片)
+    if asset.content_type and asset.content_type.startswith("image/"):
+        from app.services.arq_pool import enqueue_thumbnail
+        await enqueue_thumbnail(request.app.state.arq_pool, str(asset.id))
 
     return AssetOut.model_validate(asset)
 
@@ -272,6 +278,32 @@ async def get_download_link(
     )
 
     return DownloadLinkOut(url=url, expires_in=ttl, is_sensitive=False)
+
+
+# ─── thumbnail URL — B-4 (轻量,签短 ttl presigned,不走 OpenFGA enforce)──────
+@router.get("/{asset_id}/thumbnail-url")
+async def get_thumbnail_url(
+    asset_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    presign: PresignService = Depends(get_presign),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """缩略图 presigned URL — 至少要登录;不再做 per-asset OpenFGA check
+    (缩略图 1024px 模糊化,信息密度低,信任组织内可见性)。
+
+    无 thumbnail_key(还没生成 / 非图)→ 404。
+    """
+    _ = user.id  # 至少要认证
+    asset = await db.get(Asset, asset_id)
+    if asset is None or asset.deleted_at is not None:
+        raise HTTPException(404, "asset not found")
+    thumbnail_key = (asset.tags or {}).get("thumbnail_key")
+    if not thumbnail_key:
+        raise HTTPException(404, "no thumbnail yet(可能还在生成 / 非图片)")
+
+    ttl = 1800   # 30 min — 缩略图比原图 ttl 长(让浏览器缓存有效)
+    url = presign.sign_get_url(asset.minio_bucket, thumbnail_key, ttl)
+    return {"url": url, "expires_in": ttl}
 
 
 # ─── delete(soft)──────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("starting material-storage-api", env=settings.env, version=__version__)
 
     # Phase B-2:wire 服务到 app.state
+    from app.services.arq_pool import create_arq_pool
     from app.services.auth import create_auth_service
     from app.services.feishu_client import create_feishu_client
     from app.services.permissions import create_permissions_service
@@ -38,11 +39,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.presign = PresignService(settings)
     app.state.auth = await create_auth_service(settings)
     app.state.feishu_client = await create_feishu_client(settings)
+    app.state.arq_pool = await create_arq_pool(settings)
     # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
     # iter1:noop;iter2 起按 intent 注册具体 handler
     # 注:用 from-import 以免 `app` 名 shadow lifespan 参数 (Python 名字解析坑)
     from app.services import feishu_card_handlers as _h  # noqa: F401
-    log.info("startup complete — permissions + presign + auth + feishu_client ready")
+    log.info("startup complete — permissions + presign + auth + feishu_client + arq ready")
 
     yield
 
@@ -50,6 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.permissions.close()
     await app.state.auth.close()
     await app.state.feishu_client.close()
+    await app.state.arq_pool.aclose()
 
 
 def create_app() -> FastAPI:
