@@ -89,26 +89,43 @@ export const useInviteFolder = () => {
   return useMutation({
     mutationFn: async (args: {
       folder_id: string;
-      user_id?: string;
+      user_open_id?: string;
       group_id?: string;
+      department_id?: string;
+      level: 'viewer' | 'downloader';
       duration_seconds?: number;
     }) => {
       const { folder_id, ...body } = args;
       await http.post(`/api/v1/folders/${folder_id}/invite`, body);
     },
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ['folder', vars.folder_id] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['folder', vars.folder_id] });
+      qc.invalidateQueries({ queryKey: ['folder-members', vars.folder_id] });
+    },
   });
 };
 
 export const useRevokeFolder = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args: { folder_id: string; user_id: string; permanent: boolean }) => {
-      await http.delete(`/api/v1/folders/${args.folder_id}/invite/user/${args.user_id}`, {
-        params: { permanent: args.permanent },
+    mutationFn: async (args: {
+      folder_id: string;
+      subject: string;             // 完整 "user:xxx" / "group:xxx#member"
+      level: 'viewer' | 'downloader';
+      permanent: boolean;
+    }) => {
+      await http.delete(`/api/v1/folders/${args.folder_id}/invite`, {
+        params: {
+          subject: args.subject,
+          level: args.level,
+          permanent: args.permanent,
+        },
       });
     },
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ['folder', vars.folder_id] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['folder', vars.folder_id] });
+      qc.invalidateQueries({ queryKey: ['folder-members', vars.folder_id] });
+    },
   });
 };
 

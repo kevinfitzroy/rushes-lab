@@ -389,7 +389,7 @@ export default function ProjectDetailPage() {
           borderLeft: '1px solid var(--ms-hairline)',
           overflow: 'auto',
         }}>
-          <AssetSummaryPanel selected={selectedAssets} me={me} />
+          <AssetSummaryPanel selected={selectedAssets} me={me} folder={folder} />
         </Layout.Sider>
       )}
 

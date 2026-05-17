@@ -8,11 +8,12 @@ import {
   Hash, Share2,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { Asset, Me } from '../api/types';
+import type { Asset, Folder, Me } from '../api/types';
 import { useDownloadLink } from '../api/hooks';
 import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
 import { ShareModal } from './ShareModal';
+import { FolderInvitePanel } from './FolderInvitePanel';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -24,13 +25,19 @@ function fmtBytes(n: number): string {
 interface Props {
   selected: Asset[];
   me?: Me;
+  folder?: Folder;       // active folder — D iter3 用于 sensitive folder 邀请面板切模式
 }
 
-export function AssetSummaryPanel({ selected, me }: Props) {
+export function AssetSummaryPanel({ selected, me, folder }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
   const { message } = App.useApp();
   const dlLink = useDownloadLink();
   const downloads = useDownloads();
+
+  // D iter3:0 选 + sensitive folder + me → 显 FolderInvitePanel
+  if (selected.length === 0 && folder && folder.is_sensitive && me) {
+    return <FolderInvitePanel folder={folder} me={me} />;
+  }
 
   if (selected.length === 0) {
     return (
