@@ -121,39 +121,109 @@ async def create_project(
     return ProjectOut.model_validate(project)
 
 
+async def _fill_project_admins(
+    db: AsyncSession,
+    permissions: PermissionsService,
+    projects: list,
+) -> dict[uuid.UUID, list]:
+    """对一批 project 批量查 OpenFGA admin 并反查 db name → {project_id: [AdminBrief]}。
+
+    每个 project 一次 OpenFGA list_users(N 次 round-trip,PoC 量级可接受;
+    后续可加缓存或一次性 batch)。
+    """
+    from app.db.tables import User
+    from app.models import AdminBrief
+
+    out: dict[uuid.UUID, list] = {}
+    all_open_ids: set[str] = set()
+    project_to_open_ids: dict[uuid.UUID, list[str]] = {}
+    for p in projects:
+        ids = await permissions.list_users_with_relation(
+            object_type="project", object_id=str(p.id), relation="admin",
+        )
+        project_to_open_ids[p.id] = ids
+        all_open_ids.update(ids)
+
+    name_by_open_id: dict[str, str] = {}
+    if all_open_ids:
+        res = await db.execute(
+            select(User.feishu_open_id, User.name).where(
+                User.feishu_open_id.in_(all_open_ids)
+            )
+        )
+        name_by_open_id = {row[0]: row[1] for row in res.all()}
+
+    for pid, ids in project_to_open_ids.items():
+        out[pid] = [
+            AdminBrief(open_id=oid, name=name_by_open_id.get(oid, oid[:12] + "…"))
+            for oid in ids
+        ]
+    return out
+
+
 @router.get("", response_model=list[ProjectOut])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
-    limit: int = 50,
+    limit: int = 100,
     offset: int = 0,
 ) -> list[ProjectOut]:
-    user_id, user_open_id = user.id, user.open_id
-    """返回 user 可见的项目:OpenFGA list_objects UNION visibility=public。"""
-    # OpenFGA:user 是 member / editor / admin 的项目(can_view 关系)
-    member_ids = await permissions.list_objects(
-        user_subject=f"user:{user_open_id}", relation="can_view", object_type="project"
-    )
-    member_uuids = [uuid.UUID(s) for s in member_ids]
+    """返回 user 可见的项目 + 各项目的 admin 列表。
 
-    # SQL:UNION public projects;过滤已 archived
-    stmt = (
-        select(Project)
-        .where(
-            or_(
-                Project.id.in_(member_uuids) if member_uuids else False,
-                Project.visibility == "public",
-            ),
-            Project.is_archived.is_(False),
+    系统 admin(organization.admin)→ 见全部 active project,无 filter
+    普通 user → OpenFGA list_objects(can_view, project) UNION visibility=public
+    """
+    user_open_id = user.open_id
+
+    # 是否系统 admin
+    from app.services.contact_sync import get_default_organization
+    org = await get_default_organization(db)
+    is_system_admin = False
+    if org:
+        _, tenant_key = org
+        try:
+            is_system_admin = await permissions.is_org_admin(
+                user_open_id=user_open_id, organization_tenant_key=tenant_key,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    if is_system_admin:
+        stmt = (
+            select(Project)
+            .where(Project.is_archived.is_(False))
+            .order_by(Project.created_at.desc())
+            .limit(limit).offset(offset)
         )
-        .order_by(Project.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    else:
+        member_ids = await permissions.list_objects(
+            user_subject=f"user:{user_open_id}", relation="can_view", object_type="project",
+        )
+        member_uuids = [uuid.UUID(s) for s in member_ids]
+        stmt = (
+            select(Project)
+            .where(
+                or_(
+                    Project.id.in_(member_uuids) if member_uuids else False,
+                    Project.visibility == "public",
+                ),
+                Project.is_archived.is_(False),
+            )
+            .order_by(Project.created_at.desc())
+            .limit(limit).offset(offset)
+        )
     res = await db.execute(stmt)
-    rows = res.scalars().all()
-    return [ProjectOut.model_validate(r) for r in rows]
+    rows = list(res.scalars().all())
+
+    # batch fill admins
+    admins_by_pid = await _fill_project_admins(db, permissions, rows)
+    out: list[ProjectOut] = []
+    for r in rows:
+        po = ProjectOut.model_validate(r)
+        po.admins = admins_by_pid.get(r.id, [])
+        out.append(po)
+    return out
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -170,8 +240,20 @@ async def get_project(
     if not project:
         raise HTTPException(404, "project not found")
 
-    # public visibility 直接通过;否则 OpenFGA check can_view
-    if project.visibility != "public":
+    # 系统 admin 直通
+    from app.services.contact_sync import get_default_organization
+    org = await get_default_organization(db)
+    is_system_admin = False
+    if org:
+        _, tenant_key = org
+        try:
+            is_system_admin = await permissions.is_org_admin(
+                user_open_id=user_open_id, organization_tenant_key=tenant_key,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not is_system_admin and project.visibility != "public":
         allowed = await permissions.check(
             user_subject=f"user:{user_open_id}",
             relation="can_view",
@@ -188,7 +270,10 @@ async def get_project(
             )
             raise HTTPException(403, "no permission to view project")
 
-    return ProjectOut.model_validate(project)
+    po = ProjectOut.model_validate(project)
+    admins_by_pid = await _fill_project_admins(db, permissions, [project])
+    po.admins = admins_by_pid.get(project.id, [])
+    return po
 
 
 # ─── project members CRUD (D iter4) ──────────────────────────────────────────

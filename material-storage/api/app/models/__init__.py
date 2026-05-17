@@ -25,6 +25,11 @@ class ProjectCreateIn(BaseModel):
                                     description="项目管理员的飞书 open_id")
 
 
+class AdminBrief(BaseModel):
+    open_id: str
+    name: str
+
+
 class ProjectOut(ORMModel):
     id: uuid.UUID
     code: str
@@ -35,6 +40,7 @@ class ProjectOut(ORMModel):
     visibility: str       # public / private / stealth
     is_archived: bool
     created_at: datetime
+    admins: list[AdminBrief] = []   # list_projects 时填充;单条 get 也填
 
 
 # ─── assets ───────────────────────────────────────────────────────────────────
