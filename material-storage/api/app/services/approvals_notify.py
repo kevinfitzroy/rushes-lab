@@ -173,6 +173,78 @@ async def notify_decided(
         },
     )
 
+    # 同时 update admin 之前收到的"待审"卡为"已通过 / 已拒绝"
+    await update_pending_cards_after_decision(
+        approval=approval, feishu=feishu, decided_by_name=decider.name if decider else "(系统)",
+        audit=audit, applicant_name=applicant.name, target_label=target_label,
+    )
+
+
+async def update_pending_cards_after_decision(
+    *,
+    approval: ApprovalRequest,
+    feishu: FeishuClient,
+    decided_by_name: str,
+    audit: AuditService,
+    applicant_name: str,
+    target_label: str,
+) -> None:
+    """读 approval.granted_tuple_ref['_notify']['pending_sent']
+    (a2 已存:[{open_id, message_id|error}])
+    → 对每个有 message_id 的 admin 推送的卡片,改成"已处理"状态。
+
+    feishu.update_im_card 失败不阻塞;仅 log + audit。
+    """
+    notify_meta = (approval.granted_tuple_ref or {}).get("_notify") or {}
+    pending_sent = notify_meta.get("pending_sent") or []
+    if not pending_sent:
+        log.debug("update_pending_cards approval=%s: no pending_sent",
+                  approval.id)
+        return
+
+    decided_card = build_approval_decided_card(
+        applicant_name=applicant_name,
+        target_label=target_label,
+        action_label=_action_label(approval),
+        decision="approve" if approval.status == "approved" else "reject",
+        decided_by_name=decided_by_name,
+        decision_note=approval.decision_note,
+        approval_id=str(approval.id),
+    )
+
+    results: list[dict[str, Any]] = []
+    for entry in pending_sent:
+        mid = entry.get("message_id") if isinstance(entry, dict) else None
+        if not mid:
+            continue
+        try:
+            await feishu.update_im_card(mid, decided_card)
+            results.append({"message_id": mid, "open_id": entry.get("open_id"),
+                            "status": "updated"})
+        except FeishuAPIError as e:
+            log.warning("update_im_card fail approval=%s mid=%s code=%s msg=%s",
+                        approval.id, mid, e.code, e.msg)
+            results.append({"message_id": mid, "open_id": entry.get("open_id"),
+                            "status": "failed", "error": f"{e.code}:{e.msg[:80]}"})
+        except Exception as e:  # noqa: BLE001
+            log.warning("update_im_card unexpected fail approval=%s mid=%s err=%s",
+                        approval.id, mid, e)
+            results.append({"message_id": mid, "open_id": entry.get("open_id"),
+                            "status": "failed", "error": str(e)[:80]})
+
+    if results:
+        await audit.write(
+            event_type="approval_card_updated",
+            actor_user_id=approval.approver_user_id,
+            details={
+                "approval_id": str(approval.id),
+                "decision": approval.status,
+                "updated": results,
+            },
+        )
+        log.info("update_pending_cards approval=%s updated=%d",
+                 approval.id, len(results))
+
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 async def _resolve_target(

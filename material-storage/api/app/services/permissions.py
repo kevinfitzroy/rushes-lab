@@ -412,26 +412,40 @@ class PermissionsService:
         """审批通过的临时下载 grant — project 级(批量)或 asset 级(单文件)。
 
         到期自动失效(non_expired_grant condition,无需 cron 清理)。
+
+        重复 grant(同 user+object 已存在)→ 先 delete 再 write 新的(更新 grant_time)。
         """
         grant_time = datetime.now(timezone.utc).isoformat()
-        await self._client.write(
-            ClientWriteRequest(
-                writes=[
-                    ClientTuple(
-                        user=f"user:{user_open_id}",
-                        relation="explicit_downloader",
-                        object=f"{object_type}:{object_id}",
-                        condition=RelationshipCondition(
-                            name="non_expired_grant",
-                            context={
-                                "grant_time": grant_time,
-                                "grant_duration": f"{duration_seconds}s",
-                            },
-                        ),
-                    )
-                ]
-            )
+        new_tuple = ClientTuple(
+            user=f"user:{user_open_id}",
+            relation="explicit_downloader",
+            object=f"{object_type}:{object_id}",
+            condition=RelationshipCondition(
+                name="non_expired_grant",
+                context={
+                    "grant_time": grant_time,
+                    "grant_duration": f"{duration_seconds}s",
+                },
+            ),
         )
+        try:
+            await self._client.write(ClientWriteRequest(writes=[new_tuple]))
+        except Exception as e:
+            # 'tuple already existed' → 先删后写(刷新 condition.grant_time)
+            if "already existed" in str(e):
+                try:
+                    await self._client.write(ClientWriteRequest(deletes=[
+                        ClientTuple(
+                            user=f"user:{user_open_id}",
+                            relation="explicit_downloader",
+                            object=f"{object_type}:{object_id}",
+                        )
+                    ]))
+                except Exception:  # noqa: BLE001
+                    pass
+                await self._client.write(ClientWriteRequest(writes=[new_tuple]))
+            else:
+                raise
         log.info("grant explicit_download user=%s %s=%s ttl=%ds",
                  user_open_id, object_type, object_id, duration_seconds)
 
