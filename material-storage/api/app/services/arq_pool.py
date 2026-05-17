@@ -34,3 +34,11 @@ async def enqueue_thumbnail(pool: ArqRedis, asset_id: str) -> None:
         await pool.enqueue_job("generate_thumbnail", asset_id)
     except Exception as e:  # noqa: BLE001
         log.warning("enqueue_thumbnail fail asset=%s err=%s", asset_id, e)
+
+
+async def enqueue_video_thumbnail(pool: ArqRedis, asset_id: str) -> None:
+    """fire-and-forget;失败仅 log,不阻塞业务。"""
+    try:
+        await pool.enqueue_job("generate_video_thumbnail", asset_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("enqueue_video_thumbnail fail asset=%s err=%s", asset_id, e)
