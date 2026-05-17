@@ -157,7 +157,11 @@ async def decide(
     approval.decided_at = datetime.now(timezone.utc)
     approval.decision_note = decision_note
     if granted_ref:
-        approval.granted_tuple_ref = granted_ref
+        # merge,不要覆盖 — a2 notify_pending 把 message_ids 存在 _notify key,
+        # IM 卡片 update 链路要复用,直接覆盖会丢
+        merged = dict(approval.granted_tuple_ref or {})
+        merged.update(granted_ref)
+        approval.granted_tuple_ref = merged
     await db.commit()
     await db.refresh(approval)
 
