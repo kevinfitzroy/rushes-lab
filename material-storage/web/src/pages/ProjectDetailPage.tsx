@@ -7,7 +7,7 @@ import {
 } from 'antd';
 import {
   Download, FileText, Folder as FolderIcon, FolderPlus, Key,
-  Lock, RotateCw, Trash2, Upload,
+  Lock, RotateCw, Trash2, Upload, Users as UsersIcon,
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
@@ -18,6 +18,7 @@ import {
 import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { FolderTree } from '../components/FolderTree';
 import { AssetSummaryPanel } from '../components/AssetSummaryPanel';
+import { ProjectMembersDrawer } from '../components/ProjectMembersDrawer';
 import { RequestAccessModal } from '../components/RequestAccessModal';
 import { NewFolderModal } from '../components/NewFolderModal';
 import { useUpload } from '../lib/upload-store';
@@ -72,6 +73,7 @@ export default function ProjectDetailPage() {
   const [applyAsset, setApplyAsset] = useState<Asset | null>(null);
   const [applySensitive, setApplySensitive] = useState(false);
   const [newFolderMode, setNewFolderMode] = useState<'root' | 'child' | null>(null);
+  const [membersOpen, setMembersOpen] = useState(false);
 
   const onFolderSelect = (fid: string) => {
     setActiveFolderId(fid);
@@ -288,7 +290,14 @@ export default function ProjectDetailPage() {
               fontSize: 18, fontWeight: 500,
               color: 'var(--ms-ink)',
               letterSpacing: '-0.01em',
+              flex: 1,
             }}>{folder?.name ?? '—'}</span>
+            {project && me && (
+              <Button size="small" icon={<UsersIcon size={13} strokeWidth={1.8} />}
+                      onClick={() => setMembersOpen(true)}>
+                成员
+              </Button>
+            )}
           </div>
           {folder?.minio_prefix && (
             <div style={{
@@ -426,6 +435,15 @@ export default function ProjectDetailPage() {
             setActiveFolderId(fid);
             navigate(`/projects/${projectId}/folders/${fid}`, { replace: true });
           }}
+        />
+      )}
+
+      {project && me && (
+        <ProjectMembersDrawer
+          open={membersOpen}
+          onClose={() => setMembersOpen(false)}
+          project={project}
+          me={me}
         />
       )}
     </Layout>
