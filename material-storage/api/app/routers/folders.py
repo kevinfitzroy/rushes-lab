@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import or_, select
@@ -24,7 +25,8 @@ from app.db.session import get_db
 from app.db.tables import Folder, Project
 from app.deps import (
     get_audit,
-    get_current_user_id,
+    CurrentUser,
+    get_current_user,
     get_feishu_client,
     get_permissions,
     get_request_context,
@@ -46,33 +48,50 @@ async def create_folder(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> FolderOut:
-    # 1) 权限:user 须 can_edit project
+    user_id, user_open_id = user.id, user.open_id
+    # 1) 权限:create folder 需 can_upload(model v4:uploader 隐含创建子目录)
+    #    - 在 project 下建 root folder → check project.can_upload
+    #    - 在 folder 下建 sub folder → check parent folder.can_upload
+    if payload.parent_folder_id:
+        parent_folder_for_check = await db.get(Folder, payload.parent_folder_id)
+        if not parent_folder_for_check or parent_folder_for_check.project_id != payload.project_id:
+            raise HTTPException(400, "parent_folder invalid for this project")
+        # sensitive folder 限只能挂 project 一级,sub folder 必须挂普通 folder
+        check_type = "sensitive_folder" if parent_folder_for_check.is_sensitive else "folder"
+        check_id = str(parent_folder_for_check.id)
+    else:
+        check_type = "project"
+        check_id = str(payload.project_id)
+
     allowed = await permissions.check(
-        user_id=str(user_id),
-        relation="can_edit",
-        object_type="project",
-        object_id=str(payload.project_id),
+        user_subject=f"user:{user_open_id}",
+        relation="can_upload",
+        object_type=check_type,
+        object_id=check_id,
     )
     if not allowed:
         await audit.write(
             event_type="access_denied",
             actor_user_id=user_id,
             target_project_id=payload.project_id,
-            details={"action": "create_folder", "reason": "openfga can_edit false"},
+            details={"action": "create_folder", "reason": "openfga can_upload false"},
             **ctx,
         )
-        raise HTTPException(403, "no permission to create folder in this project")
+        raise HTTPException(403, "no permission to create folder here(需 can_upload)")
+
+    # 业务层 enforce:sensitive folder 只能直挂 project(限一级)
+    if payload.is_sensitive and payload.parent_folder_id is not None:
+        raise HTTPException(400, "sensitive folder 只能直挂 project 一级")
 
     # 2) 计算 minio_prefix
     minio_prefix = payload.minio_prefix
     if not minio_prefix:
         if payload.parent_folder_id:
             parent = await db.get(Folder, payload.parent_folder_id)
-            if not parent or parent.project_id != payload.project_id:
-                raise HTTPException(400, "parent_folder invalid for this project")
+            assert parent is not None
             minio_prefix = f"{parent.minio_prefix.rstrip('/')}/{payload.name}/"
         else:
             minio_prefix = f"{payload.name}/"
@@ -93,22 +112,24 @@ async def create_folder(
         raise HTTPException(400, f"folder prefix conflict: {e.orig}") from e
 
     # 3) bootstrap OpenFGA parent tuple
-    if payload.parent_folder_id:
-        # parent type = folder / sensitive_folder by parent.is_sensitive
-        parent = await db.get(Folder, payload.parent_folder_id)
-        assert parent is not None
-        parent_type = "sensitive_folder" if parent.is_sensitive else "folder"
-        parent_id = str(parent.id)
+    if payload.is_sensitive:
+        # sensitive folder 必直挂 project(已 enforce)
+        await permissions.bootstrap_sensitive_folder(
+            folder_id=str(folder.id), project_id=str(payload.project_id),
+        )
     else:
-        parent_type = "project"
-        parent_id = str(payload.project_id)
-
-    await permissions.bootstrap_folder(
-        folder_id=str(folder.id),
-        parent_type=parent_type,  # type: ignore[arg-type]
-        parent_id=parent_id,
-        is_sensitive=payload.is_sensitive,
-    )
+        # 普通 folder:可 nested,parent 是 project 或 folder
+        if payload.parent_folder_id:
+            parent_type: Literal["project", "folder"] = "folder"
+            parent_id = str(payload.parent_folder_id)
+        else:
+            parent_type = "project"
+            parent_id = str(payload.project_id)
+        await permissions.bootstrap_folder(
+            folder_id=str(folder.id),
+            parent_type=parent_type,
+            parent_id=parent_id,
+        )
 
     await audit.write(
         event_type="folder_created",
@@ -135,15 +156,16 @@ async def list_folders(
     project_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
 ) -> list[FolderOut]:
+    user_id, user_open_id = user.id, user.open_id
     # project 可见 check(public 直通,否则 can_view)
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
     if project.visibility != "public":
         allowed = await permissions.check(
-            user_id=str(user_id), relation="can_view",
+            user_subject=f"user:{user_open_id}", relation="can_view",
             object_type="project", object_id=str(project_id),
         )
         if not allowed:
@@ -152,7 +174,7 @@ async def list_folders(
     # 普通 folder:project member 都可见(用 SQL 拿全部)
     # sensitive folder:OpenFGA list_objects(user, can_view, sensitive_folder) intersect this project
     sensitive_ids_str = await permissions.list_objects(
-        user_id=str(user_id), relation="can_view", object_type="sensitive_folder"
+        user_subject=f"user:{user_open_id}", relation="can_view", object_type="sensitive_folder"
     )
     sensitive_uuids = [uuid.UUID(s) for s in sensitive_ids_str]
 
@@ -172,13 +194,14 @@ async def get_folder(
     folder_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
 ) -> FolderOut:
+    user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
     allowed = await permissions.check(
-        user_id=str(user_id), relation="can_view",
+        user_subject=f"user:{user_open_id}", relation="can_view",
         object_type="sensitive_folder" if folder.is_sensitive else "folder",
         object_id=str(folder.id),
     )
@@ -196,24 +219,33 @@ async def invite(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> None:
-    """直接邀请 user / group 进入 sensitive_folder(绕过审批,admin 操作)。
+    """邀请 user / group / department 进入 sensitive_folder(admin 操作)。
 
-    审批驱动的邀请走 /api/v1/approvals。"""
+    审批驱动的邀请走 /api/v1/approvals。subject 三选一。"""
+    user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
     if not folder.is_sensitive:
         raise HTTPException(400, "only sensitive_folder needs invite")
 
-    if (payload.user_id is None) == (payload.group_id is None):
-        raise HTTPException(400, "must specify exactly one of user_id / group_id")
+    # subject 三选一(普通 OR 排除,只允许一个非 None)
+    provided = [
+        ("user", payload.user_open_id),
+        ("group", payload.group_id),
+        ("department", payload.department_id),
+    ]
+    chosen = [(k, v) for k, v in provided if v]
+    if len(chosen) != 1:
+        raise HTTPException(400, "must specify exactly one of user_open_id / group_id / department_id")
+    subject_kind, subject_id = chosen[0]
 
     # admin check
     allowed = await permissions.check(
-        user_id=str(user_id), relation="can_admin",
+        user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="sensitive_folder", object_id=str(folder_id),
     )
     if not allowed:
@@ -227,10 +259,12 @@ async def invite(
         )
         raise HTTPException(403, "no admin permission on this folder")
 
+    from app.services.permissions import fmt_subject
+    subject = fmt_subject(subject_kind, subject_id)  # type: ignore[arg-type]
     await permissions.invite_to_sensitive_folder(
         sensitive_folder_id=str(folder_id),
-        user_id=str(payload.user_id) if payload.user_id else None,
-        group_id=str(payload.group_id) if payload.group_id else None,
+        subject=subject,
+        level=payload.level,  # type: ignore[arg-type]
         duration_seconds=payload.duration_seconds,
     )
 
@@ -240,38 +274,47 @@ async def invite(
         target_project_id=folder.project_id,
         details={
             "folder_id": str(folder_id),
-            "invitee_user_id": str(payload.user_id) if payload.user_id else None,
-            "invitee_group_id": str(payload.group_id) if payload.group_id else None,
+            "subject": subject,
+            "level": payload.level,
             "permanent": payload.duration_seconds is None,
             "duration_seconds": payload.duration_seconds,
         },
         **ctx,
     )
 
-    # iter4:user 邀请推 IM 卡(group 邀请没 feishu_open_id,跳过)
-    if payload.user_id is not None:
-        background.add_task(
-            run_notify_folder_invite_bg,
-            folder_id=folder_id,
-            invitee_user_id=payload.user_id,
-            inviter_user_id=user_id,
-            duration_seconds=payload.duration_seconds,
-            feishu=feishu,
-            settings=get_settings(),
-        )
+    # iter4 IM 卡:仅 user 类型推送(group/department 没 open_id 集中地址)
+    if subject_kind == "user":
+        # 通过 open_id 反查 internal user.id(invite_notify 现 signature 要 internal UUID;
+        # 等待 invite_notify 重构后改;先按 open_id 查 db)
+        from sqlalchemy import select as _select
+        from app.db.tables import User as _User
+        u_res = await db.execute(_select(_User).where(_User.feishu_open_id == subject_id))
+        invitee = u_res.scalar_one_or_none()
+        if invitee is not None:
+            background.add_task(
+                run_notify_folder_invite_bg,
+                folder_id=folder_id,
+                invitee_user_id=invitee.id,
+                inviter_user_id=user_id,
+                duration_seconds=payload.duration_seconds,
+                feishu=feishu,
+                settings=get_settings(),
+            )
 
 
-@router.delete("/{folder_id}/invite/user/{invitee_id}", status_code=204)
-async def revoke_user_invite(
+@router.delete("/{folder_id}/invite", status_code=204)
+async def revoke_invite(
     folder_id: uuid.UUID,
-    invitee_id: uuid.UUID,
+    subject: str = Query(..., description="完整 subject 字符串,例:user:ou_xxx / group:gid#member / department:did#member"),
+    level: str = Query("viewer", pattern=r"^(viewer|downloader)$"),
     permanent: bool = Query(True, description="True=删 invited(永久);False=删 explicit_invited(临时)"),
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> None:
+    user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
@@ -279,15 +322,16 @@ async def revoke_user_invite(
         raise HTTPException(400, "not a sensitive_folder")
 
     allowed = await permissions.check(
-        user_id=str(user_id), relation="can_admin",
+        user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="sensitive_folder", object_id=str(folder_id),
     )
     if not allowed:
         raise HTTPException(403, "no admin permission")
 
-    await permissions.revoke_from_sensitive_folder(
+    await permissions.revoke_sensitive_folder_invite(
         sensitive_folder_id=str(folder_id),
-        user_id=str(invitee_id),
+        subject=subject,
+        level=level,  # type: ignore[arg-type]
         permanent=permanent,
     )
 
@@ -297,7 +341,8 @@ async def revoke_user_invite(
         target_project_id=folder.project_id,
         details={
             "folder_id": str(folder_id),
-            "invitee_user_id": str(invitee_id),
+            "subject": subject,
+            "level": level,
             "permanent": permanent,
         },
         **ctx,

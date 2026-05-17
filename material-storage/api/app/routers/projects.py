@@ -21,7 +21,8 @@ from app.db.session import get_db
 from app.db.tables import Project
 from app.deps import (
     get_audit,
-    get_current_user_id,
+    CurrentUser,
+    get_current_user,
     get_permissions,
     get_request_context,
 )
@@ -38,32 +39,36 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ProjectOut:
-    """创建 project + bootstrap OpenFGA tuple + audit。
-
-    Phase B-2 iter4:不 enforce 创建权限(iter5 SSO 加 org admin check);
-    任何已认证 user 可建项目。
+    """创建 project + bootstrap OpenFGA(org→project parent + 创建者 admin)+ audit。
 
     organization_id 解析顺序:payload > user.organization_id > settings.default_organization_id。
     创建者自动作为 project admin → OpenFGA tuple,确保 list/get 可见。
     """
+    user_id, user_open_id = user.id, user.open_id
+    from app.db.tables import Organization, User
+
     # 解析 org_id
     org_id = payload.organization_id
     if org_id is None:
-        from app.db.tables import User
-        user = await db.get(User, user_id)
-        if user and user.organization_id:
-            org_id = user.organization_id
+        db_user = await db.get(User, user_id)
+        if db_user and db_user.organization_id:
+            org_id = db_user.organization_id
         else:
             from app.settings import get_settings
             default = get_settings().default_organization_id
             if default:
-                import uuid as _uuid
-                org_id = _uuid.UUID(default)
+                org_id = uuid.UUID(default)
     if org_id is None:
         raise HTTPException(400, "organization_id missing(no payload, no user org, no default)")
+
+    # 查 org 拿 tenant_key(OpenFGA subject 用飞书 tenant_key,不是 internal UUID)
+    org = await db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(400, f"organization {org_id} not found")
+    tenant_key = org.feishu_tenant_key or str(org_id)  # 兜底:无 tenant_key 用 UUID 字符串
 
     project = Project(
         id=uuid.uuid4(),
@@ -80,25 +85,12 @@ async def create_project(
         await db.rollback()
         raise HTTPException(400, detail=f"project code conflict or invalid org: {e.orig}") from e
 
+    # bootstrap:org parent + 创建者 admin(一并写)
     await permissions.bootstrap_project(
-        project_id=str(project.id), organization_id=str(project.organization_id)
+        project_id=str(project.id),
+        organization_tenant_key=tenant_key,
+        creator_open_id=user_open_id,
     )
-
-    # 创建者立即获 project admin tuple(否则后续 list/get 看不到自己刚建的项目)
-    try:
-        from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
-        await permissions._client.write(  # type: ignore[attr-defined]
-            ClientWriteRequest(writes=[
-                ClientTuple(
-                    user=f"user:{user_id}", relation="admin",
-                    object=f"project:{project.id}",
-                ),
-            ])
-        )
-    except Exception as e:
-        # tuple 重复 / 其他错误不阻塞;但 log
-        import logging
-        logging.getLogger(__name__).warning("creator admin tuple write tolerated: %s", e)
 
     await audit.write(
         event_type="project_created",
@@ -116,14 +108,15 @@ async def create_project(
 async def list_projects(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     limit: int = 50,
     offset: int = 0,
 ) -> list[ProjectOut]:
+    user_id, user_open_id = user.id, user.open_id
     """返回 user 可见的项目:OpenFGA list_objects UNION visibility=public。"""
     # OpenFGA:user 是 member / editor / admin 的项目(can_view 关系)
     member_ids = await permissions.list_objects(
-        user_id=str(user_id), relation="can_view", object_type="project"
+        user_subject=f"user:{user_open_id}", relation="can_view", object_type="project"
     )
     member_uuids = [uuid.UUID(s) for s in member_ids]
 
@@ -152,9 +145,10 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ProjectOut:
+    user_id, user_open_id = user.id, user.open_id
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
@@ -162,7 +156,7 @@ async def get_project(
     # public visibility 直接通过;否则 OpenFGA check can_view
     if project.visibility != "public":
         allowed = await permissions.check(
-            user_id=str(user_id),
+            user_subject=f"user:{user_open_id}",
             relation="can_view",
             object_type="project",
             object_id=str(project_id),

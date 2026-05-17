@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import User
-from app.deps import get_current_user_id, get_feishu_client
+from app.deps import CurrentUser, get_current_user, get_feishu_client
 from app.services.feishu_card_handlers import registered_intents
 from app.services.feishu_cards import (
     build_approval_card,
@@ -67,8 +67,9 @@ async def feishu_test_card(
     payload: TestCardIn,
     db: AsyncSession = Depends(get_db),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, object]:
+    user_id, user_open_id = user.id, user.open_id
     """给指定 open_id(默认自己)推一张测试卡片。用于 iter1 验证发送链路。"""
     settings = get_settings()
     if not settings.feishu_im_enabled:

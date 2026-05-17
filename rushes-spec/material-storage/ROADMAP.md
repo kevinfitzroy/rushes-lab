@@ -14,6 +14,7 @@
 | #45 | 3dc2d47 | 统一任务中心(上传 + 下载进度可视化)+ multipart 修复 |
 | #46 | 7d57371 | 三栏 workspace 布局 + 多选 + 批量删除 + 深层文件夹 seed(101 folders) |
 | #47 | 88a4117 | D iter1 — 新建项目 / 新建文件夹 UI;org_id auto-fill;ErrorBoundary;app/ bind mount |
+| #49 | fcfe951 | 飞书 IM 卡片三件套 — 权限审批 / 资源分享(短链)/ 邀请;applink button(全平台飞书内 webview);audit commit systemic fix |
 
 ---
 
@@ -41,6 +42,7 @@
 - **backend**:
   - `GET /api/v1/folders/{id}/members` — list invited / explicit_invited(用 OpenFGA `read` API 拿 tuples,反查 user_id → DB lookup name/email)
   - 调用方需 can_admin folder
+  - 邀请推 IM 卡:✅ 已就绪(PR #49 `invite_notify.notify_folder_invite`,hook 在 POST /folders/{id}/invite BG task)
 - **frontend**:
   - 当 active folder 是 sensitive 且选 0 个 asset 时,右侧 SummaryPanel 模式切到 FolderInvitePanel
   - 列当前 members(永久 / 临时 + grant 倒计时)
@@ -55,10 +57,12 @@
   - `POST /api/v1/projects/{id}/members` — body { user_id, role: 'admin'|'editor'|'viewer' }
   - `DELETE /api/v1/projects/{id}/members/{user_id}` — 撤销 OpenFGA tuple
   - 都需 admin
+  - 邀请推 IM 卡:`invite_notify` 已有 sensitive_folder 版本(PR #49),复制一份 `notify_project_member_invite` 接入即可
 - **frontend**:
   - ProjectDetailPage 顶部加 "成员" 按钮 → Drawer 显示成员列表
   - UserPicker 组件(autocomplete search /users)
   - 邀请 modal:user 选 + role 选
+  - **顺带升级**:`ShareModal`(PR #49)接收人改成 UserPicker(替换当前 textarea 手输 open_id)
 
 ### D iter5(可选)— project 编辑 / 归档
 
@@ -69,15 +73,22 @@
 
 ## Phase B-2 / B-3 收尾(独立于 D 系列,可并行)
 
-### 飞书 OpenAPI 集成(真审批闭环)
+### 飞书 IM 卡片三件套(Gap 13)— ✅ DONE PR #49
 
-当前 approval 走的是 admin 手动审批(POST /approvals/{id}/approve)。集成飞书后:
+权限审批 / 资源分享 / 邀请,加 applink button + audit commit systemic fix。卡片回调按钮(通过/拒绝)走 `feishu_card_handlers.handle_approval_decision` → `approval_service.decide`。
+**只剩**:
+- approve/reject 后 update 原卡片为"已处理"状态(用 `update_im_card`;需 approvals 表加 notify_state 字段存 pending message_ids)— D iter5 / 配合 audit query 一起做
+- ShareModal 接收人 textarea → UserPicker(等 D iter4 出 /users endpoint)
+
+### 飞书 OpenAPI 真审批闭环(独立于 IM 卡片)
+
+IM 卡片已就绪;这里指接入飞书"工作台 → 审批"应用 — 让 user/admin 可以在飞书审批后台同时也能处理(企业既有 SOP)。
 - **backend**:
-  - `POST /api/v1/approvals` 同时调 `lark-oapi` 创建审批 instance,存 `feishu_instance_code`
-  - 飞书审批模板 user 在飞书后台先配置好 approval_code
-  - `POST /api/v1/webhooks/feishu` 接 `approval_instance.event` → 状态 == APPROVED 调内部 `_grant_for_approval`
+  - `POST /api/v1/approvals` 同时调 `lark-oapi` 创建飞书审批 instance,存 `feishu_instance_code`
+  - 飞书审批模板由 user 在飞书后台先配置好 approval_code
+  - `POST /api/v1/webhooks/feishu` 已有 `approval_instance` 分支(目前 ack-only),iter7 接 status==APPROVED → 内部 `approval_service.decide(approve)`
   - 配置:`settings.feishu_approval_code` env
-- **场景**:user 在 web 申请 → 飞书 IM 推审批卡片 → admin 在飞书 app 一键批 → backend webhook 收到 → 自动 grant + 通知
+- **场景**:user 在 web 申请 → 同时 IM 卡(已有)+ 飞书审批工单(新增)→ admin 任一渠道一键批 → backend 落库 + 通知
 
 ### 离职闭环(`contact.user.deleted_v3`)
 
@@ -91,12 +102,7 @@ PR #40 iter6 webhook handler 已 stub。补:
   - `GET /api/v1/admin/audit?actor=&event_type=&from=&to=&limit=&offset=` — admin only
   - `GET /api/v1/admin/audit/export.csv` — 流式 CSV
 - **frontend**:管理后台 audit 页(`/admin/audit`)— Table + filter
-
-### IM 卡片推送(Gap 13)
-
-- ADR-0005 §11.2 Gap 13 / issue #36
-- 申请提交 / 状态变更 → bridge / 直接 lark-oapi 发卡片到飞书 IM
-- 卡片含 "通过/拒绝" 按钮(callback)
+- PR #49 audit.write commit fix 后,audit_events 才真有数据,做 query 才有意义
 
 ### approval 自动过期 marker
 
@@ -159,6 +165,9 @@ PR #40 iter6 webhook handler 已 stub。补:
 - 新 deploy ms-api 需 `--force-recreate` 才重读 .env(`docker restart` 不重 inject env_file)
 - 飞书新 user 在 OIDC 登录时自动绑 default org(`settings.default_organization_id`)
 - web build:`pnpm build` → 自动输出到 `../api/app/static/web/`,rsync 到 server2 该路径即可,bind mount 立刻生效
+- 飞书卡片 button url 必须包成 applink(`feishu_cards.applink_open`)才在飞书内 webview 打开,
+  否则 PC 飞书会跳系统浏览器(PR #49 修)。multi_url.pc_url 也要走 applink
+- audit.write 内部已自带 commit(PR #49 修);调用方不需要再 commit audit 行
 
 ## 关键 server / 配置(本地 server.md 已记)
 
@@ -170,7 +179,8 @@ PR #40 iter6 webhook handler 已 stub。补:
 ## 推荐顺序
 
 1. 完成 D iter2-4(剩余 admin UI;纯 backend + frontend,无外部依赖)
+   — iter3/4 同步把 IM 卡 hook 收尾(已留好接口)
 2. 选 Phase B-4 iter1+2(缩略图)— 视觉体验跃迁
-3. 飞书 OpenAPI 集成(真审批闭环)— 让产品自洽业务
-4. audit query 后台 / 离职闭环 — 合规底
+3. 飞书 OpenAPI 真审批闭环 — 让企业 SOP 自洽(IM 卡片已 done)
+4. audit query 后台 / 离职闭环 — 合规底(audit 数据有了,正好做 query)
 5. AI 标签 / OSS 灾备 — 长期差异化

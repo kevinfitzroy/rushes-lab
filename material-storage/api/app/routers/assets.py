@@ -14,7 +14,8 @@ from app.db.session import get_db
 from app.db.tables import Asset, Folder, Project
 from app.deps import (
     get_audit,
-    get_current_user_id,
+    CurrentUser,
+    get_current_user,
     get_permissions,
     get_presign,
     get_request_context,
@@ -43,17 +44,18 @@ async def create_upload(
     permissions: PermissionsService = Depends(get_permissions),
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> UploadMultipartCreateOut:
+    user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, payload.folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
 
-    # check can_edit folder(普通 folder:project editor 自动;sensitive folder:invited admin only)
+    # check can_upload folder(v4:uploader 隐含上传 + 创建 sub folder)
     allowed = await permissions.check(
-        user_id=str(user_id),
-        relation="can_edit",
+        user_subject=f"user:{user_open_id}",
+        relation="can_upload",
         object_type="folder" if not folder.is_sensitive else "sensitive_folder",
         object_id=str(folder.id),
     )
@@ -82,7 +84,7 @@ async def sign_part(
     bucket: str = Query(...),
     key: str = Query(...),
     presign: PresignService = Depends(get_presign),
-    user_id: uuid.UUID = Depends(get_current_user_id),  # 至少要认证;细粒度上传 check 在 create_upload 已做
+    user: CurrentUser = Depends(get_current_user),  # 至少要认证;细粒度上传 check 在 create_upload 已做
 ) -> UploadPartUrlOut:
     settings = get_settings()
     url = presign.sign_part_url(
@@ -100,9 +102,10 @@ async def complete_upload(
     permissions: PermissionsService = Depends(get_permissions),
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> AssetOut:
+    user_id, user_open_id = user.id, user.open_id
     folder_id = await _resolve_folder_by_key(db, payload.bucket, payload.key)
     if not folder_id:
         raise HTTPException(400, detail=f"folder for key {payload.key} not found")
@@ -113,8 +116,8 @@ async def complete_upload(
 
     # 再次 check(防 user create_upload 后被 revoke)
     allowed = await permissions.check(
-        user_id=str(user_id),
-        relation="can_edit",
+        user_subject=f"user:{user_open_id}",
+        relation="can_upload",
         object_type="folder" if not folder.is_sensitive else "sensitive_folder",
         object_id=str(folder.id),
     )
@@ -148,8 +151,8 @@ async def complete_upload(
 
     await permissions.bootstrap_asset(
         asset_id=str(asset.id),
-        parent_folder_id=str(folder.id),
-        parent_is_sensitive=folder.is_sensitive,
+        parent_type="sensitive_folder" if folder.is_sensitive else "folder",
+        parent_id=str(folder.id),
     )
 
     trace_id = mint_trace_id()
@@ -178,8 +181,9 @@ async def abort_upload(
     bucket: str = Query(...),
     key: str = Query(...),
     presign: PresignService = Depends(get_presign),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
 ) -> None:
+    user_id, user_open_id = user.id, user.open_id
     """主动 abort multipart;凡是认证 user 都可 abort 自己 upload。"""
     presign.abort_multipart_upload(bucket, key, upload_id)
 
@@ -190,17 +194,18 @@ async def list_assets(
     folder_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     limit: int = 100,
     offset: int = 0,
 ) -> list[AssetOut]:
+    user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
 
     # check can_view folder
     allowed = await permissions.check(
-        user_id=str(user_id),
+        user_subject=f"user:{user_open_id}",
         relation="can_view",
         object_type="folder" if not folder.is_sensitive else "sensitive_folder",
         object_id=str(folder.id),
@@ -228,16 +233,17 @@ async def get_download_link(
     permissions: PermissionsService = Depends(get_permissions),
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> DownloadLinkOut:
+    user_id, user_open_id = user.id, user.open_id
     """签 presigned GET URL;check can_download asset + audit signed_url_issued。"""
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(404, "asset not found")
 
     allowed = await permissions.check(
-        user_id=str(user_id),
+        user_subject=f"user:{user_open_id}",
         relation="can_download",
         object_type="asset",
         object_id=str(asset_id),
@@ -275,12 +281,13 @@ async def delete_asset(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> None:
+    user_id, user_open_id = user.id, user.open_id
     """soft delete:置 deleted_at;MinIO object 保留(由 bucket lifecycle 异步清)。
 
-    权限:asset.can_delete(model v3:= can_admin from parent folder/project)。
+    权限:asset.can_admin(model v4:= can_admin from parent folder/project)。
     """
     from datetime import datetime, timezone
     asset = await db.get(Asset, asset_id)
@@ -288,14 +295,14 @@ async def delete_asset(
         raise HTTPException(404, "asset not found")
 
     allowed = await permissions.check(
-        user_id=str(user_id), relation="can_delete",
+        user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="asset", object_id=str(asset_id),
     )
     if not allowed:
         await audit.write(
             event_type="access_denied", actor_user_id=user_id,
             target_asset_id=asset_id, target_minio_key=asset.minio_key,
-            details={"action": "delete_asset", "reason": "openfga can_delete false"},
+            details={"action": "delete_asset", "reason": "openfga can_admin false"},
             **ctx,
         )
         raise HTTPException(403, "no delete permission")

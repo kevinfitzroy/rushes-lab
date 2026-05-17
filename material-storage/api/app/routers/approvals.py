@@ -31,7 +31,8 @@ from app.db.session import get_db
 from app.db.tables import ApprovalRequest
 from app.deps import (
     get_audit,
-    get_current_user_id,
+    CurrentUser,
+    get_current_user,
     get_feishu_client,
     get_permissions,
     get_request_context,
@@ -63,9 +64,10 @@ async def create_approval(
     audit: AuditService = Depends(get_audit),
     permissions: PermissionsService = Depends(get_permissions),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ApprovalOut:
+    user_id, user_open_id = user.id, user.open_id
     if payload.action == "access" and payload.target_type != "sensitive_folder":
         raise HTTPException(400, "action=access 仅适用于 target_type=sensitive_folder")
     if payload.action == "download" and payload.duration_seconds is None:
@@ -119,10 +121,11 @@ async def list_approvals(
                                        pattern=r"^(pending|approved|rejected|revoked|expired)$"),
     scope: str = Query("self", pattern=r"^(self|all)$"),
     db: AsyncSession = Depends(get_db),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     limit: int = 50,
     offset: int = 0,
 ) -> list[ApprovalOut]:
+    user_id, user_open_id = user.id, user.open_id
     stmt = select(ApprovalRequest)
     if scope == "self":
         stmt = stmt.where(ApprovalRequest.applicant_user_id == user_id)
@@ -137,8 +140,9 @@ async def list_approvals(
 async def get_approval(
     approval_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
 ) -> ApprovalOut:
+    user_id, user_open_id = user.id, user.open_id
     approval = await db.get(ApprovalRequest, approval_id)
     if not approval:
         raise HTTPException(404, "approval not found")
@@ -157,14 +161,16 @@ async def approve(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ApprovalOut:
+    user_id, user_open_id = user.id, user.open_id
     try:
         approval = await decide(
             db=db,
             approval_id=approval_id,
             decider_user_id=user_id,
+            decider_open_id=user_open_id,
             decision="approve",
             decision_note=payload.decision_note,
             permissions=permissions,
@@ -192,14 +198,16 @@ async def reject(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ApprovalOut:
+    user_id, user_open_id = user.id, user.open_id
     try:
         approval = await decide(
             db=db,
             approval_id=approval_id,
             decider_user_id=user_id,
+            decider_open_id=user_open_id,
             decision="reject",
             decision_note=payload.decision_note,
             permissions=permissions,

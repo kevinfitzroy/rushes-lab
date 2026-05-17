@@ -22,7 +22,8 @@ from app.db.session import get_db
 from app.db.tables import Asset, Folder, User
 from app.deps import (
     get_audit,
-    get_current_user_id,
+    CurrentUser,
+    get_current_user,
     get_feishu_client,
     get_permissions,
     get_presign,
@@ -83,16 +84,17 @@ async def share_asset(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ShareCreateOut:
+    user_id, user_open_id = user.id, user.open_id
     asset = await db.get(Asset, asset_id)
     if asset is None or asset.deleted_at is not None:
         raise HTTPException(404, "asset not found")
 
     # 分享者必须 can_download 该 asset
     allowed = await permissions.check(
-        user_id=str(user_id), relation="can_download",
+        user_subject=f"user:{user_open_id}", relation="can_download",
         object_type="asset", object_id=str(asset_id),
     )
     if not allowed:
@@ -138,16 +140,17 @@ async def share_folder(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ShareCreateOut:
+    user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
     if folder is None:
         raise HTTPException(404, "folder not found")
 
     object_type = "sensitive_folder" if folder.is_sensitive else "folder"
     allowed = await permissions.check(
-        user_id=str(user_id), relation="can_view",
+        user_subject=f"user:{user_open_id}", relation="can_view",
         object_type=object_type, object_id=str(folder_id),
     )
     if not allowed:
@@ -192,12 +195,13 @@ async def resolve(
     permissions: PermissionsService = Depends(get_permissions),
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
-    user_id: uuid.UUID = Depends(get_current_user_id),
+    user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ShareResolveOut:
+    user_id, user_open_id = user.id, user.open_id
     """解析短链 → 返 metadata + presigned download_url(asset)。
 
-    minimal 版:始终 require login(get_current_user_id 401 时前端 SPA 引导 OIDC)。
+    minimal 版:始终 require login(get_current_user 401 时前端 SPA 引导 OIDC)。
     """
     info = await resolve_share(db, token)
     if info is None:

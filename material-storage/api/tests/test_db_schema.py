@@ -15,6 +15,7 @@ def test_all_tables_in_metadata() -> None:
         "folders",
         "assets",
         "audit_events",
+        "approvals",
     }
 
 

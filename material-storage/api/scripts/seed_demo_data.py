@@ -1,14 +1,18 @@
-"""seed demo data — 创建演示用项目/folder(嵌套)/asset + 把飞书登录的真 user 升 org admin。
+"""seed demo data — iter a1(v4 model + 飞书 ID 直作 OpenFGA subject)。
 
 执行:
   docker exec ms-api python -m scripts.seed_demo_data
 
-行为:
-  1. 把 users 表里 open_id != dev_xxx 的真 user 全部 assign org admin
-  2. 创建若干 demo projects(覆盖典型业务场景)
-  3. **递归创建嵌套 folder 树**(深度可达 5 层,sensitive 子树整链 sensitive)
-  4. 每 folder 1-2 个 dummy 文件作 asset(用 boto3 直接 PUT)
-  5. idempotent(deterministic uuid5(parent, name) + on_conflict_do_nothing)
+行为(idempotent;重复跑无副作用):
+  1. upsert organization(含 feishu_tenant_key)+ 几个模拟 department / group
+  2. 升所有真飞书 user(open_id 不以 dev_ 开头)为 org admin
+  3. 创建 demo projects + 一级 folder(普通 + sensitive)+ 二级普通 folder
+  4. 写 OpenFGA tuples(bootstrap_project / bootstrap_folder / bootstrap_sensitive_folder)
+  5. 配 demo 默认权限:
+     - org member → project viewer
+     - group:剪辑师 → project downloader
+     - 创建者(Evan)→ project admin
+  6. 每 folder 1-2 个 dummy 文件(boto3 PUT),bootstrap_asset
 """
 from __future__ import annotations
 
@@ -25,21 +29,28 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.db.session import get_sessionmaker
 from app.db.tables import Asset, Folder, Organization, Project, User
-from app.services.permissions import create_permissions_service
+from app.services.permissions import create_permissions_service, fmt_subject
 from app.settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s — %(message)s")
 log = logging.getLogger("seed")
 
 ORG_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+# v4 model:OpenFGA subject 用飞书 ID;PoC 假数据用 stable 的 dev 字符串
+TENANT_KEY = "dev_tenant_001"
+DEPT_EDITING = "dep_editing"        # 部门:剪辑组
+DEPT_MOTION = "dep_motion_design"   # 子部门:动效设计(挂在 editing 下)
+GRP_EDITORS = "grp_editors"          # 用户组:剪辑师
 
-
+# Folder tree builder
 def F(name: str, children: list[dict] | None = None, *, sensitive: bool = False) -> dict:
-    """folder tree builder — children 必传 list,sensitive keyword-only。"""
     return {"name": name, "sensitive": sensitive, "children": children or []}
 
 
-# 5 个 demo projects(每个有深嵌套树)
+# v4 限制:sensitive folder 必须直挂 project;sensitive 下不能再嵌套 folder
+# 因此 demo 树:
+#   - 普通 folder 可以多层嵌套
+#   - sensitive folder 平铺在 project 根下,无子目录
 DEMO_PROJECTS: list[dict[str, Any]] = [
     {
         "id": uuid.UUID("11111111-1111-1111-1111-111111111101"),
@@ -52,24 +63,15 @@ DEMO_PROJECTS: list[dict[str, Any]] = [
             F("现场原片", [
                 F("无人机", [F("航拍 4K"), F("航拍 1080p")]),
                 F("全景", [F("室内"), F("室外")]),
-                F("特写", [
-                    F("新人", [F("交换戒指"), F("拥抱")]),
-                    F("宾客", [F("家属"), F("朋友团")]),
-                ]),
+                F("特写"),
                 F("花絮"),
             ]),
             F("成片", [
                 F("导演剪辑", [F("初剪"), F("精修"), F("终版")]),
-                F("社交媒体", [F("微博 1080x1080"), F("小红书"), F("抖音 9-16")]),
+                F("社交媒体", [F("微博"), F("小红书"), F("抖音")]),
             ]),
-            F("客户私密照 (VIP)", [
-                F("敬酒", sensitive=True),
-                F("婚房", sensitive=True),
-                F("家庭合影", [
-                    F("长辈", sensitive=True),
-                    F("孩童", sensitive=True),
-                ], sensitive=True),
-            ], sensitive=True),
+            F("客户私密照(VIP)", sensitive=True),
+            F("家庭合影(VIP)", sensitive=True),
         ],
     },
     {
@@ -80,29 +82,10 @@ DEMO_PROJECTS: list[dict[str, Any]] = [
         "bucket": "ms-dev",
         "visibility": "private",
         "folders": [
-            F("术前照", [
-                F("正面", sensitive=True),
-                F("侧面", [
-                    F("左 45 度", sensitive=True),
-                    F("右 45 度", sensitive=True),
-                ], sensitive=True),
-                F("特写", [
-                    F("眼周", sensitive=True),
-                    F("法令纹", sensitive=True),
-                    F("颈纹", sensitive=True),
-                ], sensitive=True),
-            ], sensitive=True),
-            F("术中记录", [
-                F("第 1 次", sensitive=True),
-                F("第 2 次", sensitive=True),
-                F("第 3 次", sensitive=True),
-                F("第 4 次", sensitive=True),
-            ], sensitive=True),
             F("术后跟拍", [F("一周"), F("一月"), F("三月")]),
-            F("成品推广素材", [
-                F("对比图"),
-                F("视频剪辑", [F("15s"), F("30s"), F("60s")]),
-            ]),
+            F("成品推广素材", [F("对比图"), F("视频剪辑")]),
+            F("术前照(隐私)", sensitive=True),
+            F("术中记录(隐私)", sensitive=True),
         ],
     },
     {
@@ -114,96 +97,51 @@ DEMO_PROJECTS: list[dict[str, Any]] = [
         "visibility": "public",
         "folders": [
             F("现场视频", [
-                F("主舞台", [F("致辞"), F("产品展示"), F("互动 Q&A")]),
-                F("分会场", [
-                    F("VIP 区"),
-                    F("媒体区"),
-                    F("展台", [F("展位 A"), F("展位 B"), F("展位 C")]),
-                ]),
+                F("主舞台"),
+                F("分会场", [F("VIP 区"), F("媒体区"), F("展台")]),
             ]),
             F("精选照片", [F("人物"), F("产品细节"), F("场景氛围")]),
-            F("内部花絮", [
-                F("彩排", sensitive=True),
-                F("后台", sensitive=True),
-            ], sensitive=True),
-        ],
-    },
-    {
-        "id": uuid.UUID("11111111-1111-1111-1111-111111111104"),
-        "code": "training-2026",
-        "name": "内部培训素材库",
-        "description": "案例教学,新员工 onboarding",
-        "bucket": "ms-dev",
-        "visibility": "public",
-        "folders": [
-            F("操作示范", [
-                F("基础", [F("无菌操作"), F("仪器开关")]),
-                F("进阶", [F("分层注射"), F("能量参数设置")]),
-                F("高级", [F("综合面诊"), F("方案设计")]),
-            ]),
-            F("典型案例", [
-                F("成功案例", [
-                    F("年龄分布", [F("25-35"), F("35-45"), F("45+")]),
-                ]),
-                F("失败教训", [F("流程问题"), F("沟通问题")]),
-            ]),
-        ],
-    },
-    {
-        "id": uuid.UUID("11111111-1111-1111-1111-111111111105"),
-        "code": "client-li-private",
-        "name": "李先生私域(机密)",
-        "description": "高净值客户全程私密咨询",
-        "bucket": "ms-dev",
-        "visibility": "stealth",
-        "folders": [
-            F("咨询录像", [
-                F("第 1 次", sensitive=True),
-                F("第 2 次", sensitive=True),
-                F("第 3 次", sensitive=True),
-            ], sensitive=True),
-            F("方案文档", [
-                F("初稿", sensitive=True),
-                F("终稿", [
-                    F("中文", sensitive=True),
-                    F("英文", sensitive=True),
-                ], sensitive=True),
-            ], sensitive=True),
+            F("内部花絮(机密)", sensitive=True),
         ],
     },
 ]
 
 
-def _folder_id(parent_uuid: uuid.UUID, name: str) -> uuid.UUID:
-    """deterministic uuid5(parent, name)— idempotent。"""
+def _folder_uuid(parent_uuid: uuid.UUID, name: str) -> uuid.UUID:
     return uuid.uuid5(parent_uuid, name)
 
 
-def _asset_id(folder_uuid: uuid.UUID, filename: str) -> uuid.UUID:
+def _asset_uuid(folder_uuid: uuid.UUID, filename: str) -> uuid.UUID:
     return uuid.uuid5(folder_uuid, filename)
 
 
-def _flatten(tree: list[dict], parent_uuid: uuid.UUID, parent_prefix: str,
-             parent_type: str, parent_is_sensitive: bool,
-             out: list[dict]) -> None:
-    """递归把 folder tree 展平为 list,带计算后的 minio_prefix + parent info。"""
+def _flatten(
+    tree: list[dict], parent_uuid: uuid.UUID, parent_prefix: str,
+    parent_kind: str,  # "project" | "folder"
+    out: list[dict],
+) -> None:
+    """递归把 folder tree 展平,标注 fga parent type。
+
+    v4 enforce:sensitive folder 直挂 project,且 sensitive 下不再嵌套(本 seed 保证)。
+    """
     for node in tree:
-        fid = _folder_id(parent_uuid, node["name"])
+        fid = _folder_uuid(parent_uuid, node["name"])
         prefix = parent_prefix + node["name"] + "/"
-        is_sensitive = node["sensitive"] or parent_is_sensitive
-        # 注:DB 字段 parent_folder_id 仅在 parent 是 folder/sensitive_folder 时有值
-        db_parent_folder_id = parent_uuid if parent_type in ("folder", "sensitive_folder") else None
+        is_sensitive = node["sensitive"]
+        # parent_folder_id:仅 parent 是 folder 时有值
+        db_parent_folder_id = parent_uuid if parent_kind == "folder" else None
         out.append({
             "id": fid,
             "name": node["name"],
             "is_sensitive": is_sensitive,
             "minio_prefix": prefix,
             "db_parent_folder_id": db_parent_folder_id,
-            "fga_parent_type": parent_type,
-            "fga_parent_id": parent_uuid,
+            "parent_kind": parent_kind,
+            "parent_uuid": parent_uuid,
         })
-        self_type = "sensitive_folder" if is_sensitive else "folder"
-        _flatten(node["children"], fid, prefix, self_type, is_sensitive, out)
+        # 普通 folder 才递归;sensitive 不再嵌套(v4 限制)
+        if not is_sensitive:
+            _flatten(node["children"], fid, prefix, "folder", out)
 
 
 async def main() -> None:
@@ -211,32 +149,64 @@ async def main() -> None:
     sm = get_sessionmaker()
     permissions = await create_permissions_service(settings)
 
-    # ─── 1) 真 user 升 org admin ───
+    # ─── 1) Organization upsert(含 feishu_tenant_key) ─────────────────────
     async with sm() as session:
-        # idempotent organization upsert(防 ORG_ID 未存在)
         await session.execute(
             insert(Organization)
-            .values(id=ORG_ID, name="dev-clinic", feishu_tenant_key=None)
-            .on_conflict_do_nothing(index_elements=["id"])
+            .values(id=ORG_ID, name="dev-clinic", feishu_tenant_key=TENANT_KEY)
+            .on_conflict_do_update(
+                index_elements=["id"],
+                set_={"feishu_tenant_key": TENANT_KEY, "name": "dev-clinic"},
+            )
         )
         await session.commit()
 
+        # 真飞书 user 列表
         res = await session.execute(
             select(User).where(~User.feishu_open_id.like("dev_%"))
         )
         real_users = list(res.scalars())
 
+    # ─── 2) 升真 user 为 org admin + 加入 org member + 加入 editing 部门 + editors group ─
+    if not real_users:
+        log.warning("没有真飞书 user — 跳过 org admin 升级。先访问 web 用飞书 OIDC 登录一次")
     for u in real_users:
         try:
-            await permissions.assign_user_to_organization(
-                user_id=str(u.id), organization_id=str(ORG_ID), role="admin")
-            log.info("升 admin:user=%s (%s)", u.name, str(u.id)[:8])
+            # org admin(管整个企业 — PoC 简化,只第一个 user 设 admin)
+            from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
+            await permissions._client.write(
+                ClientWriteRequest(writes=[
+                    ClientTuple(user=f"user:{u.feishu_open_id}", relation="admin",
+                                object=f"organization:{TENANT_KEY}"),
+                ])
+            )
         except Exception as e:
-            log.debug("admin tuple exists: %s", e)
+            log.debug("org admin tuple exists: %s", e)
+        # org member
+        await permissions.add_user_to_organization(
+            organization_tenant_key=TENANT_KEY, user_open_id=u.feishu_open_id
+        )
+        # editing 部门(模拟,真飞书事件同步在 a2 iter 接)
+        await permissions.add_user_to_department(
+            department_id=DEPT_EDITING, user_open_id=u.feishu_open_id
+        )
+        # editors group
+        await permissions.add_user_to_group(
+            group_id=GRP_EDITORS, user_open_id=u.feishu_open_id
+        )
+        log.info("升 admin + 部门/组:%s (%s)", u.name, u.feishu_open_id[:12])
 
-    # ─── 2) projects + 递归 folder 树 ─────────────────────────────────
-    total_folders = 0
-    total_assets = 0
+    # 模拟部门嵌套:motion_design 是 editing 子部门
+    try:
+        await permissions.add_department_as_subdept(
+            parent_department_id=DEPT_EDITING, child_department_id=DEPT_MOTION
+        )
+    except Exception:
+        pass
+
+    # ─── 3) projects + folder 树 ─────────────────────────────────────────────
+    total_folders = total_assets = 0
+    flat_by_proj: dict[uuid.UUID, list[dict]] = {}
 
     async with sm() as session:
         for proj in DEMO_PROJECTS:
@@ -249,12 +219,9 @@ async def main() -> None:
                 ).on_conflict_do_nothing(index_elements=["id"])
             )
 
-            # flatten tree
             flat: list[dict] = []
-            _flatten(proj["folders"], proj["id"], f"{proj['code']}/",
-                     "project", False, flat)
+            _flatten(proj["folders"], proj["id"], f"{proj['code']}/", "project", flat)
 
-            # DB insert all folders
             for f in flat:
                 await session.execute(
                     insert(Folder).values(
@@ -265,32 +232,87 @@ async def main() -> None:
                     ).on_conflict_do_nothing(index_elements=["id"])
                 )
             total_folders += len(flat)
-
-            proj["_flat"] = flat  # 留给后续 OpenFGA + asset
+            flat_by_proj[proj["id"]] = flat
         await session.commit()
-    log.info("DB rows inserted — %d folders total", total_folders)
+    log.info("DB:%d folders", total_folders)
 
-    # ─── 3) OpenFGA tuples(每 folder bootstrap parent 关系)──────────────
+    # ─── 4) OpenFGA bootstrap + 默认权限 ────────────────────────────────────
+    creator_open_id = real_users[0].feishu_open_id if real_users else None
+
     for proj in DEMO_PROJECTS:
-        try:
-            await permissions.bootstrap_project(
-                project_id=str(proj["id"]), organization_id=str(ORG_ID))
-        except Exception as e:
-            log.debug("project tuple exists: %s", e)
-
-        for f in proj["_flat"]:
+        # bootstrap_project:org parent + creator admin(creator 兜底:tenant 本身)
+        if creator_open_id:
             try:
-                await permissions.bootstrap_folder(
-                    folder_id=str(f["id"]),
-                    parent_type=f["fga_parent_type"],
-                    parent_id=str(f["fga_parent_id"]),
-                    is_sensitive=f["is_sensitive"],
+                await permissions.bootstrap_project(
+                    project_id=str(proj["id"]),
+                    organization_tenant_key=TENANT_KEY,
+                    creator_open_id=creator_open_id,
                 )
             except Exception as e:
-                log.debug("folder tuple exists: %s", e)
-    log.info("OpenFGA tuples written")
+                log.debug("bootstrap_project exists: %s", e)
 
-    # ─── 4) demo asset 文件(boto3 直传)— 每 folder 1 个,叶子加到 2 ──
+        # 默认权限:editing 部门(模拟"全员/默认查看")→ viewer
+        # 真生产中:用飞书根部门 id 表示全员;PoC 用 editing 部门即可
+        try:
+            await permissions.add_project_subject(
+                project_id=str(proj["id"]),
+                subject=fmt_subject("department", DEPT_EDITING),
+                role="viewer",
+            )
+        except Exception:
+            pass
+        # 部门 editing → uploader(剪辑组可以上传)
+        try:
+            await permissions.add_project_subject(
+                project_id=str(proj["id"]),
+                subject=fmt_subject("department", DEPT_EDITING),
+                role="uploader",
+            )
+        except Exception:
+            pass
+        # group editors → downloader
+        try:
+            await permissions.add_project_subject(
+                project_id=str(proj["id"]),
+                subject=fmt_subject("group", GRP_EDITORS),
+                role="downloader",
+            )
+        except Exception:
+            pass
+
+        # folder bootstrap
+        for f in flat_by_proj[proj["id"]]:
+            try:
+                if f["is_sensitive"]:
+                    # sensitive 必直挂 project(v4 enforce + flatten 已保证)
+                    await permissions.bootstrap_sensitive_folder(
+                        folder_id=str(f["id"]), project_id=str(proj["id"]),
+                    )
+                else:
+                    await permissions.bootstrap_folder(
+                        folder_id=str(f["id"]),
+                        parent_type=f["parent_kind"],  # type: ignore[arg-type]
+                        parent_id=str(f["parent_uuid"]),
+                    )
+            except Exception as e:
+                log.debug("folder tuple exists: %s", e)
+
+        # 给创建者 sensitive folder 邀请 viewer(否则连看都看不见)
+        if creator_open_id:
+            for f in flat_by_proj[proj["id"]]:
+                if f["is_sensitive"]:
+                    try:
+                        await permissions.invite_to_sensitive_folder(
+                            sensitive_folder_id=str(f["id"]),
+                            subject=f"user:{creator_open_id}",
+                            level="downloader",
+                        )
+                    except Exception:
+                        pass
+
+    log.info("OpenFGA tuples 写入完成")
+
+    # ─── 5) demo asset 文件 ─────────────────────────────────────────────────
     s3 = boto3.client(
         "s3",
         endpoint_url=settings.minio_endpoint_internal,
@@ -303,22 +325,22 @@ async def main() -> None:
     except ClientError:
         s3.create_bucket(Bucket="ms-dev")
 
-    # 区分叶子:在 flat 内 id 没人作 parent 的就是叶子
     async with sm() as session:
         for proj in DEMO_PROJECTS:
-            flat = proj["_flat"]
-            parent_ids = {f["fga_parent_id"] for f in flat if f["fga_parent_type"] in ("folder", "sensitive_folder")}
+            flat = flat_by_proj[proj["id"]]
+            parent_ids = {
+                f["parent_uuid"] for f in flat if f["parent_kind"] == "folder"
+            }
             for f in flat:
                 is_leaf = f["id"] not in parent_ids
                 count = 2 if is_leaf else 1
                 for i in range(1, count + 1):
                     filename = f"demo-{i:02d}.txt"
                     key = f["minio_prefix"] + filename
-                    body = (f"demo {i}/{count} for {proj['code']}/{f['name']}\n"
-                            f"--- 演示文件,可下载验证 ---\n").encode()
+                    body = (f"demo {i}/{count} for {proj['code']}/{f['name']}\n").encode()
                     s3.put_object(Bucket="ms-dev", Key=key, Body=body,
                                   ContentType="text/plain")
-                    aid = _asset_id(f["id"], filename)
+                    aid = _asset_uuid(f["id"], filename)
                     await session.execute(
                         insert(Asset).values(
                             id=aid, folder_id=f["id"], filename=filename,
@@ -330,14 +352,14 @@ async def main() -> None:
                     try:
                         await permissions.bootstrap_asset(
                             asset_id=str(aid),
-                            parent_folder_id=str(f["id"]),
-                            parent_is_sensitive=f["is_sensitive"],
+                            parent_type="sensitive_folder" if f["is_sensitive"] else "folder",
+                            parent_id=str(f["id"]),
                         )
                     except Exception:
                         pass
                     total_assets += 1
         await session.commit()
-    log.info("uploaded + indexed %d demo assets", total_assets)
+    log.info("assets:%d 上传 + 索引", total_assets)
 
     await permissions.close()
     log.info("DONE — %d projects · %d folders · %d assets",

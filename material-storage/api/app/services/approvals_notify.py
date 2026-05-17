@@ -231,26 +231,18 @@ async def _admin_open_ids_for_target(
     permissions: PermissionsService,
     approval: ApprovalRequest,
 ) -> list[str]:
-    """找 target 的 admin user_ids → 反查 feishu_open_id 列表(去 None)。"""
+    """找 target 的 admin → 飞书 open_id 列表(去 inactive / 无 open_id 的)。"""
     object_type = approval.target_type
     object_id = str(approval.target_id)
-    admin_relation = "can_delete" if object_type == "asset" else "can_admin"
-
-    user_ids = await permissions.list_users_with_relation(
-        object_type=object_type, object_id=object_id, relation=admin_relation
+    # v4 model:OpenFGA list_users 返 user:<open_id> 列表,可直接用作 open_id
+    open_ids = await permissions.list_users_with_relation(
+        object_type=object_type, object_id=object_id, relation="can_admin"
     )
-    if not user_ids:
+    if not open_ids:
         return []
-    uuids: list[uuid.UUID] = []
-    for s in user_ids:
-        try:
-            uuids.append(uuid.UUID(s))
-        except ValueError:
-            continue
-    if not uuids:
-        return []
+    # 仅返还 db 中 is_active=True 的 user 对应 open_id(避免推给已离职)
     stmt = select(User.feishu_open_id).where(
-        User.id.in_(uuids), User.is_active.is_(True), User.feishu_open_id.is_not(None)
+        User.feishu_open_id.in_(open_ids), User.is_active.is_(True),
     )
     res = await db.execute(stmt)
     return [row[0] for row in res.all() if row[0]]
@@ -348,6 +340,7 @@ async def handle_approval_decision(
                 db=db,
                 approval_id=approval_id,
                 decider_user_id=operator_user.id,
+                decider_open_id=op_open_id,
                 decision=decision,  # type: ignore[arg-type]
                 decision_note="(via 飞书 IM 卡片)",
                 permissions=permissions,
