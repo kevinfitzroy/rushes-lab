@@ -1,7 +1,7 @@
 # material-storage — 工作 ROADMAP / 待办
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
-> 最后更新:2026-05-17(回写 #74-#75)
+> 最后更新:2026-05-17(回写 #76-#78)
 >
 > 相关文档:
 > - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
@@ -41,6 +41,9 @@
 | #73 | 15355e7 | **SPA 刷新无尾斜杠 URL 跳错误页修复** — `app/main.py` 加 `@app.get("/static/web")` 直接返 index.html(绕开 StaticFiles 的目录 307 → 内部路径 + http 降级);Dockerfile uvicorn 加 `--proxy-headers --forwarded-allow-ips '*'` 防御性兜底其他 redirect |
 | #74 | ff2e99d | **ROADMAP 回写 #72-#73** — 加 DEFAULT_ORGANIZATION_ID 必填 + 307 必须指 public 路径两条坑 |
 | #75 | 47034a9 | **UserMenu open_id 完整显示 + 复制** — 之前只显前 16 位 + 省略号,改成 ellipsis 撑满 + 末尾 Copy icon(navigator.clipboard + Check 反馈 + toast);maxWidth 360 防超长撑爆;stopPropagation 防点 copy 关闭 dropdown |
+| #76 | e12f55e | **ROADMAP 回写 #74-#75** |
+| #77 | 62aff65 | **系统 admin 全权限直通** — 之前 assets.py(5 处)/ share.py(2 处)仍走纯 OpenFGA check,系统 admin 没显式 grant 时下载/上传/分享会 403。新增 `Depends(get_is_system_admin)` → bool 抽 default-org → is_org_admin 逻辑;projects/folders 三处内联替换 + assets/share 7 处加直通 `is_system_admin or check(...)`;audit 不变(系统 admin 行为照记) |
+| #78 | d2cc7d4 | **项目卡空 admin 显示"未指派" + ops 强调多 admin** — 之前 admins 为空时静默隐藏整段 Admin chip;改成 label 始终显示,空时渲染斜体"未指派"+ tooltip 指引指派路径。ops-manual §1 加"关键事实"块:数量无硬上限(重复跑 `grant_org_admin` 加多个)+ 系统 admin 所有 endpoint 全权限(PR #77 后端覆盖)+ audit 照记 |
 
 ---
 
