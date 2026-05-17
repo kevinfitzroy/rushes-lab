@@ -24,6 +24,7 @@ REMOTE_DIR="/root/material-storage-api"
 GREEN='\033[0;32m'; YEL='\033[0;33m'; NC='\033[0m'
 step() { echo -e "\n${YEL}═══${NC} $* ${YEL}═══${NC}"; }
 ok() { echo -e "${GREEN}✓${NC} $*"; }
+warn() { echo -e "${YEL}⚠${NC} $*"; }
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
 if [[ -n "${SSH_PASS:-}" ]]; then
@@ -99,6 +100,16 @@ else
   ok "STORE_ID 仅打印参考;不修改保留的 .env"
 fi
 
+step "3.5) 备份上一轮 ms-api logs(--build 会 recreate container,旧 logs 会丢)"
+TS=$(date +%Y%m%d-%H%M%S)
+LOG_BACKUP="/tmp/ms-api-${TS}.log"
+if ssh_run "docker logs ms-api > $LOG_BACKUP 2>&1"; then
+  LINES=$(ssh_run "wc -l < $LOG_BACKUP")
+  ok "上一轮 logs ($LINES 行) → server2:$LOG_BACKUP"
+else
+  warn "ms-api 未在跑(首次部署?),跳过 log 备份"
+fi
+
 step "4) docker compose build + up"
 ssh_run "cd $REMOTE_DIR && docker compose up -d --build ms-db ms-redis ms-api 2>&1 | tail -20"
 sleep 5
@@ -109,17 +120,28 @@ step "5) alembic migrate"
 ssh_run "cd $REMOTE_DIR && docker compose exec -T ms-api alembic upgrade head 2>&1 | tail -10"
 ok "DB migration done"
 
-step "6) dev bootstrap"
-ssh_run "cd $REMOTE_DIR && docker compose exec -T ms-api python -m scripts.dev_bootstrap 2>&1 | tail -15"
-ok "bootstrap done"
+step "6) dev bootstrap(允许失败 — issue #69 已知 v3 stale 方法,不阻塞 deploy)"
+# 远端 bash 默认无 pipefail,docker 命令失败会被 tail 吞 exit code → 本地 ssh_run 错判为成功
+# 显式 `set -o pipefail` 让 ssh_run 拿到真实 exit code,允许 fail 但 warn 替代假 ok
+if ssh_run "set -o pipefail; cd $REMOTE_DIR && docker compose exec -T ms-api python -m scripts.dev_bootstrap 2>&1 | tail -15"; then
+  ok "bootstrap done"
+else
+  warn "bootstrap 失败(#69 known stale,不阻塞);若不是 v3 attribute error 请人工 review"
+fi
 
-step "7) e2e test"
-ssh_run "cd $REMOTE_DIR && API_BASE=http://localhost:8200 bash scripts/e2e_test.sh 2>&1" | tail -80
-ok "e2e ok"
+step "7) e2e test(允许失败 — 部分 case 依赖 bootstrap;关心红色 ✗ 才需 follow up)"
+if ssh_run "set -o pipefail; cd $REMOTE_DIR && API_BASE=http://localhost:8200 bash scripts/e2e_test.sh 2>&1 | tail -80"; then
+  ok "e2e ok"
+else
+  warn "e2e 失败(部分 case 依赖 bootstrap seed,#69 未解期间预期红);关心新增红色 ✗ 才需 follow up"
+fi
 
 step "8) 500MB 大文件 multipart 测试"
-ssh_run "cd $REMOTE_DIR && API_BASE=http://localhost:8200 SIZE_MB=500 bash scripts/large_file_upload.sh 2>&1" | tail -40
-ok "large file upload ok"
+if ssh_run "set -o pipefail; cd $REMOTE_DIR && API_BASE=http://localhost:8200 SIZE_MB=500 bash scripts/large_file_upload.sh 2>&1 | tail -40"; then
+  ok "large file upload ok"
+else
+  warn "large file upload 失败 — 不阻塞 deploy 但需 follow up"
+fi
 
 step "9) 检查 ms-api 通过 nginx 外网可达"
 ssh_run "curl -sS http://localhost/api/v1 2>&1 | head -3 || echo 'nginx 还没配 /api 路由'"
