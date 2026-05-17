@@ -113,6 +113,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="web dist not deployed")
         return FileResponse(idx)
 
+    # 无尾斜杠 root(/static/web)— StaticFiles 默认会 307 到 /static/web/,
+    # 走到 nginx 时 Location 把 /ms-static/ 漏丢 + http 降级,导致 SPA basename 错位崩。
+    # 直接返 index.html,浏览器 URL 保持在 /ms-static/web,react-router basename 仍匹配。
+    @app.get("/static/web", include_in_schema=False)
+    async def spa_root_no_slash():
+        idx = web_dir / "index.html"
+        if not idx.exists():
+            raise HTTPException(status_code=404, detail="web dist not deployed")
+        return FileResponse(idx)
+
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 

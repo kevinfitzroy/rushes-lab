@@ -21,4 +21,6 @@ COPY alembic.ini /app/alembic.ini
 COPY scripts /app/scripts
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers + --forwarded-allow-ips '*':信任 nginx 注入的 X-Forwarded-Proto,
+# 否则 StaticFiles 的 trailing-slash 307 会用 http:// 重定向,公网 https 用户跳到 http 链
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
