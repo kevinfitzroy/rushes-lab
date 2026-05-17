@@ -25,6 +25,7 @@ from app.deps import (
     CurrentUser,
     get_current_user,
     get_feishu_client,
+    get_is_system_admin,
     get_permissions,
     get_presign,
     get_request_context,
@@ -85,6 +86,7 @@ async def share_asset(
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> ShareCreateOut:
     user_id, user_open_id = user.id, user.open_id
@@ -92,8 +94,8 @@ async def share_asset(
     if asset is None or asset.deleted_at is not None:
         raise HTTPException(404, "asset not found")
 
-    # 分享者必须 can_download 该 asset
-    allowed = await permissions.check(
+    # 分享者必须 can_download 该 asset;系统 admin 直通
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_download",
         object_type="asset", object_id=str(asset_id),
     )
@@ -141,6 +143,7 @@ async def share_folder(
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> ShareCreateOut:
     user_id, user_open_id = user.id, user.open_id
@@ -149,7 +152,8 @@ async def share_folder(
         raise HTTPException(404, "folder not found")
 
     object_type = "sensitive_folder" if folder.is_sensitive else "folder"
-    allowed = await permissions.check(
+    # 系统 admin 直通
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_view",
         object_type=object_type, object_id=str(folder_id),
     )

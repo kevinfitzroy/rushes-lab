@@ -150,3 +150,28 @@ async def require_system_admin(
     ):
         raise HTTPException(403, "system admin permission required(只有系统管理员可执行此操作)")
     return user
+
+
+async def get_is_system_admin(
+    request: Request,
+    user: CurrentUser = _Depends(get_current_user),
+) -> bool:
+    """返当前 user 是否系统 admin(不抛 403,bool)。
+
+    给业务 endpoint 用作 *直通* 判定:`if is_system_admin or await perms.check(...)`。
+    系统 admin 在 *所有* project / folder / asset 上都视为有 admin/upload/download/view 权限,
+    避免在每个 router 里复制一份 default-org → is_org_admin → try/except 逻辑。
+    """
+    perms: PermissionsService = request.app.state.permissions
+    from app.services.contact_sync import get_default_organization
+    async with get_sessionmaker()() as db:
+        org = await get_default_organization(db)
+    if not org:
+        return False
+    _, tenant_key = org
+    try:
+        return await perms.is_org_admin(
+            user_open_id=user.open_id, organization_tenant_key=tenant_key,
+        )
+    except Exception:  # noqa: BLE001
+        return False
