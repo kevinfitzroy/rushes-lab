@@ -1,25 +1,34 @@
 #!/usr/bin/env bash
 # 一键部署 ms-api 到 server2 (8.156.34.238) + bootstrap + e2e + 大文件测试。
 #
+# 前提:本机 ssh key 已上到 server2(root@HOST 免密)
+#
 # 用法(必须在 material-storage/api 目录下):
-#   SSH_PASS='12qwaszxA@@@666!!!' bash scripts/deploy_server2.sh
+#   bash scripts/deploy_server2.sh
 # 或:
-#   ! cd /Users/foxer/claude/rushes-lab-workspace/rushes-lab/material-storage/api && SSH_PASS='12qwaszxA@@@666!!!' bash scripts/deploy_server2.sh
+#   ! cd /Users/foxer/claude/rushes-lab-workspace/rushes-lab/material-storage/api && bash scripts/deploy_server2.sh
+#
+# 如果只想兜底用密码,设 SSH_PASS 即走 sshpass 路径(需要 brew install sshpass)。
 set -euo pipefail
 
 HOST="${HOST:-8.156.34.238}"
-USER="${USER:-root}"
-PASS="${SSH_PASS:?need SSH_PASS env}"
+SSH_USER="${SSH_USER:-root}"
 REMOTE_DIR="/root/material-storage-api"
 
 GREEN='\033[0;32m'; YEL='\033[0;33m'; NC='\033[0m'
 step() { echo -e "\n${YEL}═══${NC} $* ${YEL}═══${NC}"; }
 ok() { echo -e "${GREEN}✓${NC} $*"; }
 
-export SSHPASS="$PASS"
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password -o PubkeyAuthentication=no"
-ssh_run() { sshpass -e ssh $SSH_OPTS "$USER@$HOST" "$@"; }
-rsync_to() { sshpass -e rsync -az -e "ssh $SSH_OPTS" "$@"; }
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
+if [[ -n "${SSH_PASS:-}" ]]; then
+  export SSHPASS="$SSH_PASS"
+  SSH_OPTS="$SSH_OPTS -o PreferredAuthentications=password -o PubkeyAuthentication=no"
+  ssh_run() { sshpass -e ssh $SSH_OPTS "$SSH_USER@$HOST" "$@"; }
+  rsync_to() { sshpass -e rsync -az -e "ssh $SSH_OPTS" "$@"; }
+else
+  ssh_run() { ssh $SSH_OPTS "$SSH_USER@$HOST" "$@"; }
+  rsync_to() { rsync -az -e "ssh $SSH_OPTS" "$@"; }
+fi
 
 step "0) 检查本地环境(在 material-storage/api 目录运行)"
 [[ -f Dockerfile ]] || { echo "ERROR: 必须在 material-storage/api/ 下跑"; exit 1; }
@@ -29,7 +38,7 @@ step "1) rsync 源码到 server2:$REMOTE_DIR"
 ssh_run "mkdir -p $REMOTE_DIR"
 rsync_to --exclude='__pycache__' --exclude='.pytest_cache' --exclude='.venv' \
   --exclude='.env' --exclude='tests/__pycache__' \
-  ./ "$USER@$HOST:$REMOTE_DIR/"
+  ./ "$SSH_USER@$HOST:$REMOTE_DIR/"
 ok "代码已同步"
 
 step "2) 生成 server2 上的 .env"
@@ -54,6 +63,8 @@ FEISHU_APP_ID=cli_aa8c58fae5391be7
 FEISHU_APP_SECRET=2T1QWnYdm2ayq0t4ByANNcIXEUFHwFMw
 FEISHU_REDIRECT_URI=https://rusheslab.taoxiplan.com/api/v1/auth/callback
 FEISHU_VERIFICATION_TOKEN=03HkZIjvHJyRmaV922Rkac0wJ7zedQuE
+
+WEB_APP_BASE_URL=https://rusheslab.taoxiplan.com/ms-static/web/
 
 SESSION_JWT_SECRET=dev-secret-do-not-use-in-prod-replace-with-openssl-rand-hex-32
 SESSION_COOKIE_SECURE=false
