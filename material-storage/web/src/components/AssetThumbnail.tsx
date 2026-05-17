@@ -45,7 +45,6 @@ export function AssetThumbnail({ asset, size = 32 }: Props) {
           src={data.url}
           alt=""
           width={size} height={size}
-          loading="lazy"
           onError={() => setImgError(true)}
           style={{
             width: '100%', height: '100%',
