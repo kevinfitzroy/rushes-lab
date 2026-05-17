@@ -83,6 +83,18 @@ docker exec ms-db psql -U msuser -d material_storage \
 
 ## 2. 部署
 
+### 2.0 推荐:一键 deploy 脚本(2026-05-18 起)
+
+```bash
+cd material-storage/api && bash scripts/deploy_server2.sh
+```
+
+含:rsync + docker compose up -d --build(含 ms-worker PR #103)+ alembic migrate + dev_bootstrap(⚠ #69 stale 已知 fail-soft)+ **demo-onboarding seed (step 6.5, PR #97)** + e2e + large file + **forensic log 备份 (step 3.5, PR #95)**。
+
+step 6/7/8 现在用 set -o pipefail + warn 替代假 ok(PR #95)— 看到 ⚠ 不阻塞 deploy,看到红色 ✗ 才需 follow up。
+
+下面 §2.1-2.3 是手动分步,需要 surgical 操作时用。
+
 ### 2.1 后端代码更新(改 .py)
 
 ```bash
@@ -94,6 +106,7 @@ ssh root@8.156.34.238 'docker restart ms-api ms-worker'
 ```
 
 `docker restart` 即可(不用 `--force-recreate`),因为 `.py` 通过 bind mount 实时生效。
+**ms-worker 跟 ms-api 都要 restart**;一键脚本 step 4 已自动包含。
 
 ### 2.2 .env 改动
 
@@ -170,7 +183,16 @@ docker exec ms-api python -m scripts.sync_feishu_contacts
 
 ### 4.1 新上传自动生成
 
-`POST /assets/uploads/{id}/complete` 完成后,如果 `content_type=image/*`,自动 enqueue arq job → ms-worker → Pillow thumbnail 1024px → 存 `thumbnails/{aid}.jpg`。
+`POST /assets/uploads/{id}/complete` 完成后按 content_type 分流 enqueue arq job:
+
+| content_type | worker function | 库 |
+|---|---|---|
+| `image/*` | `generate_thumbnail`(PR #57) | Pillow 1024px → JPEG q=80 |
+| `video/*` | `generate_video_thumbnail`(PR #102 / issue #101) | ffmpeg `-ss 1` 抽帧 → 1024px JPEG q=3 |
+
+两者都存 `thumbnails/{aid}.jpg` + 写 `asset.tags.thumbnail_key`,前端 AssetThumbnail 零差异显示。
+
+**视频缩略图 50MB cap pilot**:size > 50MB → `status=skip_too_large` 不进 ffmpeg(ROADMAP §63 风险段)。fail-soft:ffmpeg 超时 30s / 抽帧失败 → `asset.tags.thumbnail_failed='...'`,asset 仍可用。
 
 ### 4.2 backfill 老 image asset
 
@@ -180,18 +202,20 @@ docker exec ms-api python -m scripts.backfill_thumbnails
 
 行为:扫所有 `content_type=image/*` 且 `tags` 无 `thumbnail_key` 的 asset → enqueue。
 
+> 视频 backfill 脚本 `scripts/backfill_video_thumbnails.py` 仍 pending(issue #101 checklist 剩条);需要时按图片版本 clone。
+
 ### 4.3 worker 日志
 
 ```bash
 docker compose -f /root/material-storage-api/docker-compose.yml logs --tail=50 ms-worker
 ```
 
+启动日志期望:`Starting worker for 4 functions: generate_thumbnail, generate_video_thumbnail, mark_expired_approvals, cron:mark_expired_approvals`(PR #102 起;若看到 `transcode_proxy` 说明跑的是旧 process,需 `docker compose restart ms-worker`)
 成功:`0.21s ← <jobid>:generate_thumbnail ● {'status': 'ok', ...}`
 失败:`failed asset=<id> err=...`(具体 traceback 在更早行)
 
 ### 4.4 cron 定时任务
 
-ms-worker 启动日志应显 `4 functions: ..., cron:mark_expired_approvals`。
 每 5 分钟自动跑一次 `mark_expired_approvals`(把过期的 approved 申请 status → expired)。
 
 ---
@@ -243,6 +267,18 @@ ssh root@8.156.34.238 'docker restart poc-nginx'
 curl -s -o /dev/null -w "%{http_code}\n" https://rusheslab.taoxiplan.com/healthz
 # 应返 200
 ```
+
+### 6.1.5 forensic — 拿 ms-api 上一轮日志(PR #95 起)
+
+`docker compose up -d --build` recreate ms-api 会丢旧 logs(`docker logs ms-api` 只剩本次启动后的几行)。deploy 脚本 step 3.5 自动备份到 server2 `/tmp/ms-api-{ts}.log`:
+
+```bash
+ssh root@8.156.34.238 'ls -lt /tmp/ms-api-*.log | head -5'
+# 选要看的 timestamp
+ssh root@8.156.34.238 'tail -200 /tmp/ms-api-20260518-160000.log | grep -i error'
+```
+
+`/tmp` 重启会丢,但 deploy 间隔够短,排查 bug 时基本能拿到上一轮窗口。
 
 ### 6.2 ms-api 启动失败 ImportError
 
