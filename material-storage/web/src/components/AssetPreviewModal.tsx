@@ -15,7 +15,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Kind = 'markdown' | 'text' | 'image' | 'unsupported';
+type Kind = 'markdown' | 'text' | 'image' | 'pdf' | 'unsupported';
 
 const IMAGE_EXT = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif', '.ico',
@@ -26,6 +26,7 @@ function detectKind(a: Asset): Kind {
   const ct = (a.content_type || '').toLowerCase();
   if (name.endsWith('.md') || ct.startsWith('text/markdown')) return 'markdown';
   if (name.endsWith('.txt') || ct === 'text/plain') return 'text';
+  if (name.endsWith('.pdf') || ct === 'application/pdf') return 'pdf';
   if (ct.startsWith('image/')) return 'image';
   const dot = name.lastIndexOf('.');
   if (dot >= 0 && IMAGE_EXT.has(name.slice(dot))) return 'image';
@@ -54,8 +55,8 @@ export function AssetPreviewModal({ asset, open, onClose }: Props) {
         const { data } = await http.post<{ url: string }>(
           `/api/v1/assets/${asset.id}/download-link`, {},
         );
-        // image 不 fetch body,直接 <img src> 让浏览器加载;text/md 拉文本
-        if (kind === 'image') {
+        // image / pdf 不 fetch body,直接给浏览器原生 viewer;text/md 拉文本
+        if (kind === 'image' || kind === 'pdf') {
           if (!cancelled) setContent(data.url);
         } else {
           const r = await fetch(data.url);
@@ -126,6 +127,18 @@ export function AssetPreviewModal({ asset, open, onClose }: Props) {
             objectFit: 'contain', display: 'block',
           }} />
         </div>
+      )}
+      {!loading && kind === 'pdf' && content !== null && (
+        <iframe
+          src={content}
+          title={asset.filename}
+          style={{
+            width: '100%', height: '68vh',
+            border: '1px solid var(--ms-hairline)',
+            borderRadius: 'var(--ms-radius-sm)',
+            background: 'var(--ms-hairline-soft)',
+          }}
+        />
       )}
     </Modal>
   );
