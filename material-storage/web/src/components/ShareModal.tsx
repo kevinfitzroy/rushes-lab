@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { useShareAsset, useShareFolder } from '../api/hooks';
 import { errorMessage } from '../api/client';
 import type { Me, ShareCreateOut } from '../api/types';
+import { UserPicker } from './UserPicker';
 
 interface Props {
   open: boolean;
@@ -46,8 +47,7 @@ export function ShareModal({ open, onClose, target, me }: Props) {
   const submit = async () => {
     try {
       const v = await form.validateFields();
-      const open_ids = (v.open_ids as string || '')
-        .split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+      const open_ids = (v.open_ids as string[] | undefined) ?? [];
       const body = {
         receive_open_ids: open_ids,
         message: v.message?.trim() || undefined,
@@ -120,14 +120,18 @@ export function ShareModal({ open, onClose, target, me }: Props) {
           </Form.Item>
           <Form.Item
             name="open_ids"
-            label="飞书 open_id 列表"
-            extra="每行一个,留空 = 只生成链接不推卡。临时简版,D 系列会出 UserPicker。"
+            label="接收人(飞书账号)"
+            extra="搜姓名 / 邮箱选;留空 = 只生成链接不推 IM"
           >
-            <Input.TextArea rows={3} placeholder={`例:\nou_1566f9b88259da110781786c9fdd8804\n${me.open_id}`} />
+            <UserPicker
+              preset={[{ id: me.id, open_id: me.open_id, union_id: me.union_id,
+                         name: me.name + '(自己)', email: me.email }]}
+              placeholder="选一个或多个接收人…"
+            />
           </Form.Item>
           <Form.Item>
-            <Button size="small" onClick={() => form.setFieldValue('open_ids', me.open_id)}>
-              只发给我自己 (测试用)
+            <Button size="small" onClick={() => form.setFieldValue('open_ids', [me.open_id])}>
+              只发给我自己
             </Button>
           </Form.Item>
           <Form.Item name="message" label="留言(可选)">
