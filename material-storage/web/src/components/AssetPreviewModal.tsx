@@ -15,13 +15,20 @@ interface Props {
   onClose: () => void;
 }
 
-type Kind = 'markdown' | 'text' | 'unsupported';
+type Kind = 'markdown' | 'text' | 'image' | 'unsupported';
+
+const IMAGE_EXT = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif', '.ico',
+]);
 
 function detectKind(a: Asset): Kind {
   const name = a.filename.toLowerCase();
   const ct = (a.content_type || '').toLowerCase();
   if (name.endsWith('.md') || ct.startsWith('text/markdown')) return 'markdown';
   if (name.endsWith('.txt') || ct === 'text/plain') return 'text';
+  if (ct.startsWith('image/')) return 'image';
+  const dot = name.lastIndexOf('.');
+  if (dot >= 0 && IMAGE_EXT.has(name.slice(dot))) return 'image';
   // text/* 兜底也按 text 处理(csv/log/json 看着也能用)
   if (ct.startsWith('text/')) return 'text';
   return 'unsupported';
@@ -47,11 +54,15 @@ export function AssetPreviewModal({ asset, open, onClose }: Props) {
         const { data } = await http.post<{ url: string }>(
           `/api/v1/assets/${asset.id}/download-link`, {},
         );
-        // 直接 fetch presigned URL(跨 origin 但 GET 不带 cookie 没问题)
-        const r = await fetch(data.url);
-        if (!r.ok) throw new Error(`fetch ${r.status}`);
-        const text = await r.text();
-        if (!cancelled) setContent(text);
+        // image 不 fetch body,直接 <img src> 让浏览器加载;text/md 拉文本
+        if (kind === 'image') {
+          if (!cancelled) setContent(data.url);
+        } else {
+          const r = await fetch(data.url);
+          if (!r.ok) throw new Error(`fetch ${r.status}`);
+          const text = await r.text();
+          if (!cancelled) setContent(text);
+        }
       } catch (e) {
         if (!cancelled) message.error(errorMessage(e, '预览加载失败'));
       } finally {
@@ -101,6 +112,19 @@ export function AssetPreviewModal({ asset, open, onClose }: Props) {
           fontSize: 14, lineHeight: 1.75, color: 'var(--ms-ink)',
         }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        </div>
+      )}
+      {!loading && kind === 'image' && content !== null && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--ms-hairline-soft)',
+          borderRadius: 'var(--ms-radius-sm)',
+          minHeight: 200,
+        }}>
+          <img src={content} alt={asset.filename} style={{
+            maxWidth: '100%', maxHeight: '65vh',
+            objectFit: 'contain', display: 'block',
+          }} />
         </div>
       )}
     </Modal>
