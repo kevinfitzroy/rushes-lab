@@ -113,13 +113,23 @@ async def create_folder(
         await db.commit()
     except IntegrityError as e:
         await db.rollback()
-        raise HTTPException(400, f"folder prefix conflict: {e.orig}") from e
+        if "uq_folder_project_prefix" in str(e.orig):
+            raise HTTPException(409, "该项目下已存在同名文件夹") from e
+        raise HTTPException(400, "folder 创建失败,可能存在路径冲突") from e
 
     # 3) bootstrap OpenFGA parent tuple
     if payload.is_sensitive:
         # sensitive folder 必直挂 project(已 enforce)
         await permissions.bootstrap_sensitive_folder(
             folder_id=str(folder.id), project_id=str(payload.project_id),
+        )
+        # 自动给创建者永久 invited_downloader(隐含 can_view + can_download + can_upload)
+        # — sensitive model 不让 admin 隐式 can_view,创建者若无显式 invite 会看不到自建 folder(#87)
+        await permissions.invite_to_sensitive_folder(
+            sensitive_folder_id=str(folder.id),
+            subject=f"user:{user_open_id}",
+            level="downloader",
+            duration_seconds=None,
         )
     else:
         # 普通 folder:可 nested,parent 是 project 或 folder
