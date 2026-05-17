@@ -236,6 +236,52 @@ async def test_share_invalid_token_404(client: AsyncClient) -> None:
     assert r.status_code == 404
 
 
+# ─── D iter4:project members CRUD ───────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_project_members_list(client: AsyncClient) -> None:
+    """Evan(创建者 admin)能列 wedding 的成员。"""
+    r = await client.get(f"/api/v1/projects/{PROJECT_WEDDING}/members", headers=_h(EVAN_ID))
+    assert r.status_code == 200, r.text
+    items = r.json()
+    assert any(m["kind"] == "user" and m["subject_id"].startswith("ou_") and "admin" in m["roles"]
+               for m in items), f"应至少有一个 user admin: {items}"
+
+
+@pytest.mark.asyncio
+async def test_project_members_list_denied_for_non_admin(client: AsyncClient) -> None:
+    """outsider 不是 admin 不能列。"""
+    r = await client.get(f"/api/v1/projects/{PROJECT_WEDDING}/members", headers=_h(OUTSIDER_ID))
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_project_member_add_remove_cycle(client: AsyncClient) -> None:
+    """Evan 加 outsider 为 viewer → 再撤 → 验列表回退。"""
+    add = await client.post(
+        f"/api/v1/projects/{PROJECT_EVENT}/members",
+        json={"user_open_id": "ou_fake_outsider", "role": "viewer"},
+        headers=_h(EVAN_ID),
+    )
+    assert add.status_code == 204, add.text
+
+    r1 = await client.get(f"/api/v1/projects/{PROJECT_EVENT}/members", headers=_h(EVAN_ID))
+    assert r1.status_code == 200
+    members1 = r1.json()
+    assert any(m["subject"] == "user:ou_fake_outsider" and "viewer" in m["roles"]
+               for m in members1)
+
+    rev = await client.delete(
+        f"/api/v1/projects/{PROJECT_EVENT}/members",
+        params={"subject": "user:ou_fake_outsider", "role": "viewer"},
+        headers=_h(EVAN_ID),
+    )
+    assert rev.status_code == 204
+
+    r2 = await client.get(f"/api/v1/projects/{PROJECT_EVENT}/members", headers=_h(EVAN_ID))
+    members2 = r2.json()
+    assert not any(m["subject"] == "user:ou_fake_outsider" for m in members2)
+
+
 # ─── a2:GET /users 搜索 ─────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_users_list_basic(client: AsyncClient) -> None:
