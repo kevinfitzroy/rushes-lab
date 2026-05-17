@@ -1,6 +1,7 @@
 """FastAPI Dependency Injection — iter a1 加 CurrentUser(同时给 SQL UUID 和飞书 open_id)。"""
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -15,6 +16,8 @@ from app.services.feishu_client import FeishuClient
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
 from app.settings import Settings, get_settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -75,13 +78,14 @@ async def get_current_user(
                 name=payload.get("name", ""),
             )
         except (ValueError, KeyError) as e:
-            raise HTTPException(401, f"invalid session: {e}") from e
+            log.info("session decode failed: %s", e)
+            raise HTTPException(401, "会话已过期或无效,请重新登录") from e
 
     if settings.env == "dev" and x_user_id:
         try:
             uid = uuid.UUID(x_user_id)
         except ValueError as e:
-            raise HTTPException(400, f"X-User-Id must be valid UUID: {e}") from e
+            raise HTTPException(400, "X-User-Id 必须是 UUID 格式") from e
         # dev fallback 反查 db
         async with get_sessionmaker()() as db:
             stmt = select(User).where(User.id == uid)

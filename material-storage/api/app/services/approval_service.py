@@ -54,8 +54,11 @@ async def enforce_admin_for_target(
     *,
     audit: AuditService | None = None,
     ctx: DecisionContext | None = None,
+    is_system_admin: bool = False,
 ) -> None:
-    """user 必须对申请目标 can_admin(v4 model:asset/folder/sensitive_folder/project 都用 can_admin)。"""
+    """user 必须对申请目标 can_admin(v4 model:asset/folder/sensitive_folder/project 都用 can_admin);system admin 直通。"""
+    if is_system_admin:
+        return
     object_type = approval.target_type
     object_id = str(approval.target_id)
 
@@ -140,10 +143,12 @@ async def decide(
     permissions: PermissionsService,
     audit: AuditService,
     ctx: DecisionContext | None = None,
+    is_system_admin: bool = False,
 ) -> ApprovalRequest:
     approval = await fetch_pending(db, approval_id)
     await enforce_admin_for_target(
-        permissions, decider_user_id, decider_open_id, approval, audit=audit, ctx=ctx
+        permissions, decider_user_id, decider_open_id, approval,
+        audit=audit, ctx=ctx, is_system_admin=is_system_admin,
     )
 
     granted_ref: dict[str, Any] = {}

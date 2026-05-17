@@ -97,7 +97,12 @@ async def create_project(
         await db.commit()
     except IntegrityError as e:
         await db.rollback()
-        raise HTTPException(400, detail=f"project code conflict or invalid org: {e.orig}") from e
+        err = str(e.orig)
+        if "projects_code_key" in err:
+            raise HTTPException(409, "项目 code 已存在") from e
+        if "organization_id" in err:
+            raise HTTPException(400, "organization 不存在或无效") from e
+        raise HTTPException(400, "项目创建失败,可能存在唯一性冲突") from e
 
     # bootstrap:org parent + 指派的项目 admin(可与创建者不同)
     await permissions.bootstrap_project(
