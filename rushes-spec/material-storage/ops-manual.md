@@ -38,11 +38,16 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 
 系统 admin = `organization#admin` OpenFGA tuple。**只有系统 admin 可创建项目**;UI 不提供 promote/demote(防误操作),只能后台命令。
 
+**关键事实**:
+- 系统 admin **数量无硬上限**(可加多个;典型用法见下面"典型场景")
+- 系统 admin 在 **所有 project / folder / asset** 上拥有完整权限(view / download / upload / admin / share / delete),无需另外 grant(PR #77 起 backend 全覆盖直通)
+- 系统 admin 仍然走 audit(下载 / 删除 / access_denied 等照记)
+
 ```bash
-# 列当前所有系统 admin
+# 列当前所有系统 admin(包括所有 ou_*)
 docker exec ms-api python -m scripts.grant_org_admin --list
 
-# 添加一个系统 admin(用飞书 open_id)
+# 添加一个系统 admin(用飞书 open_id;再跑一次 = 加第二个,不冲突)
 docker exec ms-api python -m scripts.grant_org_admin ou_xxxxxxxxxxxx
 
 # 撤销
