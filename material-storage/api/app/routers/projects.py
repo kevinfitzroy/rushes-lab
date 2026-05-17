@@ -25,6 +25,7 @@ from app.deps import (
     get_current_user,
     get_permissions,
     get_request_context,
+    require_system_admin,
 )
 from app.models import ProjectCreateIn, ProjectOut
 from app.services.audit import AuditService
@@ -39,16 +40,28 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_system_admin),   # 仅系统 admin 可建
     ctx: dict = Depends(get_request_context),
 ) -> ProjectOut:
-    """创建 project + bootstrap OpenFGA(org→project parent + 创建者 admin)+ audit。
+    """创建 project — **仅系统 admin 可调**;必须 payload 明确指派项目 admin
+    (可以指自己,UI 默认填创建者)。
 
     organization_id 解析顺序:payload > user.organization_id > settings.default_organization_id。
-    创建者自动作为 project admin → OpenFGA tuple,确保 list/get 可见。
     """
-    user_id, user_open_id = user.id, user.open_id
+    user_id = user.id
     from app.db.tables import Organization, User
+
+    # 校验 admin 是真 user(存在 db + 飞书 open_id)
+    from sqlalchemy import select as _select
+    res = await db.execute(_select(User).where(
+        User.feishu_open_id == payload.admin_user_open_id,
+        User.is_active.is_(True),
+    ))
+    admin_user = res.scalar_one_or_none()
+    if admin_user is None:
+        raise HTTPException(
+            400, f"admin user not found:{payload.admin_user_open_id}(需先 OIDC 登录过)"
+        )
 
     # 解析 org_id
     org_id = payload.organization_id
@@ -64,11 +77,10 @@ async def create_project(
     if org_id is None:
         raise HTTPException(400, "organization_id missing(no payload, no user org, no default)")
 
-    # 查 org 拿 tenant_key(OpenFGA subject 用飞书 tenant_key,不是 internal UUID)
     org = await db.get(Organization, org_id)
     if org is None:
         raise HTTPException(400, f"organization {org_id} not found")
-    tenant_key = org.feishu_tenant_key or str(org_id)  # 兜底:无 tenant_key 用 UUID 字符串
+    tenant_key = org.feishu_tenant_key or str(org_id)
 
     project = Project(
         id=uuid.uuid4(),
@@ -85,18 +97,23 @@ async def create_project(
         await db.rollback()
         raise HTTPException(400, detail=f"project code conflict or invalid org: {e.orig}") from e
 
-    # bootstrap:org parent + 创建者 admin(一并写)
+    # bootstrap:org parent + 指派的项目 admin(可与创建者不同)
     await permissions.bootstrap_project(
         project_id=str(project.id),
         organization_tenant_key=tenant_key,
-        creator_open_id=user_open_id,
+        creator_open_id=payload.admin_user_open_id,
     )
 
     await audit.write(
         event_type="project_created",
         actor_user_id=user_id,
         target_project_id=project.id,
-        details={"code": project.code, "name": project.name, "visibility": project.visibility},
+        details={
+            "code": project.code, "name": project.name,
+            "visibility": project.visibility,
+            "admin_user_open_id": payload.admin_user_open_id,
+            "admin_name": admin_user.name,
+        },
         **ctx,
     )
 

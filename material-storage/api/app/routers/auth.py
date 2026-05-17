@@ -101,12 +101,28 @@ async def callback(
 
 @router.get("/me")
 async def me(
+    request: Request,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     user = await db.get(User, cur.id)
     if not user:
         raise HTTPException(401, "session user not found")
+
+    # 查 is_system_admin(organization#admin)给前端判 NewProjectModal 是否可用
+    is_system_admin = False
+    from app.services.contact_sync import get_default_organization
+    org = await get_default_organization(db)
+    if org:
+        _, tenant_key = org
+        perms = request.app.state.permissions
+        try:
+            is_system_admin = await perms.is_org_admin(
+                user_open_id=user.feishu_open_id, organization_tenant_key=tenant_key,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     return {
         "id": str(user.id),
         "open_id": user.feishu_open_id,
@@ -115,6 +131,7 @@ async def me(
         "email": user.email,
         "organization_id": str(user.organization_id) if user.organization_id else None,
         "is_active": user.is_active,
+        "is_system_admin": is_system_admin,
     }
 
 
