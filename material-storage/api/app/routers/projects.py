@@ -308,7 +308,10 @@ PROJECT_ROLES = ("admin", "uploader", "downloader", "viewer")
 async def _enforce_project_admin(
     permissions: PermissionsService, audit: AuditService,
     user_id: uuid.UUID, user_open_id: str, project_id: uuid.UUID, action: str, ctx: dict,
+    *, is_system_admin: bool = False,
 ) -> None:
+    if is_system_admin:
+        return  # 系统 admin 直通,所有项目都可管理
     ok = await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="project", object_id=str(project_id),
@@ -330,6 +333,7 @@ async def list_project_members(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> list[dict]:
     """project 成员列表 — D iter4 前端 ProjectMembersDrawer 用。
@@ -343,6 +347,7 @@ async def list_project_members(
         raise HTTPException(404, "project not found")
     await _enforce_project_admin(
         permissions, audit, user_id, user_open_id, project_id, "list_members", ctx,
+        is_system_admin=is_system_admin,
     )
 
     from openfga_sdk.models import ReadRequestTupleKey
@@ -403,6 +408,7 @@ async def add_project_member(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     """加 project 成员。
@@ -419,6 +425,7 @@ async def add_project_member(
         raise HTTPException(404, "project not found")
     await _enforce_project_admin(
         permissions, audit, user_id, user_open_id, project_id, "add_member", ctx,
+        is_system_admin=is_system_admin,
     )
 
     role = payload.get("role")
@@ -462,6 +469,7 @@ async def remove_project_member(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     user_id, user_open_id = user.id, user.open_id
@@ -470,6 +478,7 @@ async def remove_project_member(
         raise HTTPException(404, "project not found")
     await _enforce_project_admin(
         permissions, audit, user_id, user_open_id, project_id, "remove_member", ctx,
+        is_system_admin=is_system_admin,
     )
 
     await permissions.remove_project_subject(

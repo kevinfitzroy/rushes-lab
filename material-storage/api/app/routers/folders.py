@@ -51,12 +51,14 @@ async def create_folder(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> FolderOut:
     user_id, user_open_id = user.id, user.open_id
     # 1) 权限:create folder 需 can_upload(model v4:uploader 隐含创建子目录)
     #    - 在 project 下建 root folder → check project.can_upload
     #    - 在 folder 下建 sub folder → check parent folder.can_upload
+    #    系统 admin 直通
     if payload.parent_folder_id:
         parent_folder_for_check = await db.get(Folder, payload.parent_folder_id)
         if not parent_folder_for_check or parent_folder_for_check.project_id != payload.project_id:
@@ -68,7 +70,7 @@ async def create_folder(
         check_type = "project"
         check_id = str(payload.project_id)
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}",
         relation="can_upload",
         object_type=check_type,
@@ -159,13 +161,14 @@ async def list_folders(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
 ) -> list[FolderOut]:
     user_id, user_open_id = user.id, user.open_id
-    # project 可见 check(public 直通,否则 can_view)
+    # project 可见 check(public 直通,否则 can_view);系统 admin 直通
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    if project.visibility != "public":
+    if not is_system_admin and project.visibility != "public":
         allowed = await permissions.check(
             user_subject=f"user:{user_open_id}", relation="can_view",
             object_type="project", object_id=str(project_id),
@@ -174,19 +177,21 @@ async def list_folders(
             raise HTTPException(403, "no permission")
 
     # 普通 folder:project member 都可见(用 SQL 拿全部)
-    # sensitive folder:OpenFGA list_objects(user, can_view, sensitive_folder) intersect this project
-    sensitive_ids_str = await permissions.list_objects(
-        user_subject=f"user:{user_open_id}", relation="can_view", object_type="sensitive_folder"
-    )
-    sensitive_uuids = [uuid.UUID(s) for s in sensitive_ids_str]
-
-    stmt = select(Folder).where(
-        Folder.project_id == project_id,
-        or_(
-            Folder.is_sensitive.is_(False),                       # 普通 folder 全见
-            Folder.id.in_(sensitive_uuids) if sensitive_uuids else False,  # sensitive 须 invited
-        ),
-    ).order_by(Folder.minio_prefix)
+    # sensitive folder:系统 admin 直接全部;否则 OpenFGA list_objects(can_view, sensitive_folder) intersect
+    if is_system_admin:
+        stmt = select(Folder).where(Folder.project_id == project_id).order_by(Folder.minio_prefix)
+    else:
+        sensitive_ids_str = await permissions.list_objects(
+            user_subject=f"user:{user_open_id}", relation="can_view", object_type="sensitive_folder"
+        )
+        sensitive_uuids = [uuid.UUID(s) for s in sensitive_ids_str]
+        stmt = select(Folder).where(
+            Folder.project_id == project_id,
+            or_(
+                Folder.is_sensitive.is_(False),                       # 普通 folder 全见
+                Folder.id.in_(sensitive_uuids) if sensitive_uuids else False,  # sensitive 须 invited
+            ),
+        ).order_by(Folder.minio_prefix)
     res = await db.execute(stmt)
     return [FolderOut.model_validate(r) for r in res.scalars().all()]
 
@@ -237,6 +242,7 @@ async def invite(
     audit: AuditService = Depends(get_audit),
     feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     """邀请 user / group / department 进入 sensitive_folder(admin 操作)。
@@ -260,8 +266,8 @@ async def invite(
         raise HTTPException(400, "must specify exactly one of user_open_id / group_id / department_id")
     subject_kind, subject_id = chosen[0]
 
-    # admin check
-    allowed = await permissions.check(
+    # admin check;系统 admin 直通
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="sensitive_folder", object_id=str(folder_id),
     )
@@ -325,12 +331,13 @@ async def list_members(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
 ) -> list[dict]:
     """sensitive_folder 当前成员列表 — D iter3 前端 FolderInvitePanel 用。
 
     返:[{subject, kind, name, level, permanent, expires_at?}]
     subject 形如 "user:ou_xxx" / "group:gid#member" / "department:did#member"
-    需 can_admin folder。
+    需 can_admin folder;系统 admin 直通。
     """
     user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
@@ -339,7 +346,7 @@ async def list_members(
     if not folder.is_sensitive:
         raise HTTPException(400, "not a sensitive_folder")
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="sensitive_folder", object_id=str(folder_id),
     )
@@ -430,6 +437,7 @@ async def revoke_invite(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     user_id, user_open_id = user.id, user.open_id
@@ -439,7 +447,7 @@ async def revoke_invite(
     if not folder.is_sensitive:
         raise HTTPException(400, "not a sensitive_folder")
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="sensitive_folder", object_id=str(folder_id),
     )
@@ -486,11 +494,12 @@ async def list_folder_grants(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
 ) -> list[dict]:
     """列普通 folder 的 explicit_* grants。
 
     返:[{subject, kind, subject_id, name, role: explicit_viewer|downloader|uploader}]
-    需 can_admin folder + folder 为一级。
+    需 can_admin folder + folder 为一级;系统 admin 直通。
     """
     user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
@@ -500,7 +509,7 @@ async def list_folder_grants(
         raise HTTPException(400, "sensitive folder 用 /members endpoint")
     _enforce_level1_folder(folder)
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="folder", object_id=str(folder_id),
     )
@@ -557,6 +566,7 @@ async def add_folder_grant(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     """body:{user_open_id|group_id|department_id, level: viewer|downloader|uploader}"""
@@ -568,7 +578,7 @@ async def add_folder_grant(
         raise HTTPException(400, "sensitive folder 用 /invite endpoint")
     _enforce_level1_folder(folder)
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="folder", object_id=str(folder_id),
     )
@@ -614,6 +624,7 @@ async def remove_folder_grant(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     user_id, user_open_id = user.id, user.open_id
@@ -624,7 +635,7 @@ async def remove_folder_grant(
         raise HTTPException(400, "sensitive folder 用 /invite endpoint")
     _enforce_level1_folder(folder)
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="folder", object_id=str(folder_id),
     )
