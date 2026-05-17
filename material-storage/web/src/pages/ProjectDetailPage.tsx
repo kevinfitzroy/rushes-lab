@@ -25,7 +25,7 @@ import { NewFolderModal } from '../components/NewFolderModal';
 import { useUpload } from '../lib/upload-store';
 import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
-import type { Asset } from '../api/types';
+import type { Asset, Folder } from '../api/types';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -283,6 +283,7 @@ export default function ProjectDetailPage() {
               letterSpacing: '-0.01em',
               flex: 1,
             }}>{folder?.name ?? '—'}</span>
+            {folder && <MyFolderPerms folder={folder} />}
             {project && me && (
               <Button size="small" icon={<UsersIcon size={13} strokeWidth={1.8} />}
                       onClick={() => setMembersOpen(true)}>
@@ -438,5 +439,38 @@ export default function ProjectDetailPage() {
         />
       )}
     </Layout>
+  );
+}
+
+// ─── MyFolderPerms — folder header 上的"我的有效权限"chip ───────────────
+function MyFolderPerms({ folder }: { folder: Folder }) {
+  const perms = [
+    folder.my_can_admin && { label: '管理', color: 'var(--ms-accent)', bg: 'var(--ms-accent-soft)' },
+    folder.my_can_upload && { label: '上传', color: 'var(--ms-amber)', bg: '#FEF3E8' },
+    folder.my_can_download && { label: '下载', color: 'var(--ms-emerald)', bg: 'var(--ms-emerald-soft)' },
+    folder.my_can_view && !folder.my_can_download && !folder.my_can_upload
+      && { label: '查看', color: 'var(--ms-ink-muted)', bg: 'var(--ms-hairline-soft)' },
+  ].filter(Boolean) as { label: string; color: string; bg: string }[];
+
+  if (perms.length === 0) return null;
+
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 3,
+      marginLeft: 8,
+    }}>
+      <span style={{
+        fontSize: 10, letterSpacing: '0.04em', color: 'var(--ms-ink-subtle)',
+        fontFamily: 'var(--ms-font-mono)', marginRight: 2,
+      }}>我:</span>
+      {perms.map(p => (
+        <span key={p.label} style={{
+          padding: '1px 6px',
+          background: p.bg, color: p.color,
+          borderRadius: 3,
+          fontSize: 10.5, fontWeight: 500, letterSpacing: '0.02em',
+        }}>{p.label}</span>
+      ))}
+    </span>
   );
 }

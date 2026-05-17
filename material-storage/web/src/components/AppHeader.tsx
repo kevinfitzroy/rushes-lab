@@ -58,6 +58,7 @@ export function AppHeader({ me }: Props) {
         <nav style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 'var(--ms-sp-md)' }}>
           <NavChip to="/" label="项目" navigate={navigate} />
           <NavChip to="/approvals" label="审批" navigate={navigate} />
+          <NavChip to="/my-permissions" label="我的权限" navigate={navigate} />
           <NavChip to="/admin/audit" label="审计" navigate={navigate} />
         </nav>
 
@@ -274,6 +275,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
     // 内置 actions
     const acts = [
       { kw: '审批 approvals', label: '前往·审批', go: () => navigate('/approvals') },
+      { kw: '权限 permissions my', label: '前往·我的权限', go: () => navigate('/my-permissions') },
       { kw: '项目 projects', label: '前往·项目列表', go: () => navigate('/') },
     ];
     acts.forEach((a, i) => {

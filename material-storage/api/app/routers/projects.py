@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -216,13 +217,56 @@ async def list_projects(
     res = await db.execute(stmt)
     rows = list(res.scalars().all())
 
-    # batch fill admins
+    # batch fill admins + my_roles
     admins_by_pid = await _fill_project_admins(db, permissions, rows)
+    my_roles_by_pid = await _fill_my_roles(
+        permissions, user_open_id, rows, is_system_admin=is_system_admin,
+    )
     out: list[ProjectOut] = []
     for r in rows:
         po = ProjectOut.model_validate(r)
         po.admins = admins_by_pid.get(r.id, [])
+        po.my_roles = my_roles_by_pid.get(r.id, [])
         out.append(po)
+    return out
+
+
+_PROJECT_ROLES: tuple[str, ...] = ("admin", "uploader", "downloader", "viewer")
+
+
+async def _fill_my_roles(
+    permissions: PermissionsService,
+    user_open_id: str,
+    projects: list,
+    *,
+    is_system_admin: bool,
+) -> dict[uuid.UUID, list[str]]:
+    """每个 project 上 user 的有效 role list。
+
+    系统 admin → 全 admin(超级权限)
+    否则:1 次 list_objects/role(4 次总),N 个 project 走集合 lookup
+    — O(1) FGA calls,避免 N×4 串行回路。
+    """
+    out: dict[uuid.UUID, list[str]] = {}
+    if is_system_admin:
+        for p in projects:
+            out[p.id] = ["admin"]
+        return out
+    if not projects:
+        return out
+
+    user_subject = f"user:{user_open_id}"
+    role_lists = await asyncio.gather(*[
+        permissions.list_objects(
+            user_subject=user_subject, relation=role, object_type="project",
+        )
+        for role in _PROJECT_ROLES
+    ])
+    role_sets = {r: set(ids) for r, ids in zip(_PROJECT_ROLES, role_lists)}
+
+    for p in projects:
+        pid = str(p.id)
+        out[p.id] = [r for r in _PROJECT_ROLES if pid in role_sets[r]]
     return out
 
 
@@ -273,6 +317,10 @@ async def get_project(
     po = ProjectOut.model_validate(project)
     admins_by_pid = await _fill_project_admins(db, permissions, [project])
     po.admins = admins_by_pid.get(project.id, [])
+    my_roles_by_pid = await _fill_my_roles(
+        permissions, user_open_id, [project], is_system_admin=is_system_admin,
+    )
+    po.my_roles = my_roles_by_pid.get(project.id, [])
     return po
 
 

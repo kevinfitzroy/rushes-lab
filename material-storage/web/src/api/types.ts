@@ -27,6 +27,7 @@ export interface Project {
   is_archived: boolean;
   created_at: string;
   admins: AdminBrief[];
+  my_roles: ('admin' | 'uploader' | 'downloader' | 'viewer')[];
 }
 
 export interface Folder {
@@ -37,6 +38,10 @@ export interface Folder {
   minio_prefix: string;
   is_sensitive: boolean;
   created_at: string;
+  my_can_view?: boolean;
+  my_can_download?: boolean;
+  my_can_upload?: boolean;
+  my_can_admin?: boolean;
 }
 
 export interface Asset {

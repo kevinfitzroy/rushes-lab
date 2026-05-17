@@ -165,13 +165,17 @@ function MemberCard({
         <div style={{
           fontSize: 13, color: 'var(--ms-ink)', fontWeight: 500,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          display: 'flex', alignItems: 'center', gap: 6,
         }}>
-          {member.name}
+          <span style={{
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            flex: '0 1 auto', minWidth: 0,
+          }}>{member.name}</span>
+          <KindTag kind={member.kind} />
           {sorted.includes('admin') && (
             <Tooltip title="项目管理员">
               <ShieldCheck size={11} strokeWidth={2}
-                           style={{ marginLeft: 6, verticalAlign: -1,
-                                    color: 'var(--ms-accent)' }} />
+                           style={{ color: 'var(--ms-accent)', flexShrink: 0 }} />
             </Tooltip>
           )}
         </div>
@@ -184,6 +188,28 @@ function MemberCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function KindTag({ kind }: { kind: Member['kind'] }) {
+  const meta = kind === 'user'
+    ? { label: '用户', tip: '直接授权给个人' }
+    : kind === 'group'
+      ? { label: '群组', tip: '通过用户组继承' }
+      : { label: '部门', tip: '通过飞书部门继承' };
+  return (
+    <Tooltip title={meta.tip}>
+      <span style={{
+        flexShrink: 0,
+        padding: '0 5px',
+        fontSize: 9.5, letterSpacing: '0.04em',
+        fontFamily: 'var(--ms-font-mono)',
+        color: 'var(--ms-ink-subtle)',
+        background: 'var(--ms-hairline-soft)',
+        borderRadius: 2,
+        lineHeight: '14px',
+      }}>{meta.label}</span>
+    </Tooltip>
   );
 }
 

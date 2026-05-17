@@ -134,13 +134,18 @@ function ProjectCard({ project: p }: { project: Project }) {
         borderRadius: '0 2px 2px 0',
       }} />
 
-      <h2 style={{
-        margin: 0,
-        fontFamily: 'var(--ms-font-display)',
-        fontSize: 20, fontWeight: 500,
-        lineHeight: 1.25, letterSpacing: '-0.01em',
-        color: 'var(--ms-ink)',
-      }}>{p.name}</h2>
+      {/* 标题 + 我的角色 chip */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <h2 style={{
+          flex: 1, minWidth: 0,
+          margin: 0,
+          fontFamily: 'var(--ms-font-display)',
+          fontSize: 20, fontWeight: 500,
+          lineHeight: 1.25, letterSpacing: '-0.01em',
+          color: 'var(--ms-ink)',
+        }}>{p.name}</h2>
+        <MyRolesBadge roles={p.my_roles || []} />
+      </div>
 
       <div style={{
         marginTop: 4,
@@ -282,5 +287,50 @@ function EmptyState({ onCreate }: { onCreate?: () => void }) {
         </Button>
       )}
     </div>
+  );
+}
+
+// ─── MyRolesBadge — 卡片右上小标识(导出供 /my-permissions 复用)──────────
+const ROLE_META: Record<string, { label: string; color: string; bg: string }> = {
+  admin:      { label: '管理', color: 'var(--ms-accent)',  bg: 'var(--ms-accent-soft)' },
+  uploader:   { label: '上传', color: 'var(--ms-amber)',   bg: '#FEF3E8' },
+  downloader: { label: '下载', color: 'var(--ms-emerald)', bg: 'var(--ms-emerald-soft)' },
+  viewer:     { label: '查看', color: 'var(--ms-ink-muted)', bg: 'var(--ms-hairline-soft)' },
+};
+const ROLE_RANK = ['admin', 'uploader', 'downloader', 'viewer'];
+
+export function MyRolesBadge({ roles }: { roles: string[] }) {
+  if (!roles || roles.length === 0) {
+    return (
+      <span title="无角色 — 仅 visibility=public 项目可见"
+            style={{
+              flexShrink: 0, fontSize: 10, letterSpacing: '0.02em',
+              padding: '1px 6px',
+              background: 'var(--ms-hairline-soft)',
+              color: 'var(--ms-ink-subtle)',
+              borderRadius: 3,
+              fontFamily: 'var(--ms-font-mono)',
+            }}>仅访客</span>
+    );
+  }
+  // 优先级最高的 role 显示主 chip;额外 role 数 +N
+  const sorted = [...roles].sort((a, b) => ROLE_RANK.indexOf(a) - ROLE_RANK.indexOf(b));
+  const top = sorted[0];
+  const meta = ROLE_META[top] || ROLE_META.viewer;
+  return (
+    <span title={`你的角色: ${sorted.join(' + ')}`}
+          style={{
+            flexShrink: 0,
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+            padding: '1px 7px',
+            background: meta.bg, color: meta.color,
+            borderRadius: 3,
+            fontSize: 10.5, fontWeight: 500, letterSpacing: '0.02em',
+          }}>
+      我·{meta.label}
+      {sorted.length > 1 && (
+        <span style={{ opacity: 0.7 }}>+{sorted.length - 1}</span>
+      )}
+    </span>
   );
 }

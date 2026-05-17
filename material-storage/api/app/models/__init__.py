@@ -40,7 +40,10 @@ class ProjectOut(ORMModel):
     visibility: str       # public / private / stealth
     is_archived: bool
     created_at: datetime
-    admins: list[AdminBrief] = []   # list_projects 时填充;单条 get 也填
+    admins: list[AdminBrief] = []
+    # 当前 user 在本项目的有效 role 列表(单 user 可有多 role,如 admin+uploader);
+    # ['admin'|'uploader'|'downloader'|'viewer'];空 = 仅靠 visibility=public 见
+    my_roles: list[str] = []
 
 
 # ─── assets ───────────────────────────────────────────────────────────────────
@@ -126,6 +129,11 @@ class FolderOut(ORMModel):
     minio_prefix: str
     is_sensitive: bool
     created_at: datetime
+    # 当前 user 对本 folder 的有效权限(派生 can_*)— get_folder 时填充
+    my_can_view: bool = False
+    my_can_download: bool = False
+    my_can_upload: bool = False
+    my_can_admin: bool = False
 
 
 class FolderInviteIn(BaseModel):
