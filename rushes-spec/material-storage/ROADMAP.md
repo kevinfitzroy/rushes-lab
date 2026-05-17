@@ -1,7 +1,7 @@
 # material-storage — 工作 ROADMAP / 待办
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
-> 最后更新:2026-05-17(回写 #73 + 2 个 hot fix)
+> 最后更新:2026-05-17(回写 #74-#75)
 >
 > 相关文档:
 > - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
@@ -39,6 +39,8 @@
 | #71 | 30cc078 | **deploy 不再 clobber server2 .env** — 默认保留远端 .env(避免 heredoc 老 PoC 飞书 app 覆盖手工调过的 `cli_aa8dbee01fb99bb3` 凭据导致 OAuth 20029);`INIT_ENV=1` 才会重写;heredoc 凭据加注释 |
 | #72 | 3a3587e | **ROADMAP 回写 #70-#71** — 加 .env clobber 坑提醒 |
 | #73 | 15355e7 | **SPA 刷新无尾斜杠 URL 跳错误页修复** — `app/main.py` 加 `@app.get("/static/web")` 直接返 index.html(绕开 StaticFiles 的目录 307 → 内部路径 + http 降级);Dockerfile uvicorn 加 `--proxy-headers --forwarded-allow-ips '*'` 防御性兜底其他 redirect |
+| #74 | ff2e99d | **ROADMAP 回写 #72-#73** — 加 DEFAULT_ORGANIZATION_ID 必填 + 307 必须指 public 路径两条坑 |
+| #75 | 47034a9 | **UserMenu open_id 完整显示 + 复制** — 之前只显前 16 位 + 省略号,改成 ellipsis 撑满 + 末尾 Copy icon(navigator.clipboard + Check 反馈 + toast);maxWidth 360 防超长撑爆;stopPropagation 防点 copy 关闭 dropdown |
 
 ---
 
