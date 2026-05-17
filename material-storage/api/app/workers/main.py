@@ -139,6 +139,46 @@ async def transcode_proxy(ctx: dict, asset_id: str) -> dict[str, Any]:
     return {"asset_id": asset_id, "status": "stub_iter_next"}
 
 
+async def mark_expired_approvals(ctx: dict) -> dict[str, Any]:
+    """polish 3:扫 status='approved' 且 decided_at + duration < now 的 approval → expired。
+
+    注:OpenFGA grant 本身因 non_expired_grant condition 已自动失效,
+    这里只更新 status 字段让 UI 显示一致。
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select, update
+    from app.db.tables import ApprovalRequest
+
+    sm = get_sessionmaker()
+    now = datetime.now(timezone.utc)
+    async with sm() as db:
+        # 找候选(避免 SQL 表达式跨 dialect 复杂度,Python 侧 filter)
+        stmt = select(ApprovalRequest).where(
+            ApprovalRequest.status == "approved",
+            ApprovalRequest.duration_seconds.is_not(None),
+            ApprovalRequest.decided_at.is_not(None),
+        )
+        res = await db.execute(stmt)
+        candidates = list(res.scalars())
+        expired_ids = []
+        for a in candidates:
+            if a.decided_at is None or a.duration_seconds is None:
+                continue
+            expires_at = a.decided_at + timedelta(seconds=a.duration_seconds)
+            if expires_at < now:
+                expired_ids.append(a.id)
+        if expired_ids:
+            await db.execute(
+                update(ApprovalRequest)
+                .where(ApprovalRequest.id.in_(expired_ids))
+                .values(status="expired")
+            )
+            await db.commit()
+    log.info("mark_expired_approvals: scanned=%d expired=%d",
+             len(candidates), len(expired_ids))
+    return {"scanned": len(candidates), "expired": len(expired_ids)}
+
+
 # ─── arq settings ────────────────────────────────────────────────────────────
 def _build_redis_settings() -> RedisSettings:
     """从 settings.redis_url 解析(优先 env REDIS_URL)。"""
@@ -153,9 +193,18 @@ def _build_redis_settings() -> RedisSettings:
     )
 
 
+# cron schedule: 每 5min(/5 0..55)跑一次 mark_expired_approvals
+from arq.cron import cron   # noqa: E402
+
+_CRON_JOBS = [
+    cron(mark_expired_approvals, minute=set(range(0, 60, 5))),
+]
+
+
 class WorkerSettings:
-    functions = [generate_thumbnail, transcode_proxy]
+    functions = [generate_thumbnail, transcode_proxy, mark_expired_approvals]
+    cron_jobs = _CRON_JOBS
     redis_settings = _build_redis_settings()
     max_jobs = 4
-    job_timeout = 60   # 单 task 最长 60s,超时 kill
-    keep_result = 300  # 结果保留 5 min(arq 默认 0)
+    job_timeout = 60
+    keep_result = 300

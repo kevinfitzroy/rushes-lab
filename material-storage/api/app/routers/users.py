@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import User
-from app.deps import CurrentUser, get_current_user
+from app.deps import CurrentUser, require_admin
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -37,7 +37,7 @@ async def search_users(
     q: str = Query("", description="模糊关键字,匹配 name/email/open_id;留空 = 返前 N"),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_admin),
 ) -> list[UserBrief]:
     """fuzzy 搜 user — UserPicker autocomplete 用。"""
     _ = user.id  # 至少要认证;细粒度 admin 检查 D iter4 后端 enforcement

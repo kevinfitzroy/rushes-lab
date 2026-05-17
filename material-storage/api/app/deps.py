@@ -102,3 +102,33 @@ async def get_request_context(request: Request) -> dict[str, str | None]:
         "request_ip": request.client.host if request.client else None,
         "user_agent": request.headers.get("user-agent"),
     }
+
+
+# ─── admin enforce(polish — org admin OR 任意 project admin)─────────────────
+from fastapi import Depends as _Depends  # noqa: E402
+
+async def require_admin(
+    request: Request,
+    user: CurrentUser = _Depends(get_current_user),
+) -> CurrentUser:
+    """admin 守门 — 给 /admin/* / GET /users 用。
+
+    判定:org admin(organization#admin)或任意 project can_admin。
+    使用:
+      user: CurrentUser = Depends(require_admin)
+    """
+    perms: PermissionsService = request.app.state.permissions
+    # 1) org admin
+    from app.services.contact_sync import get_default_organization
+    async with get_sessionmaker()() as db:
+        org = await get_default_organization(db)
+    if org:
+        _, tenant_key = org
+        if await perms.is_org_admin(
+            user_open_id=user.open_id, organization_tenant_key=tenant_key,
+        ):
+            return user
+    # 2) 兜底:任意 project admin
+    if await perms.has_any_project_admin(user_open_id=user.open_id):
+        return user
+    raise HTTPException(403, "admin permission required")
