@@ -16,6 +16,7 @@ from app.deps import (
     get_audit,
     CurrentUser,
     get_current_user,
+    get_is_system_admin,
     get_permissions,
     get_presign,
     get_request_context,
@@ -45,6 +46,7 @@ async def create_upload(
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> UploadMultipartCreateOut:
     user_id, user_open_id = user.id, user.open_id
@@ -52,8 +54,8 @@ async def create_upload(
     if not folder:
         raise HTTPException(404, "folder not found")
 
-    # check can_upload folder(v4:uploader 隐含上传 + 创建 sub folder)
-    allowed = await permissions.check(
+    # check can_upload folder(v4:uploader 隐含上传 + 创建 sub folder);系统 admin 直通
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}",
         relation="can_upload",
         object_type="folder" if not folder.is_sensitive else "sensitive_folder",
@@ -104,6 +106,7 @@ async def complete_upload(
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> AssetOut:
     user_id, user_open_id = user.id, user.open_id
@@ -115,8 +118,8 @@ async def complete_upload(
     if not folder:
         raise HTTPException(500, "folder lookup race")
 
-    # 再次 check(防 user create_upload 后被 revoke)
-    allowed = await permissions.check(
+    # 再次 check(防 user create_upload 后被 revoke);系统 admin 直通
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}",
         relation="can_upload",
         object_type="folder" if not folder.is_sensitive else "sensitive_folder",
@@ -201,6 +204,7 @@ async def list_assets(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     limit: int = 100,
     offset: int = 0,
 ) -> list[AssetOut]:
@@ -209,8 +213,8 @@ async def list_assets(
     if not folder:
         raise HTTPException(404, "folder not found")
 
-    # check can_view folder
-    allowed = await permissions.check(
+    # check can_view folder;系统 admin 直通
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}",
         relation="can_view",
         object_type="folder" if not folder.is_sensitive else "sensitive_folder",
@@ -240,15 +244,17 @@ async def get_download_link(
     presign: PresignService = Depends(get_presign),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> DownloadLinkOut:
     user_id, user_open_id = user.id, user.open_id
-    """签 presigned GET URL;check can_download asset + audit signed_url_issued。"""
+    """签 presigned GET URL;check can_download asset + audit signed_url_issued。
+    系统 admin 直通(audit 仍记)。"""
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(404, "asset not found")
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}",
         relation="can_download",
         object_type="asset",
@@ -314,19 +320,20 @@ async def delete_asset(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
     user_id, user_open_id = user.id, user.open_id
     """soft delete:置 deleted_at;MinIO object 保留(由 bucket lifecycle 异步清)。
 
-    权限:asset.can_admin(model v4:= can_admin from parent folder/project)。
+    权限:asset.can_admin(model v4:= can_admin from parent folder/project);系统 admin 直通。
     """
     from datetime import datetime, timezone
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(404, "asset not found")
 
-    allowed = await permissions.check(
+    allowed = is_system_admin or await permissions.check(
         user_subject=f"user:{user_open_id}", relation="can_admin",
         object_type="asset", object_id=str(asset_id),
     )

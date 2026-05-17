@@ -24,6 +24,7 @@ from app.deps import (
     get_audit,
     CurrentUser,
     get_current_user,
+    get_is_system_admin,
     get_permissions,
     get_request_context,
     require_system_admin,
@@ -167,6 +168,7 @@ async def list_projects(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     limit: int = 100,
     offset: int = 0,
 ) -> list[ProjectOut]:
@@ -176,19 +178,6 @@ async def list_projects(
     普通 user → OpenFGA list_objects(can_view, project) UNION visibility=public
     """
     user_open_id = user.open_id
-
-    # 是否系统 admin
-    from app.services.contact_sync import get_default_organization
-    org = await get_default_organization(db)
-    is_system_admin = False
-    if org:
-        _, tenant_key = org
-        try:
-            is_system_admin = await permissions.is_org_admin(
-                user_open_id=user_open_id, organization_tenant_key=tenant_key,
-            )
-        except Exception:  # noqa: BLE001
-            pass
 
     if is_system_admin:
         stmt = (
@@ -277,25 +266,13 @@ async def get_project(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> ProjectOut:
     user_id, user_open_id = user.id, user.open_id
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-
-    # 系统 admin 直通
-    from app.services.contact_sync import get_default_organization
-    org = await get_default_organization(db)
-    is_system_admin = False
-    if org:
-        _, tenant_key = org
-        try:
-            is_system_admin = await permissions.is_org_admin(
-                user_open_id=user_open_id, organization_tenant_key=tenant_key,
-            )
-        except Exception:  # noqa: BLE001
-            pass
 
     if not is_system_admin and project.visibility != "public":
         allowed = await permissions.check(

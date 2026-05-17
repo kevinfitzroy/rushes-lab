@@ -29,6 +29,7 @@ from app.deps import (
     CurrentUser,
     get_current_user,
     get_feishu_client,
+    get_is_system_admin,
     get_permissions,
     get_request_context,
 )
@@ -196,24 +197,13 @@ async def get_folder(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
 ) -> FolderOut:
     user_id, user_open_id = user.id, user.open_id
     folder = await db.get(Folder, folder_id)
     if not folder:
         raise HTTPException(404, "folder not found")
     obj_type = "sensitive_folder" if folder.is_sensitive else "folder"
-    # 一次过 check 4 个 can_*(系统 admin 全 true)
-    from app.services.contact_sync import get_default_organization
-    org = await get_default_organization(db)
-    is_system_admin = False
-    if org:
-        _, tenant_key = org
-        try:
-            is_system_admin = await permissions.is_org_admin(
-                user_open_id=user_open_id, organization_tenant_key=tenant_key,
-            )
-        except Exception:  # noqa: BLE001
-            pass
 
     if is_system_admin:
         can_view = can_download = can_upload = can_admin = True
