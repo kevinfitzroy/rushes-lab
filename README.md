@@ -26,6 +26,7 @@
 - 详见 [`rushes-spec/material-storage/COLLABORATION.md`](./rushes-spec/material-storage/COLLABORATION.md) §1.5 反馈路径
 - 测试入口:`https://rusheslab.taoxiplan.com/ms-static/web`(dev,期望 breaking changes)
   - ⚠️ **务必走域名,不要走 IP**。OAuth 回调固定在域名,IP 入口会 state mismatch 登录失败
+- 第一次登录后进 📚 **上手指南(demo)** 项目 → 01-入门文档 → 点 *操作手册.md / 权限模型.md*(👁 预览按钮)— 不写代码也能完整读懂产品(2026-05-18 起 seed 自动可见)
 
 ### feedback gatekeeper(收 tester 反馈 + 代提 GitHub issue)
 - 必读 [`rushes-spec/material-storage/COLLABORATION.md`](./rushes-spec/material-storage/COLLABORATION.md) 全文
