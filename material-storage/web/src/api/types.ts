@@ -11,6 +11,11 @@ export interface Me {
   is_system_admin: boolean;
 }
 
+export interface AdminBrief {
+  open_id: string;
+  name: string;
+}
+
 export interface Project {
   id: string;
   code: string;
@@ -21,6 +26,7 @@ export interface Project {
   visibility: 'public' | 'private' | 'stealth';
   is_archived: boolean;
   created_at: string;
+  admins: AdminBrief[];
 }
 
 export interface Folder {

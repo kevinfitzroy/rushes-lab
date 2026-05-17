@@ -166,8 +166,50 @@ function ProjectCard({ project: p }: { project: Project }) {
         )}
       </p>
 
+      {/* admins 段 — 头像堆叠 + 名字 */}
+      {p.admins && p.admins.length > 0 && (
+        <div style={{
+          marginTop: 14,
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 11.5, color: 'var(--ms-ink-muted)',
+        }}>
+          <span style={{
+            fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase',
+            fontFamily: 'var(--ms-font-mono)', color: 'var(--ms-ink-subtle)',
+          }}>Admin</span>
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: -6,
+            paddingLeft: 0,
+          }}>
+            {p.admins.slice(0, 3).map((a, i) => (
+              <span key={a.open_id} title={a.name} style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 22, height: 22, marginLeft: i === 0 ? 0 : -6,
+                background: 'var(--ms-ink)', color: 'var(--ms-canvas)',
+                borderRadius: '50%',
+                fontFamily: 'var(--ms-font-display)',
+                fontSize: 10, fontWeight: 500,
+                border: '1.5px solid var(--ms-surface)',
+                position: 'relative', zIndex: 3 - i,
+              }}>{(a.name || '?').slice(0, 1).toUpperCase()}</span>
+            ))}
+          </span>
+          <span style={{
+            color: 'var(--ms-ink)', fontSize: 12,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {p.admins.slice(0, 2).map(a => a.name).join(' · ')}
+            {p.admins.length > 2 && (
+              <span style={{ color: 'var(--ms-ink-subtle)' }}>
+                {' '}+{p.admins.length - 2}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+
       <div style={{
-        margin: '18px -24px -20px -28px',
+        margin: '14px -24px -20px -28px',
         padding: '14px 24px 0 28px',
         borderTop: '1px solid var(--ms-hairline-soft)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
