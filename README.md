@@ -24,7 +24,8 @@
 ### field tester(用产品测试 + 反馈,不写代码)
 - **不需要 GitHub 账号**。通过团队的 feedback gatekeeper 反馈,任何形式(口头/微信/飞书/录屏)都可以
 - 详见 [`rushes-spec/material-storage/COLLABORATION.md`](./rushes-spec/material-storage/COLLABORATION.md) §1.5 反馈路径
-- 测试入口:`http://8.156.34.238/ms-static/web`(dev,期望 breaking changes)
+- 测试入口:`https://rusheslab.taoxiplan.com/ms-static/web`(dev,期望 breaking changes)
+  - ⚠️ **务必走域名,不要走 IP**。OAuth 回调固定在域名,IP 入口会 state mismatch 登录失败
 
 ### feedback gatekeeper(收 tester 反馈 + 代提 GitHub issue)
 - 必读 [`rushes-spec/material-storage/COLLABORATION.md`](./rushes-spec/material-storage/COLLABORATION.md) 全文
@@ -51,8 +52,9 @@
 
 | | URL | 说明 |
 | --- | --- | --- |
-| material-storage web | `http://8.156.34.238/ms-static/web` | server2 dev,共享,**期望 breaking changes** |
-| material-storage api | `http://8.156.34.238/api/v1/healthz` | 同上(健康检查端点) |
+| material-storage web(tester 入口) | `https://rusheslab.taoxiplan.com/ms-static/web` | server2 dev,共享,**期望 breaking changes**;OAuth 回调走此域名 |
+| material-storage web(dev 调试) | `http://8.156.34.238/ms-static/web` | 同集群,直连 IP;⚠️ 登录会失败(回调在域名) |
+| material-storage api(健康检查) | `http://8.156.34.238/api/v1/healthz` | 服务存活检查 |
 | 飞书 bridge PoC | `https://rusheslab.taoxiplan.com/healthz` | [`feishu-integration/`](./feishu-integration) PoC |
 
 ## 仓库约定
