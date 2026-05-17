@@ -1,7 +1,7 @@
 # material-storage — 工作 ROADMAP / 待办
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
-> 最后更新:2026-05-17(回写 #76-#78)
+> 最后更新:2026-05-17(回写 #79-#80)
 >
 > 相关文档:
 > - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
@@ -44,6 +44,8 @@
 | #76 | e12f55e | **ROADMAP 回写 #74-#75** |
 | #77 | 62aff65 | **系统 admin 全权限直通** — 之前 assets.py(5 处)/ share.py(2 处)仍走纯 OpenFGA check,系统 admin 没显式 grant 时下载/上传/分享会 403。新增 `Depends(get_is_system_admin)` → bool 抽 default-org → is_org_admin 逻辑;projects/folders 三处内联替换 + assets/share 7 处加直通 `is_system_admin or check(...)`;audit 不变(系统 admin 行为照记) |
 | #78 | d2cc7d4 | **项目卡空 admin 显示"未指派" + ops 强调多 admin** — 之前 admins 为空时静默隐藏整段 Admin chip;改成 label 始终显示,空时渲染斜体"未指派"+ tooltip 指引指派路径。ops-manual §1 加"关键事实"块:数量无硬上限(重复跑 `grant_org_admin` 加多个)+ 系统 admin 所有 endpoint 全权限(PR #77 后端覆盖)+ audit 照记 |
+| #79 | e41ccb1 | **ROADMAP 回写 #76-#78** |
+| #80 | e0238b7 | **folders/project-members 系统 admin 直通补全 + 医美短视频 seed 脚本** — PR #77 漏修 8 处 folders.py(create/list/invite/members/grants)+ projects.py `_enforce_project_admin` 没传 `is_system_admin`,导致系统 admin 实测无法创建文件夹;list_folders 的 sensitive 段也加直通(用 SQL 全拿 不走 OpenFGA list_objects)。新增 `scripts/seed_admin_projects.py` 为每个 active user 创建 `<name> · 个人素材库` + 11 文件夹结构(01 客户原片 sensitive / 02 工作素材 + 3 子 / 03 成片 + 3 子 / 04 平面 / 05 BGM);已 apply 10 user × 110 folders |
 
 ---
 
