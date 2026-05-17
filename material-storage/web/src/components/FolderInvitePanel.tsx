@@ -15,7 +15,7 @@ import { http } from '../api/client';
 import { errorMessage } from '../api/client';
 import { useInviteFolder, useRevokeFolder } from '../api/hooks';
 import type { Folder, Me } from '../api/types';
-import { UserPicker } from './UserPicker';
+import { SubjectPicker, type Subject } from './SubjectPicker';
 
 dayjs.extend(relativeTime);
 dayjs.locale('zh-cn');
@@ -235,32 +235,35 @@ function InviteModal({
 }) {
   const [level, setLevel] = useState<'viewer' | 'downloader'>('viewer');
   const [duration, setDuration] = useState(0);
-  const [openIds, setOpenIds] = useState<string[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const invite = useInviteFolder();
   const { message } = App.useApp();
 
   const handleSubmit = async () => {
-    if (openIds.length === 0) {
-      message.warning('请选至少一个用户');
+    if (subjects.length === 0) {
+      message.warning('请选至少一个主体');
       return;
     }
     let ok = 0, fail = 0;
-    for (const oid of openIds) {
+    for (const s of subjects) {
       try {
-        await invite.mutateAsync({
+        const args: Parameters<typeof invite.mutateAsync>[0] = {
           folder_id: folder.id,
-          user_open_id: oid,
           level,
           duration_seconds: duration > 0 ? duration : undefined,
-        });
+        };
+        if (s.kind === 'user') args.user_open_id = s.id;
+        else if (s.kind === 'group') args.group_id = s.id;
+        else args.department_id = s.id;
+        await invite.mutateAsync(args);
         ok++;
       } catch (e) {
         fail++;
-        message.error(`${oid.slice(0, 8)}…: ${errorMessage(e)}`);
+        message.error(`${s.name || s.id}: ${errorMessage(e)}`);
       }
     }
-    if (ok > 0) message.success(`邀请成功 ${ok} 人${fail > 0 ? ` · 失败 ${fail}` : ''}`);
-    setOpenIds([]);
+    if (ok > 0) message.success(`邀请成功 ${ok} 个主体${fail > 0 ? ` · 失败 ${fail}` : ''}`);
+    setSubjects([]);
     onSuccess();
     onClose();
   };
@@ -277,16 +280,8 @@ function InviteModal({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
         <div>
-          <FieldLabel>用户</FieldLabel>
-          <UserPicker
-            value={openIds}
-            onChange={(v) => setOpenIds(v as string[])}
-            preset={[{
-              id: me.id, open_id: me.open_id, union_id: me.union_id,
-              name: me.name + '(自己)', email: me.email,
-            }]}
-            placeholder="搜姓名 / 邮箱选一个或多个…"
-          />
+          <FieldLabel>邀请主体(用户 / 用户组 / 部门)</FieldLabel>
+          <SubjectPicker value={subjects} onChange={setSubjects} me={me} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>

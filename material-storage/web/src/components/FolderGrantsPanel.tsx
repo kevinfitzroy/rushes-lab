@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { http, errorMessage } from '../api/client';
 import type { Folder, Me } from '../api/types';
-import { UserPicker } from './UserPicker';
+import { SubjectPicker, type Subject } from './SubjectPicker';
 
 type GrantLevel = 'viewer' | 'downloader' | 'uploader';
 
@@ -184,33 +184,35 @@ function AddGrantModal({
   open: boolean; onClose: () => void;
   folder: Folder; me: Me; onSuccess: () => void;
 }) {
-  const [openIds, setOpenIds] = useState<string[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [level, setLevel] = useState<GrantLevel>('viewer');
   const [loading, setLoading] = useState(false);
   const { message } = App.useApp();
 
   const submit = async () => {
-    if (openIds.length === 0) {
-      message.warning('请选至少一个用户');
+    if (subjects.length === 0) {
+      message.warning('请选至少一个主体');
       return;
     }
     setLoading(true);
     let ok = 0, fail = 0;
-    for (const oid of openIds) {
+    for (const s of subjects) {
       try {
-        await http.post(`/api/v1/folders/${folder.id}/grants`, {
-          user_open_id: oid, level,
-        });
+        const body: Record<string, string> = { level };
+        if (s.kind === 'user') body.user_open_id = s.id;
+        else if (s.kind === 'group') body.group_id = s.id;
+        else body.department_id = s.id;
+        await http.post(`/api/v1/folders/${folder.id}/grants`, body);
         ok++;
       } catch (e) {
         fail++;
-        message.error(`${oid.slice(0, 8)}…: ${errorMessage(e)}`);
+        message.error(`${s.name || s.id}: ${errorMessage(e)}`);
       }
     }
     setLoading(false);
     if (ok > 0) {
       message.success(`已加 ${ok} 个 ${LEVEL_META[level].label} grant${fail > 0 ? ` · 失败 ${fail}` : ''}`);
-      setOpenIds([]);
+      setSubjects([]);
       onSuccess();
       onClose();
     }
@@ -222,13 +224,8 @@ function AddGrantModal({
            okText="添加" confirmLoading={loading} destroyOnClose>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
         <div>
-          <FieldLabel>用户</FieldLabel>
-          <UserPicker
-            value={openIds}
-            onChange={(v) => setOpenIds(v as string[])}
-            preset={[{ id: me.id, open_id: me.open_id, union_id: me.union_id,
-                       name: me.name + '(自己)', email: me.email }]}
-          />
+          <FieldLabel>主体(用户 / 用户组 / 部门)</FieldLabel>
+          <SubjectPicker value={subjects} onChange={setSubjects} me={me} />
         </div>
         <div>
           <FieldLabel>权限</FieldLabel>

@@ -1,11 +1,10 @@
 """users router — fuzzy search 给前端 UserPicker(a2.5)。
 
 endpoints:
-  GET /api/v1/users?q=&limit=  — admin only,fuzzy name/email/open_id 搜
-                                 return id/open_id/name/email/avatar
+  GET /api/v1/users?q=&limit=  — admin only,fuzzy name/email/open_id 搜本地 db
+  GET /api/v1/groups?q=&limit= — admin only,转调飞书 list_groups + 本地 name filter
 
-权限:任意 project can_admin 才能调(PoC 简化 — 全公司同 org 即可,
-     生产可严:必须有至少一个 project admin tuple)。
+(部门 picker 暂不做 — 飞书 OpenAPI 无全局 dept name fuzzy 搜;UI 用 free-text 输 id)
 """
 from __future__ import annotations
 
@@ -64,3 +63,5 @@ async def search_users(
         )
         for u in res.scalars().all()
     ]
+
+
