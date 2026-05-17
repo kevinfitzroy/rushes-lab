@@ -1,5 +1,7 @@
 # nc/ — Nextcloud PoC 路线
 
+> ⚠️ **历史**(2026-05-17)。Nextcloud 路线在 ADR-0003 时已 drop;后续 [ADR-0005](../../../rushes-spec/material-storage/decisions/0005-drop-seafile-middle-layer-minio-only.md) 进一步抛弃所有第三方文件管理底座,改走自研 + MinIO。本目录仅作历史参考。
+
 落地 v0.3 §8 部署最小配置。覆盖 issue #12 验收用的部署骨架(性能压测脚本另立)。
 
 ## 启动

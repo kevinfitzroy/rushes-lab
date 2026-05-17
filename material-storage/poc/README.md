@@ -1,5 +1,21 @@
 # material-storage PoC
 
+> ⚠️ **大部分已成历史**(2026-05-17)。本 README 描述的 "v0.5 Seafile only PoC" 路线已被 [ADR-0005](../../rushes-spec/material-storage/decisions/0005-drop-seafile-middle-layer-minio-only.md) **supersede** — 后续不再使用 Seafile / NC / oCIS 任一文件管理底座,改走 **自研 FastAPI/React + MinIO 直存** 路线。
+>
+> **仍在 dev 用**:
+> - [`minio/`](./minio) — docker-compose 起 MinIO + OpenFGA,本地 dev 依赖
+> - [`openfga/`](./openfga) — 权限模型源 `store.fga.yaml`,被 api 服务引用
+>
+> **历史参考**(被 ADR-0005 弃用):[`seafile/`](./seafile) / [`nc/`](./nc) / [`ocis/`](./ocis) / [`dataset-gen/`](./dataset-gen) / [`tests/`](./tests)
+>
+> 业务后端 / 前端见 [`../api/`](../api) + [`../web/`](../web)。
+
+---
+
+以下是 **v0.5 Seafile-only PoC 阶段的原文**,保留作历史决策上下文。
+
+---
+
 文件系统选型 PoC 代码骨架 —— **v0.5 收敛 Seafile (Pro Edition) 单线**。配合 [`../../rushes-spec/material-storage/research/file-management-system.md`](../../rushes-spec/material-storage/research/file-management-system.md) v0.5 + [ADR-0003](../../rushes-spec/material-storage/decisions/0003-seafile-only-poc.md) 验收。
 
 ## 适用范围

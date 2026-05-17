@@ -1,5 +1,7 @@
 # seafile/ — Seafile Pro + 本地 MinIO PoC(v0.5 收敛唯一路线)
 
+> ⚠️ **历史**(2026-05-17)。Seafile 路线已被 [ADR-0005](../../../rushes-spec/material-storage/decisions/0005-drop-seafile-middle-layer-minio-only.md) supersede — 当前走自研 + MinIO 直存,不引入 Seafile 中间层。本目录仅作历史参考。
+
 落地 [v0.5 §3.2](../../../rushes-spec/material-storage/research/file-management-system.md) Seafile Pro + 本地 MinIO 作 S3 backend 分层 + [ADR-0003](../../../rushes-spec/material-storage/decisions/0003-seafile-only-poc.md) 决策。覆盖 [Issue #23](https://github.com/kevinfitzroy/rushes-lab/issues/23) PoC-Seafile 部署骨架(性能压测脚本另立,见 `../tests/`)。
 
 ## ⚠️ 关键前提与 2026-05-15 实测 finding

@@ -8,8 +8,12 @@
 
 | Scope | 状态 | 索引 |
 | --- | --- | --- |
-| `material-storage/` | 方案细化中(v2 初稿) | [./material-storage/README.md](./material-storage/README.md) |
-| `feishu/` | 方案就位,等独立 agent 接手实施 | [./feishu/README.md](./feishu/README.md) |
+| `material-storage/` | Phase B 主体已实施 + 部署 server2 dev;持续迭代 | [`./material-storage/README.md`](./material-storage/README.md) |
+| `feishu/` | 契约 v1+ / ADR-0001 + 0002 已 accepted;PoC 连通性 ok,Phase B 实施待启动 | [`./feishu/README.md`](./feishu/README.md) |
+
+> 跨子项目协作规则各自的 [`COLLABORATION.md`](./material-storage/COLLABORATION.md):
+> - [`material-storage/COLLABORATION.md`](./material-storage/COLLABORATION.md) — tester 反馈 ↔ dev
+> - [`feishu/COLLABORATION.md`](./feishu/COLLABORATION.md) — feishu agent ↔ material-storage agent(平级)
 
 ## 内容约定
 
