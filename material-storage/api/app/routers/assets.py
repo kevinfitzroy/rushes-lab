@@ -176,10 +176,14 @@ async def complete_upload(
         **ctx,
     )
 
-    # B-4:enqueue thumbnail 生成(图片才会处理,worker 内 skip 非图片)
-    if asset.content_type and asset.content_type.startswith("image/"):
+    # B-4:enqueue thumbnail 生成 — image 走 Pillow worker;video 走 ffmpeg worker (B-4 iter2 #101)
+    ct = asset.content_type or ""
+    if ct.startswith("image/"):
         from app.services.arq_pool import enqueue_thumbnail
         await enqueue_thumbnail(request.app.state.arq_pool, str(asset.id))
+    elif ct.startswith("video/"):
+        from app.services.arq_pool import enqueue_video_thumbnail
+        await enqueue_video_thumbnail(request.app.state.arq_pool, str(asset.id))
 
     return AssetOut.model_validate(asset)
 

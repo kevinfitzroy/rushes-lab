@@ -5,7 +5,8 @@
 
 tasks:
   - generate_thumbnail(asset_id):图片 → Pillow thumbnail 1024 → MinIO thumbnails/
-  - transcode_proxy:视频转码(后续 iter)
+  - generate_video_thumbnail(asset_id):视频 → ffmpeg 抽帧 → MinIO thumbnails/(B-4 iter2, #101)
+  - mark_expired_approvals:cron 扫已过期 approval,改 status
 """
 from __future__ import annotations
 
@@ -134,9 +135,143 @@ async def generate_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
     }
 
 
-async def transcode_proxy(ctx: dict, asset_id: str) -> dict[str, Any]:
-    """ffmpeg → 720p H.264(视频缩略图 / 转码 — 后续 iter)。"""
-    return {"asset_id": asset_id, "status": "stub_iter_next"}
+_VIDEO_PREFIXES = ("video/",)
+_VIDEO_THUMBNAIL_MAX_BYTES = 50 * 1024 * 1024   # 50MB cap pilot(ROADMAP §63 风险段)
+_VIDEO_HEAD_RANGE = 10 * 1024 * 1024            # 只拉头部 10MB 给 ffmpeg 用,避免大文件拉全
+_FFMPEG_TIMEOUT_SEC = 30                         # subprocess 硬上限
+
+
+async def generate_video_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
+    """视频缩略图生成(B-4 iter2, issue #101)。
+
+    流程:
+      1. db 查 asset(content_type / size / minio_bucket / minio_key)
+      2. content_type 不 video/* → skip
+      3. size > 50MB → skip(pilot;后续 deferred queue)
+      4. boto3 get_object Range bytes=0-{HEAD_RANGE} 流式拉头部 → /tmp/<aid>.bin
+      5. ffmpeg -ss 1 -i in -frames:v 1 -vf scale=1024:-1 out.jpg
+         (-ss 1 抽 1s 帧,避开首帧黑屏;若 duration<1s 兜底 -ss 0)
+      6. 上传 thumbnails/{asset_id}.jpg + 写 asset.tags.thumbnail_key
+      7. 失败兜底 tags['thumbnail_failed']
+      finally: cleanup /tmp
+    """
+    import pathlib
+    import subprocess
+    import tempfile
+    settings = get_settings()
+    sm = get_sessionmaker()
+    aid = uuid.UUID(asset_id)
+
+    async with sm() as db:
+        asset = await db.get(Asset, aid)
+        if asset is None:
+            return {"status": "asset_not_found", "asset_id": asset_id}
+        if asset.deleted_at is not None:
+            return {"status": "asset_deleted", "asset_id": asset_id}
+        if not asset.content_type or not asset.content_type.startswith(_VIDEO_PREFIXES):
+            return {"status": "skip_non_video", "content_type": asset.content_type}
+        if asset.size_bytes and asset.size_bytes > _VIDEO_THUMBNAIL_MAX_BYTES:
+            return {
+                "status": "skip_too_large",
+                "size_bytes": asset.size_bytes,
+                "cap": _VIDEO_THUMBNAIL_MAX_BYTES,
+            }
+        bucket = asset.minio_bucket
+        src_key = asset.minio_key
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.minio_endpoint_internal,
+        aws_access_key_id=settings.minio_access_key,
+        aws_secret_access_key=settings.minio_secret_key,
+        config=Config(signature_version="s3v4", region_name="us-east-1"),
+    )
+
+    tmpdir = pathlib.Path(tempfile.mkdtemp(prefix=f"vthumb-{asset_id}-"))
+    in_path = tmpdir / "in.bin"
+    out_path = tmpdir / "out.jpg"
+    thumbnail_size = 0
+    try:
+        # 1) 拉头部 ~10MB(关键帧通常在前几秒)
+        resp = s3.get_object(Bucket=bucket, Key=src_key,
+                             Range=f"bytes=0-{_VIDEO_HEAD_RANGE - 1}")
+        with open(in_path, "wb") as f:
+            for chunk in resp["Body"].iter_chunks(chunk_size=1024 * 1024):
+                f.write(chunk)
+
+        # 2) ffmpeg 抽帧 — 试 1s 帧;失败兜底 0s 帧
+        for ss in ("1", "0"):
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", ss, "-i", str(in_path),
+                "-frames:v", "1", "-vf", "scale=1024:-2",
+                "-q:v", "3", "-y", str(out_path),
+            ]
+            proc = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT_SEC)
+            if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+                break
+        else:
+            stderr = proc.stderr.decode("utf-8", errors="replace")[:300]
+            raise RuntimeError(f"ffmpeg failed: {stderr}")
+
+        thumbnail_size = out_path.stat().st_size
+
+        # 3) 上传
+        thumbnail_key = f"thumbnails/{asset_id}.jpg"
+        with open(out_path, "rb") as f:
+            s3.put_object(
+                Bucket=bucket, Key=thumbnail_key, Body=f,
+                ContentType="image/jpeg",
+                Metadata={"source_asset": asset_id, "kind": "video_frame"},
+            )
+        log.info("video thumbnail asset=%s key=%s size=%d", asset_id, thumbnail_key, thumbnail_size)
+    except subprocess.TimeoutExpired:
+        log.warning("ffmpeg timeout asset=%s", asset_id)
+        async with sm() as db:
+            a = await db.get(Asset, aid)
+            if a:
+                tags = dict(a.tags or {})
+                tags["thumbnail_failed"] = "ffmpeg_timeout"
+                a.tags = tags
+                await db.commit()
+        return {"status": "failed", "asset_id": asset_id, "error": "ffmpeg_timeout"}
+    except Exception as e:
+        log.warning("video thumbnail fail asset=%s err=%s", asset_id, e)
+        async with sm() as db:
+            a = await db.get(Asset, aid)
+            if a:
+                tags = dict(a.tags or {})
+                tags["thumbnail_failed"] = str(e)[:200]
+                a.tags = tags
+                await db.commit()
+        return {"status": "failed", "asset_id": asset_id, "error": str(e)[:200]}
+    finally:
+        # cleanup /tmp(无论成功失败)
+        try:
+            if in_path.exists():
+                in_path.unlink()
+            if out_path.exists():
+                out_path.unlink()
+            tmpdir.rmdir()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 4) 更新 db
+    async with sm() as db:
+        a = await db.get(Asset, aid)
+        if a:
+            tags = dict(a.tags or {})
+            tags["thumbnail_key"] = thumbnail_key
+            tags["thumbnail_size_bytes"] = thumbnail_size
+            tags["thumbnail_kind"] = "video_frame"
+            tags.pop("thumbnail_failed", None)
+            a.tags = tags
+            await db.commit()
+
+    return {
+        "status": "ok", "asset_id": asset_id,
+        "thumbnail_key": thumbnail_key, "size_bytes": thumbnail_size,
+    }
 
 
 async def mark_expired_approvals(ctx: dict) -> dict[str, Any]:
@@ -202,7 +337,7 @@ _CRON_JOBS = [
 
 
 class WorkerSettings:
-    functions = [generate_thumbnail, transcode_proxy, mark_expired_approvals]
+    functions = [generate_thumbnail, generate_video_thumbnail, mark_expired_approvals]
     cron_jobs = _CRON_JOBS
     redis_settings = _build_redis_settings()
     max_jobs = 4
