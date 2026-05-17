@@ -43,6 +43,13 @@ export interface Asset {
   size_bytes: number;
   content_type: string | null;
   created_at: string;
+  tags?: {
+    thumbnail_key?: string;
+    thumbnail_width?: number;
+    thumbnail_height?: number;
+    thumbnail_failed?: string;
+    [k: string]: unknown;
+  };
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'revoked' | 'expired';

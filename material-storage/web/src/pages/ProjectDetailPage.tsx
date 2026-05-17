@@ -18,6 +18,7 @@ import {
 import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { FolderTree } from '../components/FolderTree';
 import { AssetSummaryPanel } from '../components/AssetSummaryPanel';
+import { AssetThumbnail } from '../components/AssetThumbnail';
 import { ProjectMembersDrawer } from '../components/ProjectMembersDrawer';
 import { RequestAccessModal } from '../components/RequestAccessModal';
 import { NewFolderModal } from '../components/NewFolderModal';
@@ -167,17 +168,7 @@ export default function ProjectDetailPage() {
       title: '文件', dataIndex: 'filename', ellipsis: true,
       render: (v: string, a: Asset) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* 缩略图占位 — 等 B-4 worker 出图后替换为真 thumbnail */}
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 32, height: 32,
-            background: 'var(--ms-hairline-soft)',
-            borderRadius: 'var(--ms-radius-sm)',
-            color: 'var(--ms-ink-subtle)',
-            flexShrink: 0,
-          }}>
-            <FileText size={14} strokeWidth={1.5} />
-          </span>
+          <AssetThumbnail asset={a} />
           <span style={{
             fontWeight: 500, color: 'var(--ms-ink)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',

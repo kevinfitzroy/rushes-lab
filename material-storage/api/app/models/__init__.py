@@ -45,6 +45,8 @@ class AssetOut(ORMModel):
     size_bytes: int
     content_type: str | None
     created_at: datetime
+    # B-4:worker 生成的缩略图 / 标签等 metadata;前端按需读
+    tags: dict = {}
 
 
 # ─── upload presigned ─────────────────────────────────────────────────────────

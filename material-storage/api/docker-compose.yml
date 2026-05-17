@@ -64,6 +64,9 @@ services:
     depends_on:
       ms-redis:
         condition: service_started
+    volumes:
+      - ./app:/app/app:ro
+      - ./scripts:/app/scripts:ro
     networks:
       - poc-net
 
