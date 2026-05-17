@@ -111,10 +111,11 @@ else
 fi
 
 step "4) docker compose build + up"
-ssh_run "cd $REMOTE_DIR && docker compose up -d --build ms-db ms-redis ms-api 2>&1 | tail -20"
+# 含 ms-worker — 漏掉它,改 worker 代码 deploy 不会 reload 长进程(2026-05-18 B-4 iter2 发现)
+ssh_run "cd $REMOTE_DIR && docker compose up -d --build ms-db ms-redis ms-api ms-worker 2>&1 | tail -20"
 sleep 5
 ssh_run "docker ps --filter name=ms- --format 'table {{.Names}}\t{{.Status}}'"
-ok "ms-api 起来了"
+ok "ms-api + ms-worker 起来了"
 
 step "5) alembic migrate"
 ssh_run "cd $REMOTE_DIR && docker compose exec -T ms-api alembic upgrade head 2>&1 | tail -10"
