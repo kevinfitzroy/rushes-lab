@@ -2,7 +2,7 @@
  * 项目列表 — 卡片网格(b1 现代化重做)。
  * 卡片左侧 4px visibility 色块条 + Fraunces display 大标题 + mono code + meta row。
  */
-import { Button, Skeleton } from 'antd';
+import { Button, Skeleton, Tooltip } from 'antd';
 import { Plus, Lock, Globe, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -58,12 +58,15 @@ export default function ProjectsPage() {
           </p>
         </div>
         {me && (
-          <Button
-            type="primary"
-            icon={<Plus size={15} strokeWidth={2.2} />}
-            onClick={() => setCreateOpen(true)}
-            style={{ height: 36, fontWeight: 500 }}
-          >新建项目</Button>
+          <Tooltip title={me.is_system_admin ? '' : '仅系统管理员可创建项目'} placement="left">
+            <Button
+              type="primary"
+              icon={<Plus size={15} strokeWidth={2.2} />}
+              onClick={() => setCreateOpen(true)}
+              disabled={!me.is_system_admin}
+              style={{ height: 36, fontWeight: 500 }}
+            >新建项目</Button>
+          </Tooltip>
         )}
       </div>
 
@@ -72,7 +75,7 @@ export default function ProjectsPage() {
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
         </Grid>
       ) : (!data || data.length === 0) ? (
-        <EmptyState onCreate={me ? () => setCreateOpen(true) : undefined} />
+        <EmptyState onCreate={me?.is_system_admin ? () => setCreateOpen(true) : undefined} />
       ) : (
         <div className="ms-enter-stagger">
           <Grid>

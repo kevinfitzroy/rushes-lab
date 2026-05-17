@@ -43,8 +43,9 @@ export const useCreateProject = () => {
       code: string;
       name: string;
       description?: string;
-      organization_id?: string;       // 留空 → 后端自动从 user/default 推
+      organization_id?: string;
       minio_bucket: string;
+      admin_user_open_id: string;   // 必填:指派项目 admin(可以是自己)
     }) => {
       const { organization_id, ...rest } = body;
       const payload = organization_id ? { ...rest, organization_id } : rest;

@@ -114,11 +114,8 @@ async def require_admin(
     """admin 守门 — 给 /admin/* / GET /users 用。
 
     判定:org admin(organization#admin)或任意 project can_admin。
-    使用:
-      user: CurrentUser = Depends(require_admin)
     """
     perms: PermissionsService = request.app.state.permissions
-    # 1) org admin
     from app.services.contact_sync import get_default_organization
     async with get_sessionmaker()() as db:
         org = await get_default_organization(db)
@@ -128,7 +125,28 @@ async def require_admin(
             user_open_id=user.open_id, organization_tenant_key=tenant_key,
         ):
             return user
-    # 2) 兜底:任意 project admin
     if await perms.has_any_project_admin(user_open_id=user.open_id):
         return user
     raise HTTPException(403, "admin permission required")
+
+
+async def require_system_admin(
+    request: Request,
+    user: CurrentUser = _Depends(get_current_user),
+) -> CurrentUser:
+    """系统 admin 守门 — 仅 organization#admin(后台指定,不可 UI promote)。
+
+    用于:POST /projects(只有系统 admin 能建项目)。
+    """
+    perms: PermissionsService = request.app.state.permissions
+    from app.services.contact_sync import get_default_organization
+    async with get_sessionmaker()() as db:
+        org = await get_default_organization(db)
+    if not org:
+        raise HTTPException(500, "no default organization configured")
+    _, tenant_key = org
+    if not await perms.is_org_admin(
+        user_open_id=user.open_id, organization_tenant_key=tenant_key,
+    ):
+        raise HTTPException(403, "system admin permission required(只有系统管理员可执行此操作)")
+    return user

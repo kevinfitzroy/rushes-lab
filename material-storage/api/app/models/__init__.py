@@ -19,6 +19,10 @@ class ProjectCreateIn(BaseModel):
     # 留空 = 用 user.organization_id 或 settings.default_organization_id
     organization_id: uuid.UUID | None = None
     minio_bucket: str = Field(..., max_length=63)
+    # 必填:指派的项目 admin(系统 admin 创建,需要明确指派 sub-admin;
+    # 可以是自己 = me.open_id;UI 默认填创建者)
+    admin_user_open_id: str = Field(..., min_length=1, max_length=64,
+                                    description="项目管理员的飞书 open_id")
 
 
 class ProjectOut(ORMModel):

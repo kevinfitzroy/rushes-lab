@@ -8,6 +8,7 @@ export interface Me {
   email: string | null;
   organization_id: string | null;
   is_active: boolean;
+  is_system_admin: boolean;
 }
 
 export interface Project {
