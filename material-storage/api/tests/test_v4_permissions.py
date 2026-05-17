@@ -311,13 +311,68 @@ async def test_users_no_auth_401(client: AsyncClient) -> None:
     assert r.status_code == 401
 
 
-# ─── admin endpoint:feishu health ───────────────────────────────────────────
+# ─── polish 1:folder explicit grants ───────────────────────────────────────
 @pytest.mark.asyncio
-async def test_admin_feishu_health(client: AsyncClient) -> None:
-    """v4 应注册 approval_decision intent。"""
-    r = await client.get("/api/v1/admin/feishu/health")
-    # 该 endpoint 没 require auth
+async def test_folder_grants_cycle(client: AsyncClient) -> None:
+    """普通一级 folder grants:list / add outsider downloader / delete / 验回退。"""
+    # 找 wedding 项目下的一级普通 folder
+    r = await client.get(
+        "/api/v1/folders", params={"project_id": PROJECT_WEDDING}, headers=_h(EVAN_ID),
+    )
     assert r.status_code == 200
-    body = r.json()
-    intents = body.get("registered_card_intents", [])
-    assert "approval_decision" in intents
+    normal_top = next(
+        f for f in r.json()
+        if not f["is_sensitive"] and f.get("parent_folder_id") is None
+    )
+    fid = normal_top["id"]
+
+    # list 初始
+    r1 = await client.get(f"/api/v1/folders/{fid}/grants", headers=_h(EVAN_ID))
+    assert r1.status_code == 200
+    before = len(r1.json())
+
+    # add outsider downloader
+    add = await client.post(
+        f"/api/v1/folders/{fid}/grants",
+        json={"user_open_id": "ou_fake_outsider", "level": "downloader"},
+        headers=_h(EVAN_ID),
+    )
+    assert add.status_code == 204, add.text
+
+    r2 = await client.get(f"/api/v1/folders/{fid}/grants", headers=_h(EVAN_ID))
+    assert any(g["subject"] == "user:ou_fake_outsider" and g["level"] == "downloader"
+               for g in r2.json())
+
+    # delete
+    rev = await client.delete(
+        f"/api/v1/folders/{fid}/grants",
+        params={"subject": "user:ou_fake_outsider", "level": "downloader"},
+        headers=_h(EVAN_ID),
+    )
+    assert rev.status_code == 204
+    r3 = await client.get(f"/api/v1/folders/{fid}/grants", headers=_h(EVAN_ID))
+    assert len(r3.json()) == before
+
+
+@pytest.mark.asyncio
+async def test_folder_grants_sensitive_rejected(client: AsyncClient) -> None:
+    """sensitive folder 不允许走 /grants(应走 /invite)。"""
+    r = await client.get(
+        "/api/v1/folders", params={"project_id": PROJECT_WEDDING}, headers=_h(EVAN_ID),
+    )
+    sens = next(f for f in r.json() if f["is_sensitive"])
+    r2 = await client.get(f"/api/v1/folders/{sens['id']}/grants", headers=_h(EVAN_ID))
+    assert r2.status_code == 400
+
+
+# ─── admin endpoint:feishu health(polish 2 起需 admin)──────────────────────
+@pytest.mark.asyncio
+async def test_admin_feishu_health_no_auth_401(client: AsyncClient) -> None:
+    r = await client.get("/api/v1/admin/feishu/health")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_feishu_health_denied_for_non_admin(client: AsyncClient) -> None:
+    r = await client.get("/api/v1/admin/feishu/health", headers=_h(OUTSIDER_ID))
+    assert r.status_code == 403

@@ -14,6 +14,7 @@ import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
 import { ShareModal } from './ShareModal';
 import { FolderInvitePanel } from './FolderInvitePanel';
+import { FolderGrantsPanel } from './FolderGrantsPanel';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -34,9 +35,14 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
   const dlLink = useDownloadLink();
   const downloads = useDownloads();
 
-  // D iter3:0 选 + sensitive folder + me → 显 FolderInvitePanel
+  // D iter3:0 选 + sensitive folder + me → FolderInvitePanel
   if (selected.length === 0 && folder && folder.is_sensitive && me) {
     return <FolderInvitePanel folder={folder} me={me} />;
+  }
+  // polish 1:0 选 + 普通一级 folder + me → FolderGrantsPanel(子级超父级)
+  if (selected.length === 0 && folder && !folder.is_sensitive
+      && folder.parent_folder_id === null && me) {
+    return <FolderGrantsPanel folder={folder} me={me} />;
   }
 
   if (selected.length === 0) {

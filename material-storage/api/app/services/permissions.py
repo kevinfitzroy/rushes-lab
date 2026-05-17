@@ -387,6 +387,25 @@ class PermissionsService:
             )
         )
 
+    # ───────────────────────── admin 判定 helpers ────────────────────────────
+    async def is_org_admin(self, *, user_open_id: str, organization_tenant_key: str) -> bool:
+        """是否企业管理员(organization.admin)。"""
+        return await self.check(
+            user_subject=f"user:{user_open_id}",
+            relation="admin",
+            object_type="organization",
+            object_id=organization_tenant_key,
+        )
+
+    async def has_any_project_admin(self, *, user_open_id: str) -> bool:
+        """user 是否对任意 project 有 can_admin(管理后台 polish 用)。"""
+        ids = await self.list_objects(
+            user_subject=f"user:{user_open_id}",
+            relation="can_admin",
+            object_type="project",
+        )
+        return len(ids) > 0
+
     async def add_user_to_group(self, *, group_id: str, user_open_id: str) -> None:
         await self._client.write(
             ClientWriteRequest(

@@ -448,3 +448,179 @@ async def revoke_invite(
         },
         **ctx,
     )
+
+
+# ─── 普通 folder explicit grant(仅一级 folder)─────────────────────────────
+FOLDER_GRANT_KINDS = ("viewer", "downloader", "uploader")
+
+
+def _enforce_level1_folder(folder: Folder) -> None:
+    if folder.parent_folder_id is not None:
+        raise HTTPException(
+            400,
+            "explicit grant 仅支持一级 folder(直接挂在 project 下);"
+            "深层 folder 想要不同权限,请在 project 下新建一级 folder",
+        )
+
+
+@router.get("/{folder_id}/grants")
+async def list_folder_grants(
+    folder_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """列普通 folder 的 explicit_* grants。
+
+    返:[{subject, kind, subject_id, name, role: explicit_viewer|downloader|uploader}]
+    需 can_admin folder + folder 为一级。
+    """
+    user_id, user_open_id = user.id, user.open_id
+    folder = await db.get(Folder, folder_id)
+    if folder is None:
+        raise HTTPException(404, "folder not found")
+    if folder.is_sensitive:
+        raise HTTPException(400, "sensitive folder 用 /members endpoint")
+    _enforce_level1_folder(folder)
+
+    allowed = await permissions.check(
+        user_subject=f"user:{user_open_id}", relation="can_admin",
+        object_type="folder", object_id=str(folder_id),
+    )
+    if not allowed:
+        raise HTTPException(403, "no admin permission on this folder")
+
+    from openfga_sdk.models import ReadRequestTupleKey
+    from app.db.tables import User as _User
+    resp = await permissions._client.read(  # type: ignore[attr-defined]
+        ReadRequestTupleKey(object=f"folder:{folder_id}")
+    )
+
+    grants: list[dict] = []
+    user_subject_ids: list[str] = []
+    user_rows: list[dict] = []
+    GRANT_RELATIONS = {f"explicit_{k}" for k in FOLDER_GRANT_KINDS}
+    for t in resp.tuples:
+        rel = t.key.relation
+        if rel not in GRANT_RELATIONS:
+            continue
+        kind = rel.removeprefix("explicit_")  # viewer / downloader / uploader
+        subject = t.key.user
+        sk, rest = subject.split(":", 1)
+        sid = rest.rsplit("#", 1)[0]
+        rec = {
+            "subject": subject, "kind": sk, "subject_id": sid,
+            "name": None, "level": kind,
+        }
+        if sk == "user":
+            user_subject_ids.append(sid)
+            user_rows.append(rec)
+        else:
+            label = "用户组" if sk == "group" else "部门"
+            rec["name"] = f"{label} {sid[:12]}…"
+            grants.append(rec)
+
+    if user_subject_ids:
+        stmt = select(_User).where(_User.feishu_open_id.in_(user_subject_ids))
+        res = await db.execute(stmt)
+        name_by = {u.feishu_open_id: u.name for u in res.scalars().all()}
+        for r in user_rows:
+            r["name"] = name_by.get(r["subject_id"], r["subject_id"][:12] + "…")
+        grants.extend(user_rows)
+
+    grants.sort(key=lambda g: (0 if g["kind"] == "user" else 1, g["name"] or ""))
+    return grants
+
+
+@router.post("/{folder_id}/grants", status_code=204)
+async def add_folder_grant(
+    folder_id: uuid.UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    audit: AuditService = Depends(get_audit),
+    user: CurrentUser = Depends(get_current_user),
+    ctx: dict = Depends(get_request_context),
+) -> None:
+    """body:{user_open_id|group_id|department_id, level: viewer|downloader|uploader}"""
+    user_id, user_open_id = user.id, user.open_id
+    folder = await db.get(Folder, folder_id)
+    if folder is None:
+        raise HTTPException(404, "folder not found")
+    if folder.is_sensitive:
+        raise HTTPException(400, "sensitive folder 用 /invite endpoint")
+    _enforce_level1_folder(folder)
+
+    allowed = await permissions.check(
+        user_subject=f"user:{user_open_id}", relation="can_admin",
+        object_type="folder", object_id=str(folder_id),
+    )
+    if not allowed:
+        raise HTTPException(403, "no admin permission on this folder")
+
+    level = payload.get("level")
+    if level not in FOLDER_GRANT_KINDS:
+        raise HTTPException(400, f"level must be one of {FOLDER_GRANT_KINDS}")
+    provided = [
+        ("user", payload.get("user_open_id")),
+        ("group", payload.get("group_id")),
+        ("department", payload.get("department_id")),
+    ]
+    chosen = [(k, v) for k, v in provided if v]
+    if len(chosen) != 1:
+        raise HTTPException(
+            400, "must specify exactly one of user_open_id / group_id / department_id"
+        )
+    subject_kind, subject_id = chosen[0]
+
+    from app.services.permissions import fmt_subject
+    subject = fmt_subject(subject_kind, subject_id)  # type: ignore[arg-type]
+    await permissions.grant_folder_explicit_subject(
+        folder_id=str(folder_id), subject=subject,
+        kind=f"explicit_{level}",  # type: ignore[arg-type]
+    )
+
+    await audit.write(
+        event_type="folder_grant_added",
+        actor_user_id=user_id, target_project_id=folder.project_id,
+        details={"folder_id": str(folder_id), "subject": subject, "level": level},
+        **ctx,
+    )
+
+
+@router.delete("/{folder_id}/grants", status_code=204)
+async def remove_folder_grant(
+    folder_id: uuid.UUID,
+    subject: str = Query(..., description="完整 OpenFGA subject"),
+    level: str = Query(..., pattern=r"^(viewer|downloader|uploader)$"),
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    audit: AuditService = Depends(get_audit),
+    user: CurrentUser = Depends(get_current_user),
+    ctx: dict = Depends(get_request_context),
+) -> None:
+    user_id, user_open_id = user.id, user.open_id
+    folder = await db.get(Folder, folder_id)
+    if folder is None:
+        raise HTTPException(404, "folder not found")
+    if folder.is_sensitive:
+        raise HTTPException(400, "sensitive folder 用 /invite endpoint")
+    _enforce_level1_folder(folder)
+
+    allowed = await permissions.check(
+        user_subject=f"user:{user_open_id}", relation="can_admin",
+        object_type="folder", object_id=str(folder_id),
+    )
+    if not allowed:
+        raise HTTPException(403, "no admin permission on this folder")
+
+    await permissions.revoke_folder_explicit_subject(
+        folder_id=str(folder_id), subject=subject,
+        kind=f"explicit_{level}",  # type: ignore[arg-type]
+    )
+    await audit.write(
+        event_type="folder_grant_removed",
+        actor_user_id=user_id, target_project_id=folder.project_id,
+        details={"folder_id": str(folder_id), "subject": subject, "level": level},
+        **ctx,
+    )

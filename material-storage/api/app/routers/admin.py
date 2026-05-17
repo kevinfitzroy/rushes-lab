@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import AuditEvent, User
-from app.deps import CurrentUser, get_current_user, get_feishu_client
+from app.deps import CurrentUser, require_admin, get_feishu_client
 from app.services.feishu_card_handlers import registered_intents
 from app.services.feishu_cards import (
     build_approval_card,
@@ -39,6 +39,7 @@ router = APIRouter()
 @router.get("/feishu/health")
 async def feishu_health(
     feishu: FeishuClient = Depends(get_feishu_client),
+    user: CurrentUser = Depends(require_admin),
 ) -> dict[str, object]:
     """tenant_access_token 拿不到时 token=None + error。"""
     settings = get_settings()
@@ -73,7 +74,7 @@ async def feishu_test_card(
     payload: TestCardIn,
     db: AsyncSession = Depends(get_db),
     feishu: FeishuClient = Depends(get_feishu_client),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_admin),
 ) -> dict[str, object]:
     user_id, user_open_id = user.id, user.open_id
     """给指定 open_id(默认自己)推一张测试卡片。用于 iter1 验证发送链路。"""
@@ -177,7 +178,7 @@ async def list_audit(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_admin),
 ) -> list[AuditOut]:
     """audit 查询(分页 + filter)。
 
@@ -214,7 +215,7 @@ async def export_audit_csv(
     from_time: datetime | None = Query(None, alias="from"),
     to_time: datetime | None = Query(None, alias="to"),
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_admin),
 ) -> StreamingResponse:
     """流式 CSV 导出(同 query filter)— UTF-8 BOM 给 Excel 兼容。"""
     _ = user.id
