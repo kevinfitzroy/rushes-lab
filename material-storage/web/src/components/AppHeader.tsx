@@ -58,6 +58,7 @@ export function AppHeader({ me }: Props) {
         <nav style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 'var(--ms-sp-md)' }}>
           <NavChip to="/" label="项目" navigate={navigate} />
           <NavChip to="/approvals" label="审批" navigate={navigate} />
+          <NavChip to="/admin/audit" label="审计" navigate={navigate} />
         </nav>
 
         <div style={{ flex: 1 }} />
