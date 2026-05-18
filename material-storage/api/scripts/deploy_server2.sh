@@ -41,6 +41,56 @@ step "0) 检查本地环境(在 material-storage/api 目录运行)"
 [[ -f Dockerfile ]] || { echo "ERROR: 必须在 material-storage/api/ 下跑"; exit 1; }
 ok "本地 ms-api 目录已确认"
 
+step "0.5) 开启 maintenance banner(deploy 期间给前端弹 modal,避免测试人员中途惊吓)"
+# MAINTENANCE_ISSUES 两种格式:
+#   (a) bare 数字列表:`"101 104"` — 自动 gh issue view 拉 title
+#   (b) JSON:`'[{"number":101,"summary":"…"}]'` — 直接使用
+ISSUES_JSON='[]'
+if [[ -n "${MAINTENANCE_ISSUES:-}" ]]; then
+  if [[ "${MAINTENANCE_ISSUES:0:1}" == "[" ]]; then
+    if echo "$MAINTENANCE_ISSUES" | python3 -c 'import json,sys;json.loads(sys.stdin.read())' 2>/dev/null; then
+      ISSUES_JSON="$MAINTENANCE_ISSUES"
+    else
+      warn "MAINTENANCE_ISSUES JSON 解析失败,banner.issues 留空"
+    fi
+  else
+    items=()
+    for n in $MAINTENANCE_ISSUES; do
+      title=$(gh issue view "$n" --repo kevinfitzroy/rushes-lab --json title -q .title 2>/dev/null || echo "")
+      if [[ -n "$title" ]]; then
+        items+=("$(python3 -c "import json,sys;print(json.dumps({'number':int(sys.argv[1]),'summary':sys.argv[2]},ensure_ascii=False))" "$n" "$title")")
+      else
+        warn "gh issue view #$n 拉 title 失败,跳过"
+      fi
+    done
+    if [[ ${#items[@]} -gt 0 ]]; then
+      ISSUES_JSON="[$(IFS=,; echo "${items[*]}")]"
+    fi
+  fi
+fi
+
+NOW_ISO=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+ENDS_ISO=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) + timedelta(seconds=120)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+BANNER_JSON=$(python3 -c "
+import json, sys
+print(json.dumps({
+  'active': True,
+  'message': '正在部署一次更新,通常 1 分钟内恢复。',
+  'issues': json.loads(sys.argv[1]),
+  'started_at': sys.argv[2],
+  'ends_at': sys.argv[3],
+}, ensure_ascii=False))
+" "$ISSUES_JSON" "$NOW_ISO" "$ENDS_ISO")
+
+# base64 传输避开 quoting 噩梦(JSON 含双引号/中文/可能的特殊字符)
+# SETEX 900s 兜底 — 即使脚本崩 banner 也会 15 分钟后自然消失
+ENC=$(printf '%s' "$BANNER_JSON" | base64 | tr -d '\n')
+if ssh_run "echo '$ENC' | base64 -d | docker exec -i ms-redis redis-cli -x SETEX maintenance:banner 900 >/dev/null"; then
+  ok "maintenance banner 已开启(900s TTL 兜底);前端 ≤8s 内弹 modal"
+else
+  warn "banner 开启失败(ms-redis 没起?),deploy 继续"
+fi
+
 step "1) rsync 源码到 server2:$REMOTE_DIR"
 ssh_run "mkdir -p $REMOTE_DIR"
 rsync_to --exclude='__pycache__' --exclude='.pytest_cache' --exclude='.venv' \
@@ -153,6 +203,14 @@ fi
 
 step "9) 检查 ms-api 通过 nginx 外网可达"
 ssh_run "curl -sS http://localhost/api/v1 2>&1 | head -3 || echo 'nginx 还没配 /api 路由'"
+
+step "9.5) 撤销 maintenance banner — 前端会显示 '升级完成' 几秒后自动关"
+if ssh_run "docker exec -i ms-redis redis-cli DEL maintenance:banner >/dev/null"; then
+  ok "banner 已撤销"
+else
+  warn "banner 撤销失败 — 900s TTL 会自然清理,问题不大"
+fi
+
 echo
 echo -e "${GREEN}══════ 全部部署 + 测试完成 ══════${NC}"
 echo "uppy demo: 在 server2 nginx 加 /api → 127.0.0.1:8200 + /static → 同;或本地 SSH tunnel:"
