@@ -61,6 +61,10 @@ router = APIRouter()
 async def create_approval(
     payload: ApprovalCreateIn,
     background: BackgroundTasks,
+    via_link: str | None = Query(
+        None, description="若来自 request-link 落地页,带 token 让 backend enforce "
+                          "(target 必须匹配,receiver_open_id 限定时必须匹配当前 user)",
+    ),
     db: AsyncSession = Depends(get_db),
     audit: AuditService = Depends(get_audit),
     permissions: PermissionsService = Depends(get_permissions),
@@ -73,6 +77,25 @@ async def create_approval(
         raise HTTPException(400, "action=access 仅适用于 target_type=sensitive_folder")
     if payload.action == "download" and payload.duration_seconds is None:
         raise HTTPException(400, "action=download 必须指定 duration_seconds")
+
+    # #112 PR-2:若提交 via_link,backend enforce token 仍有效 + target/action 一致
+    # + 限定 receiver 时必须 = current user(advisor risk #3:不能只靠 frontend 隐藏 UI)
+    if via_link:
+        from app.services.request_link import resolve_request_link
+        link = await resolve_request_link(db, via_link)
+        if link is None:
+            raise HTTPException(400, "申请链接不存在或已过期")
+        if (link["target_type"] != payload.target_type
+                or str(link["target_id"]) != str(payload.target_id)):
+            raise HTTPException(400, "申请链接的目标资源与提交不一致")
+        if payload.action not in link["allowed_actions"]:
+            raise HTTPException(
+                400,
+                f"该申请链接不允许 action={payload.action};"
+                f"可申请:{link['allowed_actions']}",
+            )
+        if link["receiver_open_id"] and link["receiver_open_id"] != user_open_id:
+            raise HTTPException(403, "该申请链接仅限定的接收者可用")
 
     approval = ApprovalRequest(
         id=uuid.uuid4(),

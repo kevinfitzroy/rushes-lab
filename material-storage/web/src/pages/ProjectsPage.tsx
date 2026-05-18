@@ -3,7 +3,7 @@
  * 卡片左侧 4px visibility 色块条 + Fraunces display 大标题 + mono code + meta row。
  */
 import { Button, Skeleton, Tooltip } from 'antd';
-import { Plus, Lock, Globe, EyeOff } from 'lucide-react';
+import { Plus, Lock, Globe, EyeOff, Link2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -11,6 +11,7 @@ import 'dayjs/locale/zh-cn';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useMe, useProjects } from '../api/hooks';
 import { NewProjectModal } from '../components/NewProjectModal';
+import { RequestLinkCreateModal } from '../components/RequestLinkCreateModal';
 import type { Project } from '../api/types';
 
 dayjs.extend(relativeTime);
@@ -109,7 +110,11 @@ function Grid({ children }: { children: React.ReactNode }) {
 function ProjectCard({ project: p }: { project: Project }) {
   const vis = VIS_META[p.visibility] || VIS_META.private;
   const VisIcon = vis.Icon;
+  // #112 PR-2: project admin 才显"生成申请链接"按钮
+  const isAdmin = (p.my_roles ?? []).includes('admin');
+  const [linkOpen, setLinkOpen] = useState(false);
   return (
+    <>
     <Link
       to={`/projects/${p.id}`}
       className="ms-card-hover"
@@ -238,11 +243,41 @@ function ProjectCard({ project: p }: { project: Project }) {
           <VisIcon size={12} strokeWidth={1.8} />
           {vis.label}
         </span>
-        <span style={{ color: 'var(--ms-ink-subtle)' }}>
-          {dayjs(p.created_at).fromNow()}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--ms-ink-subtle)' }}>
+          {isAdmin && (
+            <Tooltip title="生成一个申请链接,发给别人让他来申请这个项目的权限(不直接授权)">
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLinkOpen(true); }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 8px', fontSize: 11,
+                  color: 'var(--ms-accent)',
+                  background: 'transparent',
+                  border: '1px solid var(--ms-accent)',
+                  borderRadius: 'var(--ms-radius-sm)',
+                  cursor: 'pointer',
+                  lineHeight: 1.4,
+                }}
+              >
+                <Link2 size={11} strokeWidth={2} />
+                申请链接
+              </button>
+            </Tooltip>
+          )}
+          <span>{dayjs(p.created_at).fromNow()}</span>
         </span>
       </div>
     </Link>
+    {isAdmin && (
+      <RequestLinkCreateModal
+        open={linkOpen}
+        onClose={() => setLinkOpen(false)}
+        targetType="project"
+        targetId={p.id}
+        targetName={p.name}
+      />
+    )}
+    </>
   );
 }
 

@@ -10,6 +10,10 @@ interface Props {
   targetName: string;
   targetType: 'sensitive_folder' | 'asset' | 'project';
   defaultAction?: 'access' | 'download';
+  // #112 PR-2: 由 request-link 落地页注入约束动作集;不传 = 不约束(原行为)
+  allowedActions?: ('access' | 'download')[];
+  // 同时 POST 时附带 via_link query param 给 backend enforce
+  viaLink?: string;
 }
 
 // #119 修:有效期改预设按钮 + 自定义(原来要求用户填裸秒数,unfriendly)
@@ -84,10 +88,19 @@ function DurationControl({ value, onChange }: { value?: number; onChange?: (v: n
   );
 }
 
-export function RequestAccessModal({ open, onClose, targetId, targetName, targetType, defaultAction = 'access' }: Props) {
+export function RequestAccessModal({
+  open, onClose, targetId, targetName, targetType,
+  defaultAction = 'access', allowedActions, viaLink,
+}: Props) {
   const create = useCreateApproval();
   const [form] = Form.useForm();
   const { message } = App.useApp();
+
+  // 若 allowedActions 注入且 default 不在允许集,fallback 到第一个允许的
+  const effectiveDefault: 'access' | 'download' =
+    allowedActions && allowedActions.length > 0 && !allowedActions.includes(defaultAction)
+      ? allowedActions[0]
+      : defaultAction;
 
   useEffect(() => {
     if (open) form.resetFields();
@@ -108,6 +121,7 @@ export function RequestAccessModal({ open, onClose, targetId, targetName, target
             action: v.action,
             duration_seconds: v.duration_seconds || undefined,
             reason: v.reason,
+            via_link: viaLink,
           });
           message.success('申请已提交');
           onClose();
@@ -119,11 +133,18 @@ export function RequestAccessModal({ open, onClose, targetId, targetName, target
       confirmLoading={create.isPending}
     >
       <Form form={form} layout="vertical"
-            initialValues={{ action: defaultAction, duration_seconds: defaultAction === 'access' ? undefined : 3600 }}>
+            initialValues={{ action: effectiveDefault, duration_seconds: effectiveDefault === 'access' ? undefined : 3600 }}>
         <Form.Item name="action" label="操作类型" rules={[{ required: true }]}>
           <Radio.Group>
-            <Radio value="access" disabled={targetType !== 'sensitive_folder'}>访问(进入敏感目录)</Radio>
-            <Radio value="download">下载({targetType === 'asset' ? '单文件' : '批量'})</Radio>
+            <Radio value="access"
+                   disabled={targetType !== 'sensitive_folder'
+                             || (!!allowedActions && !allowedActions.includes('access'))}>
+              访问(进入敏感目录)
+            </Radio>
+            <Radio value="download"
+                   disabled={!!allowedActions && !allowedActions.includes('download')}>
+              下载({targetType === 'asset' ? '单文件' : '批量'})
+            </Radio>
           </Radio.Group>
         </Form.Item>
         <Form.Item shouldUpdate={(p, c) => p.action !== c.action} noStyle>
