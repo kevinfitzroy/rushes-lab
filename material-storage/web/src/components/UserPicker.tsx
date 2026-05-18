@@ -33,6 +33,9 @@ export function UserPicker({
 }: Props) {
   const [options, setOptions] = useState<UserBrief[]>([]);
   const [fetching, setFetching] = useState(false);
+  // #114 修:query 非空时不 append preset(否则用户搜不到的关键词会被 preset 注入劫持
+  // 导致总是显示自己,'无匹配' 永远不展示)
+  const [query, setQuery] = useState('');
   const fetchRef = useRef(0);
 
   // 选中 user 的 brief 缓存(用于显示 tag 含 name,不止 open_id)
@@ -43,6 +46,7 @@ export function UserPicker({
   }, [options, preset]);
 
   const search = (q: string) => {
+    setQuery(q);
     if (debounceTimer) clearTimeout(debounceTimer);
     const tag = ++fetchRef.current;
     setFetching(true);
@@ -68,7 +72,9 @@ export function UserPicker({
 
   const opts = useMemo(() => {
     const list = [...options];
-    if (preset) {
+    // 只在 query 为空时(初始 / 没搜东西)append preset;一旦用户开始输入,
+    // 不再注入 preset,让 backend 命中结果 + notFoundContent='无匹配' 正常工作
+    if (preset && !query.trim()) {
       for (const u of preset) {
         if (!list.find(x => x.open_id === u.open_id)) list.push(u);
       }
@@ -77,7 +83,7 @@ export function UserPicker({
       value: u.open_id,
       label: <UserRow user={u} />,
     }));
-  }, [options, preset]);
+  }, [options, preset, query]);
 
   return (
     <Select

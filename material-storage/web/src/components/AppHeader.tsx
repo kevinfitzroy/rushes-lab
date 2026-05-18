@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AutoComplete, Empty, Modal } from 'antd';
-import { Search as SearchIcon, Bell, Inbox } from 'lucide-react';
+import { Search as SearchIcon, Inbox } from 'lucide-react';
+import { TaskCenterDrawer } from './TaskCenterDrawer';
 import { useMe, useProjects } from '../api/hooks';
 import { UserMenu } from './UserMenu';
 import type { Me } from '../api/types';
@@ -15,6 +16,7 @@ interface Props { me: Me; }
 export function AppHeader({ me }: Props) {
   const navigate = useNavigate();
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [taskOpen, setTaskOpen] = useState(false);
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac/.test(navigator.platform),
     [],
@@ -93,14 +95,17 @@ export function AppHeader({ me }: Props) {
           <kbd style={kbdStyle}>K</kbd>
         </button>
 
-        {/* ── 简易通知占位 ─────────────────────────────────── */}
-        <IconButton title="任务收件箱"><Inbox size={16} strokeWidth={1.8} /></IconButton>
-        <IconButton title="通知"><Bell size={16} strokeWidth={1.8} /></IconButton>
+        {/* 任务收件箱(上传 / 下载进度)— #120 修:之前 onClick 漏接,改为接 TaskCenterDrawer */}
+        <IconButton title="任务收件箱" onClick={() => setTaskOpen(true)}>
+          <Inbox size={16} strokeWidth={1.8} />
+        </IconButton>
+        {/* #121 修:Bell(通知)是占位无业务,直接移除 — 飞书 IM 卡片体系已承担系统级通知 */}
 
         <UserMenu me={me} />
       </header>
 
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      <TaskCenterDrawer open={taskOpen} onClose={() => setTaskOpen(false)} />
     </>
   );
 }
@@ -192,11 +197,12 @@ function NavChip({ to, label, navigate }: {
   );
 }
 
-function IconButton({ children, title }: { children: React.ReactNode; title: string }) {
+function IconButton({ children, title, onClick }: { children: React.ReactNode; title: string; onClick?: () => void }) {
   return (
     <button
       title={title}
       aria-label={title}
+      onClick={onClick}
       style={{
         width: 32, height: 32,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
