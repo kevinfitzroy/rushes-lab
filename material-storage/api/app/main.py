@@ -16,7 +16,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.routers import (
-    admin, approvals, assets, auth, folders, groups, maintenance, projects, share, users, webhooks,
+    admin, approvals, assets, auth, folders, groups, maintenance, projects,
+    request_links, share, users, webhooks,
 )
 from app.settings import get_settings
 
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["maintenance"])
+    app.include_router(request_links.router, prefix="/api/v1/request-links", tags=["request-links"])
 
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:

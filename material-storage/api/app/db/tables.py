@@ -24,7 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -242,4 +242,36 @@ class AuditEvent(Base):
     __table_args__ = (
         Index("ix_audit_event_type_time", "event_type", "event_time"),
         Index("ix_audit_actor_time", "actor_user_id", "event_time"),
+    )
+
+
+class RequestLinkToken(Base):
+    """admin 生成的"申请入口"分享 token(#112)。
+
+    接收者落地 → 看到资源元信息 → 走正常 approval 流程(不是直接授权)。
+    跟 share token(audit_events 反范式)语义独立,所以独立表。
+    多次使用,首次时间记 used_at;一次性需求后续加 single_use 字段。
+    """
+    __tablename__ = "request_link_tokens"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    allowed_actions: Mapped[list[str]] = mapped_column(ARRAY(String(16)), nullable=False)
+
+    inviter_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    # nullable = 任意登录用户;非空 = 限定只此 open_id 可用(backend POST approvals 时强制 check)
+    receiver_open_id: Mapped[str | None] = mapped_column(String(64))
+
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_request_link_target", "target_type", "target_id"),
+        Index("ix_request_link_expires", "expires_at"),
     )
