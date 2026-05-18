@@ -219,17 +219,20 @@ function RoleBadge({ role, onRevoke }: { role: ProjectRole; onRevoke: () => void
     <Popconfirm title={`撤销「${meta.label}」?`}
                 okText="撤销" okButtonProps={{ danger: true }}
                 onConfirm={onRevoke}>
-      <span style={{
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-        padding: '1px 6px 1px 8px',
-        background: meta.bg, color: meta.color,
-        fontSize: 10.5, fontWeight: 500, letterSpacing: '0.02em',
-        borderRadius: 3, cursor: 'pointer',
-      }}>
-        {meta.label}
-        <Trash2 size={9} strokeWidth={2}
-                style={{ opacity: 0.6 }} />
-      </span>
+      <Tooltip title="点击撤销该角色" mouseEnterDelay={0.3}>
+        <span className="ms-role-badge" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '3px 9px 3px 10px',
+          background: meta.bg, color: meta.color,
+          fontSize: 12, fontWeight: 500, letterSpacing: '0.02em',
+          borderRadius: 4, cursor: 'pointer',
+          transition: 'filter 0.14s, transform 0.14s',
+        }}>
+          {meta.label}
+          <Trash2 size={13} strokeWidth={2}
+                  style={{ opacity: 0.85, marginLeft: 1 }} />
+        </span>
+      </Tooltip>
     </Popconfirm>
   );
 }
