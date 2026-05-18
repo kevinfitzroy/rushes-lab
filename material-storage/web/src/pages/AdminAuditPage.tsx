@@ -2,9 +2,9 @@
  * /admin/audit — audit 后台(timeline + 过滤 + CSV 导出)。
  * 任意认证 user 可访问(PoC 简化,生产可加 admin enforce)。
  */
-import { Button, DatePicker, Empty, Input, Pagination, Select, Skeleton, Tooltip } from 'antd';
+import { Button, DatePicker, Empty, Pagination, Select, Skeleton, Tooltip } from 'antd';
 import {
-  ChevronRight, Clock, Download, Filter, Search as SearchIcon,
+  ChevronRight, Clock, Download, Filter,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
@@ -12,6 +12,8 @@ import dayjs, { type Dayjs } from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { http, apiBase } from '../api/client';
+import { UserPicker } from '../components/UserPicker';
+import { EVENT_TYPE_LABEL, tlabel } from '../lib/labels';
 
 dayjs.extend(relativeTime);
 dayjs.locale('zh-cn');
@@ -96,7 +98,7 @@ export default function AdminAuditPage() {
             color: 'var(--ms-ink)', lineHeight: 1.1,
           }}>审计</h1>
           <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ms-ink-muted)' }}>
-            全量行为日志 / 可按 actor / event_type / 时间过滤 / CSV 导出
+            全量行为日志 / 可按操作者 / 事件类型 / 时间过滤 / CSV 导出
           </p>
         </div>
         <Button icon={<Download size={14} strokeWidth={2} />}
@@ -118,20 +120,27 @@ export default function AdminAuditPage() {
         <Select
           value={filters.event_type}
           onChange={(v) => { setFilters({ ...filters, event_type: v }); setPage(1); }}
-          style={{ minWidth: 220 }}
+          style={{ minWidth: 240 }}
           showSearch
           allowClear
-          placeholder="event_type(任意 / 选)"
-          options={EVENT_TYPES.map(t => ({ value: t, label: t || '— 全部 —' }))}
+          placeholder="事件类型(可选)"
+          options={EVENT_TYPES.map(t => ({
+            value: t,
+            label: t ? tlabel(t, EVENT_TYPE_LABEL) : '— 全部 —',
+          }))}
         />
-        <Input
-          value={filters.actor_open_id}
-          onChange={(e) => { setFilters({ ...filters, actor_open_id: e.target.value }); }}
-          onPressEnter={() => setPage(1)}
-          placeholder="actor open_id"
-          prefix={<SearchIcon size={13} strokeWidth={1.8} style={{ color: 'var(--ms-ink-subtle)' }} />}
-          style={{ width: 280 }}
-        />
+        {/* #116 修:actor 过滤从手填 open_id Input 改 UserPicker 选人 */}
+        <div style={{ width: 280 }}>
+          <UserPicker
+            multiple={false}
+            value={filters.actor_open_id}
+            onChange={(v) => {
+              setFilters({ ...filters, actor_open_id: (v as string) || '' });
+              setPage(1);
+            }}
+            placeholder="按操作者筛选"
+          />
+        </div>
         <DatePicker.RangePicker
           value={filters.range}
           onChange={(v) => { setFilters({ ...filters, range: v as [Dayjs, Dayjs] | null }); setPage(1); }}
@@ -220,12 +229,14 @@ function EventRow({
                         transition: 'transform var(--ms-dur-fast) var(--ms-ease)',
                         flexShrink: 0,
                       }} />
-        <span style={{
-          fontFamily: 'var(--ms-font-mono)',
-          fontSize: 11.5, color, fontWeight: 500,
-          padding: '2px 8px', background: `${color}14`,
-          borderRadius: 3,
-        }}>{e.event_type}</span>
+        <Tooltip title={e.event_type}>
+          <span style={{
+            fontFamily: 'var(--ms-font-mono)',
+            fontSize: 11.5, color, fontWeight: 500,
+            padding: '2px 8px', background: `${color}14`,
+            borderRadius: 3,
+          }}>{tlabel(e.event_type, EVENT_TYPE_LABEL)}</span>
+        </Tooltip>
         <span style={{ fontSize: 13, color: 'var(--ms-ink)' }}>
           {e.actor_name || (
             <span style={{ color: 'var(--ms-ink-subtle)', fontStyle: 'italic' }}>系统</span>
