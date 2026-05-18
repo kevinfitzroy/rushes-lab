@@ -2,13 +2,31 @@
  * 我的权限 — 总览页:列出当前 user 在所有项目里的有效角色 + pending 申请单。
  * 数据复用 GET /projects(my_roles 字段)+ GET /approvals?scope=self&status=approved。
  */
-import { Skeleton, Tag } from 'antd';
+import { Segmented, Skeleton, Tag } from 'antd';
 import { Link } from 'react-router-dom';
 import { ChevronRight, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useApprovals, useMe, useProjects } from '../api/hooks';
+
+type RoleFilter = 'all' | 'admin' | 'uploader' | 'downloader';
+
+/**
+ * #115 角色蕴含规则(按 permission-model-v4 §5):
+ * - admin ⊃ 全部权限
+ * - upload / download / viewer 三轴**并列**,uploader 不蕴含 download
+ * issue body 表格把 uploader 算入"我可下载的" 与 model 矛盾,本实现按 model 来。
+ * 若 gatekeeper 验收后觉得 issue 的 implication 表才对,改这里 4 行即可。
+ */
+function passFilter(roles: string[], f: RoleFilter): boolean {
+  if (f === 'all') return roles.length > 0;
+  if (f === 'admin') return roles.includes('admin');
+  if (f === 'uploader') return roles.includes('admin') || roles.includes('uploader');
+  if (f === 'downloader') return roles.includes('admin') || roles.includes('downloader');
+  return true;
+}
 
 dayjs.extend(relativeTime);
 dayjs.locale('zh-cn');
@@ -20,8 +38,11 @@ export default function MyPermissionsPage() {
   const { data: projects, isLoading } = useProjects();
   const { data: approvals } = useApprovals('self', 'approved');
 
+  const [filter, setFilter] = useState<RoleFilter>('all');
+
   // 仅显示有效授权:my_roles 非空 OR 临时授权 approved
-  const owned: Project[] = (projects ?? []).filter(p => (p.my_roles ?? []).length > 0);
+  const ownedAll: Project[] = (projects ?? []).filter(p => (p.my_roles ?? []).length > 0);
+  const owned: Project[] = ownedAll.filter(p => passFilter(p.my_roles ?? [], filter));
   const visitorOnly: Project[] = (projects ?? []).filter(p => (p.my_roles ?? []).length === 0);
 
   return (
@@ -108,12 +129,31 @@ export default function MyPermissionsPage() {
       )}
 
       {/* ── 直接 / 继承授权 ──────────────────────────────────────────── */}
-      <Section title="项目角色" count={owned.length}
+      <Section title="项目角色"
+               count={filter === 'all' ? ownedAll.length : `${owned.length}/${ownedAll.length}`}
                desc="通过个人、用户组或部门继承而来的角色">
+        {/* #115 角色 filter — admin 蕴含全部;upload/download 按 model v4 §5 并列 */}
+        {ownedAll.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Segmented
+              size="small"
+              value={filter}
+              onChange={(v) => setFilter(v as RoleFilter)}
+              options={[
+                { label: `全部 (${ownedAll.length})`, value: 'all' },
+                { label: '我管理的', value: 'admin' },
+                { label: '我可上传的', value: 'uploader' },
+                { label: '我可下载的', value: 'downloader' },
+              ]}
+            />
+          </div>
+        )}
         {isLoading ? (
           <Skeleton active />
-        ) : owned.length === 0 ? (
+        ) : ownedAll.length === 0 ? (
           <Empty>你目前没有任何项目角色</Empty>
+        ) : owned.length === 0 ? (
+          <Empty>当前筛选下没有匹配的项目(共 {ownedAll.length} 个项目角色)</Empty>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {owned.map(p => <ProjectRow key={p.id} project={p} />)}
@@ -156,7 +196,7 @@ export default function MyPermissionsPage() {
 // ─── 子组件 ───────────────────────────────────────────────────────────────
 function Section({
   title, count, desc, children,
-}: { title: string; count?: number; desc?: string; children: React.ReactNode }) {
+}: { title: string; count?: number | string; desc?: string; children: React.ReactNode }) {
   return (
     <section style={{ marginBottom: 'var(--ms-sp-2xl)' }}>
       <div style={{
