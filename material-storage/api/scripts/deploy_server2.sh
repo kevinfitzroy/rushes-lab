@@ -58,7 +58,7 @@ if [[ -n "${MAINTENANCE_ISSUES:-}" ]]; then
     for n in $MAINTENANCE_ISSUES; do
       title=$(gh issue view "$n" --repo kevinfitzroy/rushes-lab --json title -q .title 2>/dev/null || echo "")
       if [[ -n "$title" ]]; then
-        items+=("$(python3 -c "import json,sys;print(json.dumps({'number':int(sys.argv[1]),'summary':sys.argv[2]},ensure_ascii=False))" "$n" "$title")")
+        items+=("$(python3 -c 'import json,sys;print(json.dumps({"number":int(sys.argv[1]),"summary":sys.argv[2]},ensure_ascii=False))' "$n" "$title")")
       else
         warn "gh issue view #$n 拉 title 失败,跳过"
       fi
