@@ -97,7 +97,8 @@ async def grant_for_approval(
     target_id = str(approval.target_id)
 
     if approval.action == "download":
-        if approval.target_type not in ("asset", "project"):
+        # #129: folder 级 download 临时 grant(model 加了 condition,grant_explicit_download 已支持)
+        if approval.target_type not in ("asset", "project", "folder"):
             raise ApprovalDecisionError(
                 400, f"download action 不支持 target_type={approval.target_type}"
             )

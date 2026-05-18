@@ -97,7 +97,8 @@ class DownloadLinkOut(BaseModel):
 
 # ─── approvals(iter6)────────────────────────────────────────────────────────
 class ApprovalCreateIn(BaseModel):
-    target_type: str = Field(..., pattern=r"^(sensitive_folder|asset|project)$")
+    # #129: 加 folder 支持(model + permissions + approval_service 全链路接通)
+    target_type: str = Field(..., pattern=r"^(sensitive_folder|asset|project|folder)$")
     target_id: uuid.UUID
     action: str = Field(..., pattern=r"^(download|access)$",
                         description="download=临时下载(grant_explicit_download);"

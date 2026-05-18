@@ -66,7 +66,8 @@ export interface Asset {
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'revoked' | 'expired';
 export type ApprovalAction = 'download' | 'access';
-export type ApprovalTargetType = 'sensitive_folder' | 'asset' | 'project';
+// #129: 加 folder 支持精细化临时 download 申请
+export type ApprovalTargetType = 'sensitive_folder' | 'asset' | 'project' | 'folder';
 
 export interface Approval {
   id: string;

@@ -231,16 +231,37 @@ class PermissionsService:
         )
 
     # ───────────────────────── folder explicit grant(仅一级)─────────────────
+    # #129:folder.explicit_* 加 non_expired_grant condition;
+    # duration_seconds=None → 100 年 grant_duration("视为永久"),保持 FolderGrantsPanel 语义
+    _PERMANENT_GRANT_SECONDS = 100 * 365 * 24 * 3600  # 100 年
+
     async def grant_folder_explicit_subject(
-        self, *, folder_id: str, subject: str, kind: FolderExplicit
+        self, *, folder_id: str, subject: str, kind: FolderExplicit,
+        duration_seconds: int | None = None,
     ) -> None:
-        await self._client.write(
-            ClientWriteRequest(
-                writes=[
-                    ClientTuple(user=subject, relation=kind, object=f"folder:{folder_id}")
-                ]
-            )
+        seconds = duration_seconds if duration_seconds is not None else self._PERMANENT_GRANT_SECONDS
+        grant_time = datetime.now(timezone.utc).isoformat()
+        tup = ClientTuple(
+            user=subject, relation=kind, object=f"folder:{folder_id}",
+            condition=RelationshipCondition(
+                name="non_expired_grant",
+                context={"grant_time": grant_time, "grant_duration": f"{seconds}s"},
+            ),
         )
+        try:
+            await self._client.write(ClientWriteRequest(writes=[tup]))
+        except Exception as e:
+            # 'tuple already existed' → 先删后写(刷新 condition.grant_time)
+            if "already existed" in str(e):
+                try:
+                    await self._client.write(ClientWriteRequest(deletes=[
+                        ClientTuple(user=subject, relation=kind, object=f"folder:{folder_id}")
+                    ]))
+                except Exception:  # noqa: BLE001
+                    pass
+                await self._client.write(ClientWriteRequest(writes=[tup]))
+            else:
+                raise
 
     async def revoke_folder_explicit_subject(
         self, *, folder_id: str, subject: str, kind: FolderExplicit
@@ -424,11 +445,12 @@ class PermissionsService:
         self,
         *,
         user_open_id: str,
-        object_type: Literal["project", "asset"],
+        object_type: Literal["project", "asset", "folder"],
         object_id: str,
         duration_seconds: int,
     ) -> None:
-        """审批通过的临时下载 grant — project 级(批量)或 asset 级(单文件)。
+        """审批通过的临时下载 grant — project / folder / asset 三级。
+        #129: 加 folder(model 已 condition 化,跟 project/asset 一致)。
 
         到期自动失效(non_expired_grant condition,无需 cron 清理)。
 

@@ -7,7 +7,8 @@ import { errorMessage } from '../api/client';
 interface Props {
   open: boolean;
   onClose: () => void;
-  targetType: 'sensitive_folder' | 'asset' | 'project';
+  // #129: 加 folder 支持精细化授权(folder 级临时 download 申请)
+  targetType: 'sensitive_folder' | 'asset' | 'project' | 'folder';
   targetId: string;
   targetName: string;
 }

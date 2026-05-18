@@ -7,7 +7,7 @@ import {
 } from 'antd';
 import {
   Download, FileText, Folder as FolderIcon, FolderPlus, Key,
-  Lock, RotateCw, Trash2, Upload, Users as UsersIcon,
+  Link2, Lock, RotateCw, Trash2, Upload, Users as UsersIcon,
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
@@ -21,6 +21,7 @@ import { AssetSummaryPanel } from '../components/AssetSummaryPanel';
 import { AssetThumbnail } from '../components/AssetThumbnail';
 import { ProjectMembersDrawer } from '../components/ProjectMembersDrawer';
 import { RequestAccessModal } from '../components/RequestAccessModal';
+import { RequestLinkCreateModal } from '../components/RequestLinkCreateModal';
 import { NewFolderModal } from '../components/NewFolderModal';
 import { useUpload } from '../lib/upload-store';
 import { useDownloads } from '../lib/download-store';
@@ -75,6 +76,8 @@ export default function ProjectDetailPage() {
   const [applySensitive, setApplySensitive] = useState(false);
   const [newFolderMode, setNewFolderMode] = useState<'root' | 'child' | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
+  // #129: folder admin 才显"申请链接"按钮 — folder 级精细化授权入口
+  const [linkOpen, setLinkOpen] = useState(false);
 
   const onFolderSelect = (fid: string) => {
     setActiveFolderId(fid);
@@ -290,6 +293,15 @@ export default function ProjectDetailPage() {
                 成员
               </Button>
             )}
+            {/* #129: folder admin 才显 — folder 级临时 download 申请链接 */}
+            {folder && folder.my_can_admin && (
+              <Tooltip title="生成申请链接,发给别人让他申请这个文件夹的临时下载权限">
+                <Button size="small" icon={<Link2 size={13} strokeWidth={1.8} />}
+                        onClick={() => setLinkOpen(true)}>
+                  申请链接
+                </Button>
+              </Tooltip>
+            )}
           </div>
           {folder?.minio_prefix && (
             <div style={{
@@ -436,6 +448,17 @@ export default function ProjectDetailPage() {
           onClose={() => setMembersOpen(false)}
           project={project}
           me={me}
+        />
+      )}
+
+      {/* #129: folder admin 的"申请链接"modal — 生成 folder 级请求链接 */}
+      {folder && folder.my_can_admin && (
+        <RequestLinkCreateModal
+          open={linkOpen}
+          onClose={() => setLinkOpen(false)}
+          targetType={folder.is_sensitive ? 'sensitive_folder' : 'folder'}
+          targetId={folder.id}
+          targetName={folder.name}
         />
       )}
     </Layout>

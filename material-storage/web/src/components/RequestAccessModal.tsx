@@ -8,7 +8,8 @@ interface Props {
   onClose: () => void;
   targetId: string;
   targetName: string;
-  targetType: 'sensitive_folder' | 'asset' | 'project';
+  // #129: 加 folder(普通文件夹临时 download 申请)
+  targetType: 'sensitive_folder' | 'asset' | 'project' | 'folder';
   defaultAction?: 'access' | 'download';
   // #112 PR-2: 由 request-link 落地页注入约束动作集;不传 = 不约束(原行为)
   allowedActions?: ('access' | 'download')[];
