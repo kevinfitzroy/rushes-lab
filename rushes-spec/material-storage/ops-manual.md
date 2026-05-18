@@ -87,9 +87,17 @@ docker exec ms-db psql -U msuser -d material_storage \
 
 ```bash
 cd material-storage/api && bash scripts/deploy_server2.sh
+
+# 推荐:带上本次解决的 issue 编号,前端会弹 modal 告诉 tester
+cd material-storage/api && MAINTENANCE_ISSUES="101 104" bash scripts/deploy_server2.sh
+
+# 或者 JSON 形式自定义 summary
+cd material-storage/api && MAINTENANCE_ISSUES='[{"number":101,"summary":"自定义说明"}]' bash scripts/deploy_server2.sh
 ```
 
-含:rsync + docker compose up -d --build(含 ms-worker PR #103)+ alembic migrate + dev_bootstrap(⚠ #69 stale 已知 fail-soft)+ **demo-onboarding seed (step 6.5, PR #97)** + e2e + large file + **forensic log 备份 (step 3.5, PR #95)**。
+含:**maintenance banner 开启 (step 0.5, PR #108)** + rsync + docker compose up -d --build(含 ms-worker PR #103)+ alembic migrate + dev_bootstrap(⚠ #69 stale 已知 fail-soft)+ **demo-onboarding seed (step 6.5, PR #97)** + e2e + large file + **forensic log 备份 (step 3.5, PR #95)** + **banner 撤销 (step 9.5, PR #108)**。
+
+**Maintenance banner**(PR #108):deploy 开始前 0.5 步会 SETEX redis `maintenance:banner` 一个 JSON,前端 ≤8s 内弹"系统升级中" modal(不可关 + 倒计时 + issue list);step 9.5 DEL 后前端转 6s "升级完成"自动关。900s TTL 兜底脚本崩了 banner 自然消失。MAINTENANCE_ISSUES 是 bare 数字时脚本会 `gh issue view` 自动拉 title。**注意:只保护已加载的 tab** — 新打开 tab 在 ms-api 重启那 30-60s 拿不到 SPA bundle,看不到 modal,这是 acceptable 取舍。
 
 step 6/7/8 现在用 set -o pipefail + warn 替代假 ok(PR #95)— 看到 ⚠ 不阻塞 deploy,看到红色 ✗ 才需 follow up。
 

@@ -1,7 +1,7 @@
 # material-storage — 工作 ROADMAP / 待办
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
-> 最后更新:2026-05-18(回写 #82-#103 + 整理 dogfood retro 留存 / B-4 iter2 视频缩略图已 ship)
+> 最后更新:2026-05-18(回写 #82-#103 + 整理 dogfood retro 留存 / B-4 iter2 视频缩略图已 ship / PR #108 maintenance banner 进 PR 待 merge)
 >
 > 相关文档:
 > - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
@@ -62,6 +62,7 @@
 | #100 | a409af2 | **AssetPreviewModal 加 pdf kind** — `<iframe src={presigned}>` 浏览器原生 viewer,零库依赖,height 68vh |
 | #102 | e799921 | **B-4 iter2 视频缩略图 worker**(#101 vertical slice)— 替换 `transcode_proxy` stub 为 `generate_video_thumbnail`;Range bytes=0-10485760 拉头部 + ffmpeg `-ss 1 -frames:v 1 -vf scale=1024:-2` 抽帧 + 上传 thumbnails/{aid}.jpg + 写 `asset.tags.thumbnail_key`(跟图片完全一致);complete_upload `video/*` 分支 enqueue;50MB cap + subprocess timeout 30s + fail-soft `tags.thumbnail_failed`;ffmpeg 已在 Dockerfile |
 | #103 | a9756d5 | **deploy_server2.sh step 4 加 ms-worker** — 漏掉 ms-worker 让改 worker 代码 deploy 后 worker 仍跑旧 process,需手动 restart;PR #102 deploy 时发现,本 PR 修 |
+| #108 | (pending merge) | **maintenance banner** — `GET /api/v1/maintenance/banner`(读 redis,公开)+ web `MaintenanceBanner` modal 轮询 8s(active=true → 不可关 modal,显倒计时 + 本次解决的 issue list + 上传中断提示;true→false → 6s "升级完成" Result 后自动关);`deploy_server2.sh` step 0.5 SETEX(900s TTL 兜底)+ step 9.5 DEL;`MAINTENANCE_ISSUES="101 104"` 自动 `gh issue view` 拉 title,或 JSON 形式直传 |
 
 ---
 
@@ -171,6 +172,7 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 - server2 `.env` 必填 `DEFAULT_ORGANIZATION_ID`(新 user OIDC 登录自动绑该 org;`scripts/grant_org_admin --list` 也用它);PoC 默认 `00000000-0000-0000-0000-0000000000a1`(dev-clinic);**deploy 脚本 INIT_ENV 路径目前未写入这一行,首次 bootstrap 后需手工 append + force-recreate**
 - public URL 用 `/ms-static/web/`(nginx rewrite 到内部 `/static/web/`);**任何 ms-api 返 307 redirect 必须显式指向 public 路径而非内部 `/static/`**,否则浏览器 URL 跳到 `/static/web/` 导致 SPA basename mismatch 崩(PR #73 起 ms-api 加 `--proxy-headers` + 单独 route 处理 `/static/web` 无尾斜杠 case)
 - **飞书 OpenAPI scope 现状**:`contact:user.base:readonly` + `contact:group:readonly`(2026-05-17 开)+ `im:message` + OIDC 基础;**未开** user.email / user.department(SubjectPicker 搜结果 email 字段为空是已知,不是 bug)
+- **PR #108 起 deploy 默认推 maintenance banner** — step 0.5 自动 SETEX redis key + 前端 MaintenanceBanner modal 8s 内弹出 + step 9.5 撤销;`MAINTENANCE_ISSUES="101 104"` 或 JSON;900s TTL 兜底脚本崩了 banner 自然消失;只保护已加载 tab(deploy 期间 SPA bundle 由 ms-api 提供,新开 tab 拿不到 bundle)
 
 ## 关键 server / 配置(本地 `server.md` 已记)
 
