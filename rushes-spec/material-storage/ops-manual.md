@@ -123,6 +123,39 @@ ssh root@8.156.34.238 'docker restart ms-api ms-worker'
 ssh root@8.156.34.238 'cd /root/material-storage-api && docker compose up -d --force-recreate ms-api ms-worker'
 ```
 
+### 2.4 OpenFGA model 升级(2026-05-18 起 / PR #130)
+
+改了 `material-storage/poc/openfga/store.fga.yaml` 后,**必须 push 给 server2 OpenFGA store**(否则 yaml 改了但 live model 没更新,行为不一致):
+
+```bash
+cd material-storage/api
+bash scripts/openfga_write_model.sh
+```
+
+行为:
+- 本机 python 从 yaml 抽 `model:` 字段(纯 .fga DSL)
+- scp 到 server2 `/tmp/model.fga`
+- server2 上 `docker run openfga/cli model transform --input-format fga` 转 JSON
+- POST 到 `http://127.0.0.1:8089/stores/{id}/authorization-models` 产新 model_id
+- 打印新 model_id
+
+**`.env` 不固定 `OPENFGA_MODEL_ID`** → ms-api 重启自动用 latest:
+```bash
+ssh root@8.156.34.238 'docker restart ms-api ms-worker'
+```
+
+若 `.env` 设了固定 model_id(避免意外漂移),要手动:
+```bash
+ssh root@8.156.34.238 \
+  "sed -i 's/^OPENFGA_MODEL_ID=.*/OPENFGA_MODEL_ID=<新 id>/' /root/material-storage-api/.env && \
+   cd /root/material-storage-api && docker compose up -d --force-recreate ms-api ms-worker"
+```
+
+**OpenFGA model 改动注意**(advisor #129 经验):
+- 给 unconditional relation 加 condition → 老 tuple 在新 model 下行为待 verify(本环境 0 风险因 store 已无该类 tuple)
+- 加新 relation 不动旧的 = 零风险
+- 改 relation 名 = breaking(老 tuple 失效);避免
+
 ### 2.3 前端代码更新
 
 ```bash
@@ -141,6 +174,62 @@ rsync -avz --delete material-storage/api/app/static/web/ \
 - 容器内 `pip install` 的临时依赖丢失(测试用 pytest 等)
 
 修法见 §6。
+
+---
+
+## 2.5 Request-link 申请短链(2026-05-18 起 / PR #127 #128 #130)
+
+完全独立于 share-link(`/s/{token}`,直接授权)。Request link `/r/{token}` 是**申请入口**(链接 = 表单,不是凭证)。
+
+### 数据模型
+
+`request_link_tokens` 独立表(alembic 20260518_0004):
+
+| 列 | 含义 |
+|---|---|
+| `token` PK | 32 字符 base64url |
+| `target_type` | `sensitive_folder` / `asset` / `project` / `folder` |
+| `target_id` | uuid |
+| `allowed_actions` TEXT[] | `['access']` / `['download']` / 两者 |
+| `inviter_user_id` | FK users CASCADE |
+| `receiver_open_id` | nullable;非空时仅限定 user 可用 |
+| `expires_at` / `created_at` / `used_at` | TTL + 审计 |
+
+### 入口与权限
+
+| 入口 | 适用 | admin 来源 |
+|---|---|---|
+| ProjectsPage 项目卡片右下角 "🔗 申请链接" | project 级 link | `my_roles` 含 `admin` |
+| ProjectDetailPage folder header 旁边 "🔗 申请链接"(PR #130) | folder / sensitive_folder 级 link | `folder.my_can_admin` |
+
+POST `/api/v1/request-links`:system admin 或 target 上 `can_admin` 才能生成。
+
+### Receiver enforce(防转发)
+
+**两层防护**:
+1. **frontend**:RequestLinkLandingPage `/r/{token}` 解析后,若 `receiver_restricted && !receiver_match` → 显友好 403 "此链接不是发给你的"
+2. **backend**:approvals POST 接 `?via_link=<token>` query;若提交,backend enforce target 匹配 + action ⊂ allowed + receiver_open_id 限定 = current_user。**即使绕过 frontend(curl 直接 POST)也拦得住**(advisor #112 risk #3)
+
+### TTL 默认 3 天,上限 30 天
+
+`MAX_TTL_SECONDS = 30 * 86400`;`DEFAULT_TTL_SECONDS = 3 * 86400`。在 `services/request_link.py` 顶常量。
+
+### Folder 级 grant 实施(#130 Y1 路径)
+
+`folder.explicit_*` 已加 `non_expired_grant` condition,跟 project / asset 一致。**永久 grant**(FolderGrantsPanel 用)由 `grant_duration=100 年` condition 实现,无需独立"无 condition tuple"路径。
+
+approval 批准 folder 级 download 申请 → `grant_explicit_download(object_type='folder', duration_seconds=...)` → 写 conditional folder.explicit_downloader tuple,到期自动失效(non_expired_grant)。
+
+---
+
+## 2.6 Cron 自主 issue 巡检(2026-05-18 起,session-only)
+
+本 session 启动了一个 cron job `cc18eb0d`(每 20 分钟,7 天到期):
+- 扫 open issues 找 created_at > 上次扫描 ts 的"新" issue
+- 状态文件 `~/.claude/projects/.../memory/autonomous-issue-scan-state.md`
+- 用户 2026-05-18 显式授权"一路推到 PR + 自跑 deploy + 关 issue"全自主模式
+
+session 退出 = cron 失效。**重启 cron 需要在新 session 用 CronCreate**(参考之前 prompt 模板,授权由 prompt 自身承担)。
 
 ---
 

@@ -1,7 +1,7 @@
 # material-storage — 工作 ROADMAP / 待办
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
-> 最后更新:2026-05-18(回写 #82-#103 + 整理 dogfood retro 留存 / B-4 iter2 视频缩略图已 ship / PR #108 maintenance banner 进 PR 待 merge)
+> 最后更新:2026-05-18 晚(本日批量 ship #108-#130 共 11 个 PR / 12 个 issue close;开 #131 给 gatekeeper 接力测 request-link 端到端)
 >
 > 相关文档:
 > - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
@@ -62,7 +62,16 @@
 | #100 | a409af2 | **AssetPreviewModal 加 pdf kind** — `<iframe src={presigned}>` 浏览器原生 viewer,零库依赖,height 68vh |
 | #102 | e799921 | **B-4 iter2 视频缩略图 worker**(#101 vertical slice)— 替换 `transcode_proxy` stub 为 `generate_video_thumbnail`;Range bytes=0-10485760 拉头部 + ffmpeg `-ss 1 -frames:v 1 -vf scale=1024:-2` 抽帧 + 上传 thumbnails/{aid}.jpg + 写 `asset.tags.thumbnail_key`(跟图片完全一致);complete_upload `video/*` 分支 enqueue;50MB cap + subprocess timeout 30s + fail-soft `tags.thumbnail_failed`;ffmpeg 已在 Dockerfile |
 | #103 | a9756d5 | **deploy_server2.sh step 4 加 ms-worker** — 漏掉 ms-worker 让改 worker 代码 deploy 后 worker 仍跑旧 process,需手动 restart;PR #102 deploy 时发现,本 PR 修 |
-| #108 | (pending merge) | **maintenance banner** — `GET /api/v1/maintenance/banner`(读 redis,公开)+ web `MaintenanceBanner` modal 轮询 8s(active=true → 不可关 modal,显倒计时 + 本次解决的 issue list + 上传中断提示;true→false → 6s "升级完成" Result 后自动关);`deploy_server2.sh` step 0.5 SETEX(900s TTL 兜底)+ step 9.5 DEL;`MAINTENANCE_ISSUES="101 104"` 自动 `gh issue view` 拉 title,或 JSON 形式直传 |
+| #108 | 9816c27 | **maintenance banner** — `GET /api/v1/maintenance/banner`(读 redis,公开)+ web `MaintenanceBanner` modal 轮询 8s(active=true → 不可关 modal,显倒计时 + 本次解决的 issue list + 上传中断提示;true→false → 6s "升级完成" Result 后自动关);`deploy_server2.sh` step 0.5 SETEX(900s TTL 兜底)+ step 9.5 DEL;`MAINTENANCE_ISSUES="101 104"` 自动 `gh issue view` 拉 title,或 JSON 形式直传 |
+| #109 | b539b83 | **project admin self-lock 死循环修复 + RoleBadge 可见性**(closes #106 blocker + #107)— backend (a)+(b) 不变量保护(撤销自己 admin / 撤销后归零)→ 409 友好文案;前端 RoleBadge icon 9→13px + padding 提升 + Tooltip + hover brightness |
+| #110 | ef3cf3d | **deploy script hotfix** — step 0.5 items+=("$(python3 -c "...{dict}..." ...)") 嵌套 dq 触发 bash brace expansion,dict 被切;改 single-quote python script |
+| #122 | f98a8cd | **ApprovalsPage 删 UUID modal**(closes #111 blocker)— "新建申请"按钮要求手填 36 位 UUID,普通用户无渠道;按 gatekeeper 方案 A 删按钮 + Alert 引导走资源页 RequestAccessModal 入口 |
+| #123 | e1ec97d | **4-issue batch — header/picker/duration**(closes #114 #119 #120 #121)— IconButton 加 onClick / Inbox 接 TaskCenterDrawer / Bell 删占位 / UserPicker query 非空时不 append preset / RequestAccessModal 加 Segmented 5 预设 + 自定义 InputNumber+单位 |
+| #124 | 4ded2f0 | **AdminAuditPage actor → UserPicker + lib/labels.ts 集中中文化**(closes #116 #118)— 22 event_type + 2 action + 4 target_type → 集中 mapping;chip 显中文 + Tooltip 显原 token;CSV/契约/mono 不变 |
+| #125 | 8dceb86 | **AssetPreviewModal video kind + /my-permissions 角色 filter**(closes #113 #115)— `<video controls src={presign}>` 走浏览器原生 Range;Segmented 4 项 + count "filtered/total";按 permission-model-v4 §5 三轴并列 |
+| #126 | ab63735 | **GrantCountdown 方案 B vertical bar + 同步 MyPermissionsPage**(closes #117)— 去 emerald-soft chip wrapper,改左 2px 彩色 bar(emerald/amber/crimson 按 remaining bucket)+ 时间文字;两页面统一视觉 |
+| #127 + #128 | 72b0f33 + c97e4d9 | **request-link 全功能闭环**(closes #112)— B 方案(独立表 request_link_tokens,不污染 share token 反范式);PR-1 backend(table + service + 2 endpoints,system admin only);PR-2 frontend(`/r/{token}` landing + Create modal + ProjectsPage 项目卡 admin 入口 + RequestAccessModal allowedActions/viaLink prop)+ approvals POST `?via_link=` query 二次 enforce(防替换、防转发 receiver) |
+| #130 | 5e72e5f | **folder 级精细化授权全链路 — Y1**(closes #129 #112 follow-up)— OpenFGA model folder.explicit_* 加 `non_expired_grant` condition(跟 project/asset 一致;model_id 01KRXQ03DR..)+ permissions/approval_service/migration/ApprovalCreateIn/request_links CreateIn 全链路接 folder;前端 ProjectDetailPage folder header 加 "申请链接" button(folder.my_can_admin 才显);grant_folder_explicit_subject 永久 grant 走 100年 condition 兼容 FolderGrantsPanel;新 `scripts/openfga_write_model.sh` 一键推 store.fga.yaml model 段 → server2 |
 
 ---
 
@@ -173,6 +182,13 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 - public URL 用 `/ms-static/web/`(nginx rewrite 到内部 `/static/web/`);**任何 ms-api 返 307 redirect 必须显式指向 public 路径而非内部 `/static/`**,否则浏览器 URL 跳到 `/static/web/` 导致 SPA basename mismatch 崩(PR #73 起 ms-api 加 `--proxy-headers` + 单独 route 处理 `/static/web` 无尾斜杠 case)
 - **飞书 OpenAPI scope 现状**:`contact:user.base:readonly` + `contact:group:readonly`(2026-05-17 开)+ `im:message` + OIDC 基础;**未开** user.email / user.department(SubjectPicker 搜结果 email 字段为空是已知,不是 bug)
 - **PR #108 起 deploy 默认推 maintenance banner** — step 0.5 自动 SETEX redis key + 前端 MaintenanceBanner modal 8s 内弹出 + step 9.5 撤销;`MAINTENANCE_ISSUES="101 104"` 或 JSON;900s TTL 兜底脚本崩了 banner 自然消失;只保护已加载 tab(deploy 期间 SPA bundle 由 ms-api 提供,新开 tab 拿不到 bundle)
+- **PR #109 起 project admin 不变量**:撤销自己的 admin → 409;撤销后 admin 归零 → 409。FolderGrantsPanel 个人对自己撤销同理
+- **PR #110 经验**:deploy 脚本写 python -c 多层嵌套时**single-quote python script,double-quote dict keys** — nested `$(python3 -c "...{}...")` 在 bash 内 `{...,...}` 会触发 brace expansion 破 dict
+- **PR #122 起 /approvals 顶栏无"新建申请"按钮** — 所有申请走资源页 RequestAccessModal(项目卡 / folder 卡 / asset 旁边 "申请权限");/approvals 只看历史 + admin 决策
+- **PR #124 起 lib/labels.ts 集中中文化** — 用户可见 event_type / action / target_type 都过 `tlabel(token, EVENT_TYPE_LABEL)`;后端契约 / CSV / mono ID 不动;新加 event_type 后端 grep 顺手加 mapping(缺 key 不报错,raw token fallback)
+- **PR #127-#128 request-link 全功能**(独立表 request_link_tokens,不污染 share token)— admin 生成 `/r/{token}` 落地链接;接收者必须登录;backend 二次防护:`/approvals` 接 `?via_link=...` query enforce target 匹配 + action ⊂ allowed + receiver_open_id 限定
+- **PR #130 起 OpenFGA model folder.explicit_* 都有 non_expired_grant condition**(跟 project / asset 一致)— 永久 grant = 100 年 grant_duration;新 deploy 用 `scripts/openfga_write_model.sh` 一键 push yaml model 段;.env 不固定 `OPENFGA_MODEL_ID` 则自动 latest
+- **OpenFGA store 实际 tuple ≠ audit_events**(2026-05-18 verify):folder grant 在 audit 有 6 条 added / 4 removed 但 store 0 条 — 可能历史 dev_bootstrap 清过;**判存量影响一律看 store 不看 audit**
 
 ## 关键 server / 配置(本地 `server.md` 已记)
 
@@ -180,13 +196,14 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 - server1 47.109.30.236 — Caddy + 域名 `rusheslab.taoxiplan.com` → 反代 server2:80
 - 飞书 app:`cli_aa8dbee01fb99bb3`,redirect_uri `https://rusheslab.taoxiplan.com/api/v1/auth/callback`,事件 webhook `/api/v1/webhooks/feishu`(含 contact 4 events + card.action.trigger + approval_instance)
 - default org id:`00000000-0000-0000-0000-0000000000a1`(tenant_key `dev_tenant_001`)
-- OpenFGA store:`01KRRR86H5HDM0KP0ZKBZC19TN`(model v4)
+- OpenFGA store:`01KRR4CPBJRTTTBEG0X802R07A` — 2026-05-18 latest model `01KRXQ03DREZK7B3BJM3R1KGVT`(folder.explicit_* 加 condition 后);**注 v4 model 之前的 store id `01KRRR86H5HDM0KP0ZKBZC19TN` 是别的环境,本环境 server2 一直是 01KRR4CPBJRTTTBEG0X802R07A**
 
 ## 推荐顺序
 
-1. **idle 等 gatekeeper 反馈** — issue #104 视频缩略图 7-case 测试,有结果后 close #101/#104 或 follow-up 修 bug
+1. **idle 等 gatekeeper #131 + #104 反馈** — #131 request-link 端到端测试(项目级 + folder 级 + receiver 限定 + 过期 + FolderGrantsPanel 回归);#104 视频缩略图 7-case
 2. **飞书审批模板配置**(用户操作)→ 飞书 OpenAPI 真审批闭环 — 最高 ROI 完成企业 SOP 自洽
 3. B-4 iter3 — AI 标签(图片打 tag + search by tag)— 用户找素材的核心 UX 跃迁
 4. #69 dev_bootstrap v3 真修 — 消 deploy step 6/7 ⚠ 噪音
 5. B bucket 测试厚度补一组 integration test — prod 化前的硬要求
-4. approval 自动过期 + AI 标签 + OSS 灾备 — 长期差异化
+6. approval 自动过期 + AI 标签 + OSS 灾备 — 长期差异化
+7. folder 入口扩展(asset 级单文件 link;FolderTree 节点 hover 加 link icon)— #129 enabled 之后的二期 UX
