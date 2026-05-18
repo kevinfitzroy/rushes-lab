@@ -66,9 +66,11 @@ model: |
       define parent: [project, folder]
 
       # 子级可超父级:仅一级 folder 可写(应用层 enforce parent_folder_id IS NULL)
-      define explicit_viewer:     [user, group#member, department#member]
-      define explicit_downloader: [user, group#member, department#member]
-      define explicit_uploader:   [user, group#member, department#member]
+      # #129:统一加 non_expired_grant condition,跟 project / asset 一致;
+      # 永久 grant 由 grant_duration 极大值(100 年)实现,FolderGrantsPanel 默认用
+      define explicit_viewer:     [user with non_expired_grant, group#member with non_expired_grant, department#member with non_expired_grant]
+      define explicit_downloader: [user with non_expired_grant, group#member with non_expired_grant, department#member with non_expired_grant]
+      define explicit_uploader:   [user with non_expired_grant, group#member with non_expired_grant, department#member with non_expired_grant]
 
       define can_view:     explicit_viewer or explicit_downloader or explicit_uploader or can_view from parent
       define can_download: explicit_downloader or explicit_uploader or can_download from parent

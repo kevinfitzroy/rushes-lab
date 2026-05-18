@@ -36,9 +36,8 @@ router = APIRouter()
 
 
 class CreateIn(BaseModel):
-    # ApprovalRequest.target_type 不支持 'folder';request_link 也对齐(schema CHECK 留
-    # 'folder' 为 future flexibility,但 router 入口不开放,避免生成无法申请的链接)
-    target_type: Literal["sensitive_folder", "asset", "project"]
+    # #129: 全链路加 folder 后,target_type 接受 4 种;CHECK approvals 20260518_0005 同步
+    target_type: Literal["sensitive_folder", "asset", "project", "folder"]
     target_id: uuid.UUID
     allowed_actions: list[Literal["access", "download"]] = Field(
         ..., min_length=1, max_length=2,

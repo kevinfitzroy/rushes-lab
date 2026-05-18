@@ -186,7 +186,7 @@ export const useCreateApproval = () => {
 // ─── request-links (#112) ──────────────────────────────────────────────────
 export interface RequestLinkResolve {
   token: string;
-  target_type: 'sensitive_folder' | 'asset' | 'project';
+  target_type: 'sensitive_folder' | 'asset' | 'project' | 'folder';
   target_id: string;
   target_name: string | null;
   allowed_actions: ('access' | 'download')[];
@@ -206,7 +206,8 @@ export interface RequestLinkCreateOut {
 export const useCreateRequestLink = () =>
   useMutation({
     mutationFn: async (body: {
-      target_type: 'sensitive_folder' | 'asset' | 'project';
+      // #129: 加 folder 支持(全链路接通后)
+      target_type: 'sensitive_folder' | 'asset' | 'project' | 'folder';
       target_id: string;
       allowed_actions: ('access' | 'download')[];
       receiver_open_id?: string;
