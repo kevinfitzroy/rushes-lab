@@ -134,15 +134,8 @@ function ApprovalRow({
             target <span className="ms-mono">{a.target_id.slice(0, 8)}…</span>
           </span>
           {a.status === 'approved' && a.decided_at && (
-            <span style={{
-              padding: '1px 8px',
-              background: 'var(--ms-emerald-soft)',
-              color: 'var(--ms-emerald)',
-              borderRadius: 3,
-            }}>
-              剩余 <GrantCountdown decidedAt={a.decided_at}
-                                  durationSeconds={a.duration_seconds} />
-            </span>
+            <GrantCountdown decidedAt={a.decided_at}
+                            durationSeconds={a.duration_seconds} />
           )}
           {a.decision_note && (
             <span style={{ fontStyle: 'italic' }}>

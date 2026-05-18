@@ -10,6 +10,7 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useApprovals, useMe, useProjects } from '../api/hooks';
+import { GrantCountdown } from '../components/GrantCountdown';
 
 type RoleFilter = 'all' | 'admin' | 'uploader' | 'downloader';
 
@@ -85,7 +86,6 @@ export default function MyPermissionsPage() {
               const expires = (decided && a.duration_seconds)
                 ? decided.add(a.duration_seconds, 'second')
                 : null;
-              const expired = expires ? expires.isBefore(dayjs()) : false;
               return (
                 <div key={a.id} style={{
                   padding: '12px 16px',
@@ -109,15 +109,20 @@ export default function MyPermissionsPage() {
                     </div>
                     <div style={{
                       marginTop: 2, fontSize: 11, color: 'var(--ms-ink-subtle)',
+                      display: 'flex', alignItems: 'center', gap: 10,
                     }}>
-                      {expires ? (
-                        expired
-                          ? <span style={{ color: 'var(--ms-rose, #c44)' }}>
-                              已过期 · {expires.format('YYYY-MM-DD HH:mm')}
-                            </span>
-                          : <>剩余 <span className="ms-mono">{expires.fromNow(true)}</span> · 到 {expires.format('YYYY-MM-DD HH:mm')}</>
-                      ) : (
-                        <>长期 · {decided?.format('YYYY-MM-DD HH:mm')} 起</>
+                      {/* #117 方案 B:统一接 GrantCountdown(vertical bar 视觉),不再裸文字 */}
+                      {a.decided_at && (
+                        <GrantCountdown
+                          decidedAt={a.decided_at}
+                          durationSeconds={a.duration_seconds}
+                        />
+                      )}
+                      {expires && (
+                        <span>到 {expires.format('YYYY-MM-DD HH:mm')}</span>
+                      )}
+                      {!expires && decided && (
+                        <span>{decided.format('YYYY-MM-DD HH:mm')} 起</span>
                       )}
                     </div>
                   </div>
