@@ -15,11 +15,13 @@ interface Props {
   onClose: () => void;
 }
 
-type Kind = 'markdown' | 'text' | 'image' | 'pdf' | 'unsupported';
+type Kind = 'markdown' | 'text' | 'image' | 'pdf' | 'video' | 'unsupported';
 
 const IMAGE_EXT = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif', '.ico',
 ]);
+
+const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 
 function detectKind(a: Asset): Kind {
   const name = a.filename.toLowerCase();
@@ -28,8 +30,10 @@ function detectKind(a: Asset): Kind {
   if (name.endsWith('.txt') || ct === 'text/plain') return 'text';
   if (name.endsWith('.pdf') || ct === 'application/pdf') return 'pdf';
   if (ct.startsWith('image/')) return 'image';
+  if (ct.startsWith('video/')) return 'video';
   const dot = name.lastIndexOf('.');
   if (dot >= 0 && IMAGE_EXT.has(name.slice(dot))) return 'image';
+  if (dot >= 0 && VIDEO_EXT.has(name.slice(dot))) return 'video';
   // text/* 兜底也按 text 处理(csv/log/json 看着也能用)
   if (ct.startsWith('text/')) return 'text';
   return 'unsupported';
@@ -55,8 +59,10 @@ export function AssetPreviewModal({ asset, open, onClose }: Props) {
         const { data } = await http.post<{ url: string }>(
           `/api/v1/assets/${asset.id}/download-link`, {},
         );
-        // image / pdf 不 fetch body,直接给浏览器原生 viewer;text/md 拉文本
-        if (kind === 'image' || kind === 'pdf') {
+        // image / pdf / video 不 fetch body,直接给浏览器原生 viewer
+        // (video 走浏览器原生 Range request,MinIO presign 支持;走 nginx 默认透传不剥 Range)
+        // text/md 拉文本
+        if (kind === 'image' || kind === 'pdf' || kind === 'video') {
           if (!cancelled) setContent(data.url);
         } else {
           const r = await fetch(data.url);
@@ -139,6 +145,22 @@ export function AssetPreviewModal({ asset, open, onClose }: Props) {
             background: 'var(--ms-hairline-soft)',
           }}
         />
+      )}
+      {!loading && kind === 'video' && content !== null && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#000',
+          borderRadius: 'var(--ms-radius-sm)',
+        }}>
+          <video
+            controls
+            src={content}
+            style={{
+              width: '100%', maxHeight: '68vh',
+              display: 'block', borderRadius: 'var(--ms-radius-sm)',
+            }}
+          />
+        </div>
       )}
     </Modal>
   );
