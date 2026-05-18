@@ -2,17 +2,16 @@
  * 审批页 — timeline 列表风(b1 现代化重做)。
  * 每行:左侧状态色条 + 目标 / 动作 / 时长 + 理由(可折)+ 时间 + 操作。
  */
-import { App, Button, Form, Input, InputNumber, Modal, Select, Skeleton, Tabs } from 'antd';
+import { Alert, App, Button, Skeleton, Tabs } from 'antd';
 import {
   Check, Clock, FileText, Folder as FolderIcon,
-  HelpCircle, Plus, X, XCircle,
+  HelpCircle, X, XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import {
-  useApprovals, useApproveApproval, useCreateApproval, useRejectApproval,
+  useApprovals, useApproveApproval, useRejectApproval,
 } from '../api/hooks';
 import type { Approval, ApprovalStatus } from '../api/types';
 import { GrantCountdown } from '../components/GrantCountdown';
@@ -243,85 +242,29 @@ function ApprovalList({ scope }: { scope: 'self' | 'all' }) {
   );
 }
 
-function NewApprovalModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const create = useCreateApproval();
-  const [form] = Form.useForm();
-  const { message } = App.useApp();
-  return (
-    <Modal title="新建申请" open={open} onCancel={onClose} destroyOnClose
-           onOk={async () => {
-             try {
-               const v = await form.validateFields();
-               await create.mutateAsync({
-                 target_type: v.target_type,
-                 target_id: v.target_id,
-                 action: v.action,
-                 duration_seconds: v.duration_seconds || undefined,
-                 reason: v.reason,
-               });
-               message.success('已提交');
-               form.resetFields();
-               onClose();
-             } catch (e) {
-               if ((e as { errorFields?: unknown }).errorFields) return;
-               message.error(errorMessage(e));
-             }
-           }}
-           confirmLoading={create.isPending}>
-      <Form form={form} layout="vertical"
-            initialValues={{ target_type: 'sensitive_folder', action: 'access' }}>
-        <Form.Item name="target_type" label="目标类型" rules={[{ required: true }]}>
-          <Select options={[
-            { label: 'sensitive_folder(进入敏感目录)', value: 'sensitive_folder' },
-            { label: 'asset(单文件下载)', value: 'asset' },
-            { label: 'project(整项目临时下载)', value: 'project' },
-          ]}/>
-        </Form.Item>
-        <Form.Item name="target_id" label="目标 ID(UUID)" rules={[{ required: true, len: 36 }]}>
-          <Input placeholder="00000000-0000-0000-0000-000000000000" />
-        </Form.Item>
-        <Form.Item name="action" label="动作" rules={[{ required: true }]}>
-          <Select options={[
-            { label: 'access(永久邀请,仅 sensitive_folder)', value: 'access' },
-            { label: 'download(临时下载)', value: 'download' },
-          ]}/>
-        </Form.Item>
-        <Form.Item name="duration_seconds" label="有效期(秒;留空 = 永久,仅 access 允许)">
-          <InputNumber min={60} max={365 * 24 * 3600}
-                       style={{ width: '100%' }} placeholder="86400 = 24h" />
-        </Form.Item>
-        <Form.Item name="reason" label="理由" rules={[{ required: true, min: 4 }]}>
-          <Input.TextArea rows={3} placeholder="给管理员看的说明" />
-        </Form.Item>
-      </Form>
-    </Modal>
-  );
-}
-
 export default function ApprovalsPage() {
-  const [openNew, setOpenNew] = useState(false);
   return (
     <div className="ms-enter">
-      <div style={{
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-        gap: 24, marginBottom: 'var(--ms-sp-xl)',
-      }}>
-        <div>
-          <h1 style={{
-            margin: 0,
-            fontFamily: 'var(--ms-font-display)',
-            fontSize: 32, fontWeight: 500, letterSpacing: '-0.02em',
-            color: 'var(--ms-ink)', lineHeight: 1.1,
-          }}>审批</h1>
-          <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ms-ink-muted)' }}>
-            权限申请与决策记录
-          </p>
-        </div>
-        <Button type="primary" icon={<Plus size={14} strokeWidth={2.2} />}
-                onClick={() => setOpenNew(true)} style={{ height: 36 }}>
-          新建申请
-        </Button>
+      <div style={{ marginBottom: 'var(--ms-sp-xl)' }}>
+        <h1 style={{
+          margin: 0,
+          fontFamily: 'var(--ms-font-display)',
+          fontSize: 32, fontWeight: 500, letterSpacing: '-0.02em',
+          color: 'var(--ms-ink)', lineHeight: 1.1,
+        }}>审批</h1>
+        <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ms-ink-muted)' }}>
+          权限申请与决策记录
+        </p>
       </div>
+
+      {/* #111 修复:删掉"新建申请"按钮,因为它要求 user 手填 36 位 UUID 无法获取。
+          发起申请的入口收敛到资源页(项目 / 文件夹卡片旁的「申请权限」按钮 → RequestAccessModal)。 */}
+      <Alert
+        type="info"
+        showIcon
+        message="如需发起新申请,请到具体的项目 / 文件夹页面,点资源旁边的「申请权限」按钮。"
+        style={{ marginBottom: 'var(--ms-sp-md)' }}
+      />
 
       <Tabs
         defaultActiveKey="self"
@@ -330,8 +273,6 @@ export default function ApprovalsPage() {
           { key: 'all', label: '待我审批 / 全部(admin)', children: <ApprovalList scope="all" /> },
         ]}
       />
-
-      <NewApprovalModal open={openNew} onClose={() => setOpenNew(false)} />
     </div>
   );
 }
