@@ -172,10 +172,56 @@ export const useCreateApproval = () => {
       action: ApprovalAction;
       duration_seconds?: number;
       reason: string;
-    }) => (await http.post<Approval>('/api/v1/approvals', body)).data,
+      // #112 PR-2: 来自 request-link 落地页时附带 token,backend enforce
+      via_link?: string;
+    }) => {
+      const { via_link, ...rest } = body;
+      const params = via_link ? { via_link } : undefined;
+      return (await http.post<Approval>('/api/v1/approvals', rest, { params })).data;
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['approvals'] }),
   });
 };
+
+// ─── request-links (#112) ──────────────────────────────────────────────────
+export interface RequestLinkResolve {
+  token: string;
+  target_type: 'sensitive_folder' | 'asset' | 'project';
+  target_id: string;
+  target_name: string | null;
+  allowed_actions: ('access' | 'download')[];
+  expires_at: string;
+  inviter_name: string | null;
+  receiver_restricted: boolean;
+  receiver_match: boolean;
+}
+
+export interface RequestLinkCreateOut {
+  token: string;
+  landing_url: string;
+  expires_at: string;
+  allowed_actions: string[];
+}
+
+export const useCreateRequestLink = () =>
+  useMutation({
+    mutationFn: async (body: {
+      target_type: 'sensitive_folder' | 'asset' | 'project';
+      target_id: string;
+      allowed_actions: ('access' | 'download')[];
+      receiver_open_id?: string;
+      ttl_seconds?: number;
+    }) => (await http.post<RequestLinkCreateOut>('/api/v1/request-links', body)).data,
+  });
+
+export const useResolveRequestLink = (token: string | undefined) =>
+  useQuery({
+    queryKey: ['request-link', token],
+    queryFn: async () =>
+      (await http.get<RequestLinkResolve>(`/api/v1/request-links/${token}`)).data,
+    enabled: !!token,
+    retry: false,
+  });
 
 export const useApproveApproval = () => {
   const qc = useQueryClient();

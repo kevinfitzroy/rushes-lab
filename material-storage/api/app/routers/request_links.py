@@ -36,7 +36,9 @@ router = APIRouter()
 
 
 class CreateIn(BaseModel):
-    target_type: Literal["sensitive_folder", "asset", "project", "folder"]
+    # ApprovalRequest.target_type 不支持 'folder';request_link 也对齐(schema CHECK 留
+    # 'folder' 为 future flexibility,但 router 入口不开放,避免生成无法申请的链接)
+    target_type: Literal["sensitive_folder", "asset", "project"]
     target_id: uuid.UUID
     allowed_actions: list[Literal["access", "download"]] = Field(
         ..., min_length=1, max_length=2,
@@ -91,13 +93,20 @@ async def create_link(
     PoC 简化:project / folder / asset / sensitive_folder 都映射到所属 project 上做 admin enforce
     (要再 audit upward — 本期假设 admin 给自己 admin 的项目下任意资源生成链接)。
     """
-    # admin enforce — system admin 全直通;其他需要 can_admin target 所属 project
-    # 简化:只 enforce 'user 是 system admin 或对目标所属 project can_admin'
-    # 完整 enforce(unique to target_type)留 PR-2 跟前端入口一起细化
+    # admin enforce — system admin 全直通,其他必须对 target 资源 can_admin
+    # v4 model:asset/folder/sensitive_folder/project 都用 can_admin 一致 relation
     if not is_system_admin:
-        # 先 audit 是否对该资源所属 project can_admin
-        # 这里 PoC 简化只允许 system admin,project admin 路径 PR-2 接入
-        raise HTTPException(403, "PR-1 暂只允许 system admin 生成 request link;project admin 入口 PR-2 接入")
+        ok = await permissions.check(
+            user_subject=f"user:{user.open_id}",
+            relation="can_admin",
+            object_type=payload.target_type,
+            object_id=str(payload.target_id),
+        )
+        if not ok:
+            raise HTTPException(
+                403,
+                "无权对该资源生成申请链接 — 需要 system admin 或该资源 admin",
+            )
 
     try:
         row = await create_request_link(

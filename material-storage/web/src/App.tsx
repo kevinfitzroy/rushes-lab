@@ -20,6 +20,7 @@ const FolderDetailPage = lazy(() => import('./pages/FolderDetailPage'));
 const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
 const DevLoginPage = lazy(() => import('./pages/DevLoginPage'));
 const ShareLandingPage = lazy(() => import('./pages/ShareLandingPage'));
+const RequestLinkLandingPage = lazy(() => import('./pages/RequestLinkLandingPage'));
 const AdminAuditPage = lazy(() => import('./pages/AdminAuditPage'));
 const MyPermissionsPage = lazy(() => import('./pages/MyPermissionsPage'));
 
@@ -56,6 +57,7 @@ const RouterRoutes = () => (
       <Route path="/my-permissions" element={<MyPermissionsPage />} />
       <Route path="/admin/audit" element={<AdminAuditPage />} />
       <Route path="/s/:token" element={<ShareLandingPage />} />
+      <Route path="/r/:token" element={<RequestLinkLandingPage />} />
       <Route path="/dev-login" element={<DevLoginPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
