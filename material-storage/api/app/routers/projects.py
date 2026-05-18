@@ -486,6 +486,25 @@ async def remove_project_member(
         is_system_admin=is_system_admin,
     )
 
+    # admin 不变量(#106 修复):防止 admin 自我锁死 + 项目归零无 admin
+    # (b) 不允许 admin 撤销自己的 admin 角色 — 必须先邀请其他 admin 再让别人撤销自己
+    # (a) 不允许撤销后项目 admin 归零(兜底:group-admin 间接 user 也计入,接受 OpenFGA
+    #     list_users 透传 leaf users 的语义 — 不完美但能拦住典型死循环路径)
+    if role == "admin":
+        if subject == f"user:{user_open_id}":
+            raise HTTPException(
+                409,
+                "不允许撤销自己的项目管理员角色;请先邀请其他管理员,再让对方撤销你",
+            )
+        current_admins = await permissions.list_users_with_relation(
+            object_type="project", object_id=str(project_id), relation="admin",
+        )
+        if len(current_admins) <= 1:
+            raise HTTPException(
+                409,
+                "项目至少需要保留 1 个管理员;请先邀请其他管理员,再撤销当前管理员",
+            )
+
     await permissions.remove_project_subject(
         project_id=str(project_id), subject=subject, role=role,  # type: ignore[arg-type]
     )

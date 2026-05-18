@@ -162,6 +162,9 @@ html, body {
 /* 命令栏 Modal 内容贴边 */
 .ms-cmd-modal .ant-modal-content { padding: 0 !important; border-radius: var(--ms-radius-lg) !important; overflow: hidden; }
 
+/* 项目成员卡片 role chip(撤销入口)— hover 反馈让"可点击"更醒目(#107) */
+.ms-role-badge:hover { filter: brightness(0.94); transform: translateY(-0.5px); }
+
 /* scrollbar(细线) */
 * {
   scrollbar-width: thin;
