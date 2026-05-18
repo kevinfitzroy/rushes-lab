@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.routers import (
-    admin, approvals, assets, auth, folders, groups, projects, share, users, webhooks,
+    admin, approvals, assets, auth, folders, groups, maintenance, projects, share, users, webhooks,
 )
 from app.settings import get_settings
 
@@ -40,11 +40,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth = await create_auth_service(settings)
     app.state.feishu_client = await create_feishu_client(settings)
     app.state.arq_pool = await create_arq_pool(settings)
+
+    # 独立 redis client 给 maintenance banner 等轻量 KV 用(arq pool 不复用避免污染 queue keys)
+    import redis.asyncio as redis_asyncio
+    app.state.redis = redis_asyncio.from_url(str(settings.redis_url), decode_responses=True)
+
     # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
     # iter1:noop;iter2 起按 intent 注册具体 handler
     # 注:用 from-import 以免 `app` 名 shadow lifespan 参数 (Python 名字解析坑)
     from app.services import feishu_card_handlers as _h  # noqa: F401
-    log.info("startup complete — permissions + presign + auth + feishu_client + arq ready")
+    log.info("startup complete — permissions + presign + auth + feishu_client + arq + redis ready")
 
     yield
 
@@ -53,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.auth.close()
     await app.state.feishu_client.close()
     await app.state.arq_pool.aclose()
+    await app.state.redis.aclose()
 
 
 def create_app() -> FastAPI:
@@ -92,6 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(share.router, prefix="/api/v1/share", tags=["share"])
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+    app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["maintenance"])
 
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:
