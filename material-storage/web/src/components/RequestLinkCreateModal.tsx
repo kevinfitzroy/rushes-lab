@@ -1,7 +1,8 @@
-import { App, Button, Form, Input, Modal, Segmented, Select } from 'antd';
+import { App, Button, Form, Modal, Segmented, Select } from 'antd';
 import { Copy, Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useCreateRequestLink, type RequestLinkCreateOut } from '../api/hooks';
+import { UserPicker } from './UserPicker';
 import { errorMessage } from '../api/client';
 
 interface Props {
@@ -119,10 +120,11 @@ export function RequestLinkCreateModal({ open, onClose, targetType, targetId, ta
                 options={TTL_PRESETS.map(p => ({ label: p.label, value: p.value }))}
               />
             </Form.Item>
+            {/* #133: 裸 open_id Input → UserPicker 搜姓名/邮箱(提交体仍是 open_id string) */}
             <Form.Item name="receiver_open_id"
-                       label="限定接收者 open_id(可选)"
-                       extra="留空 = 任意登录用户可用;填了 = 只此 open_id 能用(防转发)">
-              <Input placeholder="ou_xxxxxxxxx(可选)" />
+                       label="限定接收者(可选)"
+                       extra="留空 = 任意登录用户可用;选了 = 只此人能用(防转发)">
+              <UserPicker multiple={false} placeholder="搜姓名 / 邮箱限定接收者…" />
             </Form.Item>
           </Form>
         </>
