@@ -16,6 +16,7 @@ import {
 import type { Approval, ApprovalStatus } from '../api/types';
 import { GrantCountdown } from '../components/GrantCountdown';
 import { errorMessage } from '../api/client';
+import { TARGET_TYPE_LABEL, ACTION_LABEL, tlabel } from '../lib/labels';
 
 dayjs.extend(relativeTime);
 dayjs.locale('zh-cn');
@@ -97,13 +98,17 @@ function ApprovalRow({
             fontSize: 11.5, color: 'var(--ms-ink-muted)',
           }}>
             <TargetIcon size={12} strokeWidth={1.7} />
-            <span className="ms-mono">{a.target_type}</span>
+            <span>{tlabel(a.target_type, TARGET_TYPE_LABEL)}</span>
+            {/* #136: 显示资源名(backend enrich) */}
+            {a.target_name && (
+              <span style={{ color: 'var(--ms-ink)', fontWeight: 500 }}>· {a.target_name}</span>
+            )}
           </span>
           {/* action */}
           <span style={{
             fontSize: 11.5, color: 'var(--ms-ink-muted)',
           }}>
-            动作 <span className="ms-mono" style={{ color: 'var(--ms-ink)' }}>{a.action}</span>
+            动作 <span style={{ color: 'var(--ms-ink)' }}>{tlabel(a.action, ACTION_LABEL)}</span>
             {a.duration_seconds ? (
               <> · <span className="ms-mono">{formatDuration(a.duration_seconds)}</span></>
             ) : (
@@ -131,7 +136,9 @@ function ApprovalRow({
           fontSize: 11.5, color: 'var(--ms-ink-subtle)',
         }}>
           <span>
-            target <span className="ms-mono">{a.target_id.slice(0, 8)}…</span>
+            {a.target_name
+              ? <>资源 <span style={{ color: 'var(--ms-ink)' }}>{a.target_name}</span></>
+              : <>target <span className="ms-mono">{a.target_id.slice(0, 8)}…</span></>}
           </span>
           {a.status === 'approved' && a.decided_at && (
             <GrantCountdown decidedAt={a.decided_at}

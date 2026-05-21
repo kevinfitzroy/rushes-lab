@@ -11,8 +11,33 @@ import 'dayjs/locale/zh-cn';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useApprovals, useMe, useProjects } from '../api/hooks';
 import { GrantCountdown } from '../components/GrantCountdown';
+import type { Approval } from '../api/types';
+import { TARGET_TYPE_LABEL, tlabel } from '../lib/labels';
 
 type RoleFilter = 'all' | 'admin' | 'uploader' | 'downloader';
+
+/**
+ * #137: 临时授权 target 改可点击 link(原裸 `type:uuid`,接收者无法导航)。
+ * folder/sensitive_folder → 父项目下的 folder 页;project → 项目页;asset → 父项目。
+ */
+function TargetLink({ a }: { a: Approval }) {
+  const typeLabel = tlabel(a.target_type, TARGET_TYPE_LABEL);
+  const label = a.target_name || `${typeLabel} ${a.target_id.slice(0, 8)}…`;
+  let to: string | null = null;
+  if (a.target_type === 'project') to = `/projects/${a.target_id}`;
+  else if ((a.target_type === 'folder' || a.target_type === 'sensitive_folder') && a.parent_project_id)
+    to = `/projects/${a.parent_project_id}/folders/${a.target_id}`;
+  else if (a.target_type === 'asset' && a.parent_project_id)
+    to = `/projects/${a.parent_project_id}`;
+
+  const suffix = (
+    <span style={{ color: 'var(--ms-ink-subtle)', fontSize: 11, marginLeft: 6 }}>· {typeLabel}</span>
+  );
+  if (to) {
+    return <Link to={to} style={{ color: 'var(--ms-accent)', fontWeight: 500 }}>{label}{suffix}</Link>;
+  }
+  return <span style={{ color: 'var(--ms-ink)' }}>{label}{suffix}</span>;
+}
 
 /**
  * #115 角色蕴含规则(按 permission-model-v4 §5):
@@ -101,11 +126,12 @@ export default function MyPermissionsPage() {
                     {a.action === 'access' ? 'ACCESS' : 'DOWNLOAD'}
                   </Tag>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="ms-mono" style={{
-                      fontSize: 12, color: 'var(--ms-ink)',
+                    <div style={{
+                      fontSize: 13,
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }}>
-                      {a.target_type}:{a.target_id}
+                      {/* #137: 可点击 link 导航到资源(原裸 type:uuid 接收者不可达) */}
+                      <TargetLink a={a} />
                     </div>
                     <div style={{
                       marginTop: 2, fontSize: 11, color: 'var(--ms-ink-subtle)',
