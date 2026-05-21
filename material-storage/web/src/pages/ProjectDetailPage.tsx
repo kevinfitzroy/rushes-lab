@@ -231,7 +231,9 @@ export default function ProjectDetailPage() {
   // 桌面:三栏 layout
   return (
     <Layout className="ms-enter" style={{
-      minHeight: 'calc(100vh - 56px - 80px)',
+      // #134: minHeight → height,父容器固高才能让三栏内部 overflow:auto 生效(滚动收敛到 Table 区,
+      // 顶部 actions bar / 右侧 summary 不再随页面滚走)。56=header,32=main 顶 padding,80=main 底 padding。
+      height: 'calc(100vh - 56px - 32px - 80px)',
       background: 'var(--ms-surface)',
       borderRadius: 'var(--ms-radius-lg)',
       overflow: 'hidden',
