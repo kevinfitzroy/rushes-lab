@@ -21,6 +21,7 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   folder_created: '文件夹创建',
   folder_grant_added: '文件夹权限授予',
   folder_grant_removed: '文件夹权限撤销',
+  grant_revoked: '授权撤回',
   invite_notified: '邀请通知已发送',
   project_created: '项目创建',
   project_member_added: '项目成员添加',
