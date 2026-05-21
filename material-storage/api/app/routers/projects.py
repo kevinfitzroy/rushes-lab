@@ -515,3 +515,126 @@ async def remove_project_member(
         details={"subject": subject, "role": role},
         **ctx,
     )
+
+
+# ─── project 授权总览 + 撤回 (#138) ───────────────────────────────────────────
+# 哪些 relation 可从本入口撤回(与 grant_overview 白名单对齐)
+_GRANT_REVOKE_RELATIONS: dict[str, set[str]] = {
+    "project": {"explicit_downloader"},
+    "folder": {"explicit_viewer", "explicit_downloader", "explicit_uploader"},
+    "sensitive_folder": {
+        "invited_viewer", "invited_downloader",
+        "explicit_invited_viewer", "explicit_invited_downloader",
+    },
+}
+
+
+@router.get("/{project_id}/grants")
+async def list_project_grants_endpoint(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    audit: AuditService = Depends(get_audit),
+    user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
+    ctx: dict = Depends(get_request_context),
+) -> list[dict]:
+    """项目级授权总览(#138)— admin 运维入口。
+
+    聚合 project + 项目下所有 folder / sensitive_folder 的 explicit / invited grant
+    (临时带到期时间 + 永久),供 admin 查看"谁有授权"并撤回。
+    members section 已显项目直接角色成员,本接口只列通过授权/邀请获得的 grant。
+    asset 级临时下载不在此总览(数量级 + 维度)。需 can_admin project。
+    返:[{subject, kind, subject_id, name, object_type, object_id, object_name,
+         relation, level, permanent, expires_at?}]
+    """
+    user_id, user_open_id = user.id, user.open_id
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+    await _enforce_project_admin(
+        permissions, audit, user_id, user_open_id, project_id, "list_grants", ctx,
+        is_system_admin=is_system_admin,
+    )
+    from app.services.grant_overview import list_project_grants
+    return await list_project_grants(db, permissions, project_id)
+
+
+@router.delete("/{project_id}/grants", status_code=204)
+async def revoke_project_grant(
+    project_id: uuid.UUID,
+    object_type: str = Query(..., pattern=r"^(project|folder|sensitive_folder)$"),
+    object_id: uuid.UUID = Query(..., description="grant 所在 object 的 id"),
+    subject: str = Query(..., description="完整 OpenFGA subject"),
+    relation: str = Query(..., description="grant relation,须在该 object_type 可撤回白名单内"),
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    audit: AuditService = Depends(get_audit),
+    user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
+    ctx: dict = Depends(get_request_context),
+) -> None:
+    """撤回一条授权 grant(#138)。四元组 (object_type, object_id, subject, relation)
+    与 list_project_grants 输出对齐;校验 object 属于本 project 防跨项目撤回。"""
+    user_id, user_open_id = user.id, user.open_id
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+    await _enforce_project_admin(
+        permissions, audit, user_id, user_open_id, project_id, "revoke_grant", ctx,
+        is_system_admin=is_system_admin,
+    )
+
+    if relation not in _GRANT_REVOKE_RELATIONS.get(object_type, set()):
+        raise HTTPException(400, f"relation {relation!r} 不可对 {object_type} 撤回")
+
+    # object 归属校验:必须属于本 project(防 admin 撤别项目的 grant)
+    oid = str(object_id)
+    if object_type == "project":
+        if object_id != project_id:
+            raise HTTPException(400, "object_id 与 project_id 不一致")
+    else:
+        from app.db.tables import Folder as _Folder
+        f = await db.get(_Folder, object_id)
+        if f is None or f.project_id != project_id:
+            raise HTTPException(404, "folder 不属于本项目")
+        if object_type == "sensitive_folder" and not f.is_sensitive:
+            raise HTTPException(400, "该 folder 不是 sensitive_folder")
+        if object_type == "folder" and f.is_sensitive:
+            raise HTTPException(400, "该 folder 是 sensitive_folder")
+
+    # 分发到对应 revoke 方法。陈旧 UI 撤一条已自然过期/已被撤的 grant → 返 404 而非 500
+    try:
+        if object_type == "project":
+            if not subject.startswith("user:"):
+                raise HTTPException(400, "project 级授权 subject 只能是 user")
+            await permissions.revoke_explicit_download(
+                user_open_id=subject.split(":", 1)[1], object_type="project", object_id=oid,
+            )
+        elif object_type == "folder":
+            await permissions.revoke_folder_explicit_subject(
+                folder_id=oid, subject=subject, kind=relation,  # type: ignore[arg-type]
+            )
+        else:  # sensitive_folder
+            level = "downloader" if relation.endswith("downloader") else "viewer"
+            permanent = relation.startswith("invited_")
+            await permissions.revoke_sensitive_folder_invite(
+                sensitive_folder_id=oid, subject=subject,
+                level=level, permanent=permanent,  # type: ignore[arg-type]
+            )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        if "not found" in str(e).lower() or "tuple" in str(e).lower():
+            raise HTTPException(404, "该授权不存在或已撤回") from e
+        raise
+
+    await audit.write(
+        event_type="grant_revoked",
+        actor_user_id=user_id, target_project_id=project_id,
+        details={
+            "object_type": object_type, "object_id": oid,
+            "subject": subject, "relation": relation,
+        },
+        **ctx,
+    )
