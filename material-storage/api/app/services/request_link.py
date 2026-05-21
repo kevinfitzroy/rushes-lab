@@ -115,16 +115,9 @@ async def resolve_request_link(
     if row.expires_at <= _now():
         return None
 
-    target_name: str | None = None
-    if row.target_type in ("sensitive_folder", "folder"):
-        f = await db.get(Folder, row.target_id)
-        target_name = f.name if f else None
-    elif row.target_type == "asset":
-        a = await db.get(Asset, row.target_id)
-        target_name = a.filename if a else None
-    elif row.target_type == "project":
-        p = await db.get(Project, row.target_id)
-        target_name = p.name if p else None
+    # #136/#137: 复用共享 helper(同 ApprovalOut enrich)
+    from app.services.target_resolve import resolve_target_name_and_project
+    target_name, _ = await resolve_target_name_and_project(db, row.target_type, row.target_id)
 
     inviter_name: str | None = None
     inviter = await db.get(User, row.inviter_user_id)

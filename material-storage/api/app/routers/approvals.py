@@ -57,6 +57,18 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _enrich_out(db: AsyncSession, approval: ApprovalRequest) -> ApprovalOut:
+    """ApprovalOut + #136/#137 enrich target_name + parent_project_id(反查)。"""
+    from app.services.target_resolve import resolve_target_name_and_project
+    out = ApprovalOut.model_validate(approval)
+    name, ppid = await resolve_target_name_and_project(
+        db, approval.target_type, approval.target_id,
+    )
+    out.target_name = name
+    out.parent_project_id = ppid
+    return out
+
+
 @router.post("", response_model=ApprovalOut, status_code=201)
 async def create_approval(
     payload: ApprovalCreateIn,
@@ -136,7 +148,7 @@ async def create_approval(
         permissions=permissions,
         settings=get_settings(),
     )
-    return ApprovalOut.model_validate(approval)
+    return await _enrich_out(db, approval)
 
 
 @router.get("", response_model=list[ApprovalOut])
@@ -157,7 +169,7 @@ async def list_approvals(
         stmt = stmt.where(ApprovalRequest.status == status_filter)
     stmt = stmt.order_by(ApprovalRequest.created_at.desc()).limit(limit).offset(offset)
     res = await db.execute(stmt)
-    return [ApprovalOut.model_validate(r) for r in res.scalars().all()]
+    return [await _enrich_out(db, r) for r in res.scalars().all()]
 
 
 @router.get("/{approval_id}", response_model=ApprovalOut)
@@ -173,7 +185,7 @@ async def get_approval(
     if approval.applicant_user_id != user_id and approval.approver_user_id != user_id:
         # admin 走 list scope=all;详情仅申请人 / 决策人
         raise HTTPException(403, "not your approval")
-    return ApprovalOut.model_validate(approval)
+    return await _enrich_out(db, approval)
 
 
 @router.post("/{approval_id}/approve", response_model=ApprovalOut)
@@ -212,7 +224,7 @@ async def approve(
         feishu=feishu,
         settings=get_settings(),
     )
-    return ApprovalOut.model_validate(approval)
+    return await _enrich_out(db, approval)
 
 
 @router.post("/{approval_id}/reject", response_model=ApprovalOut)
@@ -251,4 +263,4 @@ async def reject(
         feishu=feishu,
         settings=get_settings(),
     )
-    return ApprovalOut.model_validate(approval)
+    return await _enrich_out(db, approval)

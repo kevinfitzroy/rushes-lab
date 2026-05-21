@@ -162,3 +162,7 @@ class ApprovalOut(ORMModel):
     decided_at: datetime | None
     decision_note: str | None
     created_at: datetime
+    # #136/#137: router 层 enrich(approval row 无这俩列;反查 resolve_target_name)
+    # target_name = 人类可读资源名;parent_project_id = folder/asset 时的父项目(导航用)
+    target_name: str | None = None
+    parent_project_id: uuid.UUID | None = None

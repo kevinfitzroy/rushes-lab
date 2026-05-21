@@ -83,6 +83,9 @@ export interface Approval {
   decided_at: string | null;
   decision_note: string | null;
   created_at: string;
+  // #136/#137: backend enrich — 资源名 + 父项目(folder/asset 导航用)
+  target_name?: string | null;
+  parent_project_id?: string | null;
 }
 
 export interface DownloadLink {
