@@ -41,6 +41,14 @@ step "0) 检查本地环境(在 material-storage/api 目录运行)"
 [[ -f Dockerfile ]] || { echo "ERROR: 必须在 material-storage/api/ 下跑"; exit 1; }
 ok "本地 ms-api 目录已确认"
 
+step "0.3) build web 前端产物(vite → ../api/app/static/web)"
+# #138 incident(2026-05-21):deploy 只 rsync api/(含 static/web 产物)但从不 build 前端,
+# 导致改了 .tsx 却 rsync 旧产物 → 前端改动不上线(连续 4 个 PR 才发现)。在此固化 build,
+# 产物随 step 1 的 api/ rsync 一并发布。放 banner 之前:build 失败即停(set -e),不留挂横幅。
+# build 在本地跑(本地有 pnpm + node_modules),不是 server2。
+( cd ../web && pnpm run build ) 2>&1 | tail -15
+ok "web 产物已重新 build(随 api/ 一并发布)"
+
 step "0.5) 开启 maintenance banner(deploy 期间给前端弹 modal,避免测试人员中途惊吓)"
 # MAINTENANCE_ISSUES 两种格式:
 #   (a) bare 数字列表:`"101 104"` — 自动 gh issue view 拉 title
