@@ -118,17 +118,24 @@ async def make_user():
     async def _make(
         *,
         name: str | None = None,
+        username: str | None = None,
         email: str | None = None,
         password: str | None = PASS_OK,
         must_change: bool = True,
         is_active: bool = True,
     ) -> tuple[User, str]:
+        """建用户。返回 (User, login_key):login_key = username(给了的话)或 name 兜底。
+
+        username=None 时模拟老飞书用户(只 name/email 可登);
+        username 给定时模拟 #150 管理后台建号形态(F2 review 主路径)。
+        """
         uname = _uname("user")
         svc = LocalAuthService(make_settings(), _FakeRedis())  # type: ignore[arg-type]
         async with get_sessionmaker()() as db:
             u = User(
                 feishu_open_id=f"ou_it_{uuid.uuid4().hex}",
                 name=name or uname,
+                username=username,
                 email=email or f"{uname}@example.com",
                 is_active=is_active,
                 must_change_password=must_change,
@@ -137,8 +144,8 @@ async def make_user():
             db.add(u)
             await db.commit()
             await db.refresh(u)
-            created.append((u, uname))
-            return u, uname
+            created.append((u, username or uname))
+            return u, username or uname
 
     yield _make
 
@@ -160,10 +167,10 @@ async def make_user():
             await db.commit()
         redis = from_url(str(get_settings().redis_url), decode_responses=True)
         keys = [_FAIL_IP_KEY.format(ip="testclient"), _LOCK_IP_KEY.format(ip="testclient")]
-        for _, uname in created:
+        for _, key in created:
             keys += [
-                _FAIL_USER_KEY.format(username=uname.lower()),
-                _LOCK_USER_KEY.format(username=uname.lower()),
+                _FAIL_USER_KEY.format(username=key.lower()),
+                _LOCK_USER_KEY.format(username=key.lower()),
             ]
         await redis.delete(*keys)
         await redis.aclose()
@@ -398,3 +405,109 @@ async def test_change_password_without_local_password(client: AsyncClient, make_
                           json={"old_password": "whatever1", "new_password": "newPass123"})
     assert r.status_code == 400
     assert "尚未设置本地密码" in r.json()["detail"]
+
+
+# ─── F2 review:username 列参与登录匹配 ──────────────────────────────────────
+@pytest.mark.asyncio
+async def test_login_by_username(client: AsyncClient, make_user) -> None:
+    """管理后台建号形态(有 username)→ 按 username 登录成功。"""
+    u, _ = await make_user(username=_uname("zhang"))
+    r = await client.post("/api/v1/auth/local/login",
+                          json={"username": u.username, "password": PASS_OK})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_login_username_case_insensitive(client: AsyncClient, make_user) -> None:
+    u, _ = await make_user(username=_uname("zhang"))
+    r = await client.post("/api/v1/auth/local/login",
+                          json={"username": (u.username or "").upper(), "password": PASS_OK})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_login_username_priority_over_ambiguous_name(
+    client: AsyncClient, make_user,
+) -> None:
+    """两人 name 重名:按 name 登录 401(歧义拒绝);按各自 username 登录都 200。"""
+    u1, _ = await make_user(name="张三", username=_uname("zhang"))
+    u2, _ = await make_user(name="张三", username=_uname("zhang"))
+    assert u1.username != u2.username
+    r_name = await client.post("/api/v1/auth/local/login",
+                               json={"username": "张三", "password": PASS_OK})
+    assert r_name.status_code == 401, r_name.text
+    for un in (u1.username, u2.username):
+        r = await client.post("/api/v1/auth/local/login",
+                              json={"username": un, "password": PASS_OK})
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_e2e_directory_created_user_can_login(client: AsyncClient) -> None:
+    """F2 端到端:管理后台建号 → 用返回的 username + temporary_password 登录。
+
+    走真实链路:POST /admin/directory/users(seed Evan = system admin,
+    X-User-Id 仅 dev 容器生效)→ 返回 username + 临时密码 → cookie 登录。
+    """
+    uname = _uname("zhang")
+    try:
+        r = await client.post(
+            "/api/v1/admin/directory/users",
+            headers={"X-User-Id": "3f1b659e-9ef1-4e65-aa03-4407ad7bcfc4"},  # seed Evan
+            json={"username": uname, "name": "张三", "email": None},
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["username"] == uname
+        assert body["temporary_password"], "应回显一次性临时密码"
+
+        r2 = await client.post(
+            "/api/v1/auth/local/login",
+            json={"username": uname, "password": body["temporary_password"]},
+        )
+        assert r2.status_code == 200, r2.text
+        j = r2.json()
+        assert j["status"] == "ok"
+        assert j["must_change_password"] is True, "新建用户应强制首登改密"
+    finally:
+        async with get_sessionmaker()() as db:
+            await db.execute(delete(User).where(User.username == uname))
+            await db.commit()
+
+
+# ─── F15 review:must_change_password 后端强制拦截 ──────────────────────────
+@pytest.mark.asyncio
+async def test_forced_change_blocks_other_endpoints(
+    client: AsyncClient, make_user,
+) -> None:
+    """未改密时:受保护端点 403;/me 与改密放行;改密后放行。"""
+    _, uname = await make_user()  # must_change=True(default)
+    r = await client.post("/api/v1/auth/local/login",
+                          json={"username": uname, "password": PASS_OK})
+    assert r.status_code == 200
+
+    # 非改密端点 → 403(后端强制,防绕过前端守卫)
+    r2 = await client.get("/api/v1/projects")
+    assert r2.status_code == 403, r2.text
+    assert "新密码" in r2.text
+
+    # /me 放行(前端守卫靠它识别强制状态)
+    r3 = await client.get("/api/v1/auth/me")
+    assert r3.status_code == 200, r3.text
+
+    # 改密成功 → 解除强制
+    r4 = await client.post("/api/v1/auth/change-password",
+                           json={"old_password": PASS_OK, "new_password": "newpass1"})
+    assert r4.status_code == 200, r4.text
+    r5 = await client.get("/api/v1/projects")
+    assert r5.status_code == 200, r5.text
+    assert r5.json() is not None
+
+
+@pytest.mark.asyncio
+async def test_forced_change_dev_header_not_blocked(client: AsyncClient, make_user) -> None:
+    """dev 通道(X-User-Id)不做强制改密拦截 — 本地开发无密码流程。"""
+    u, _ = await make_user()  # must_change=True
+    r = await client.get("/api/v1/projects", headers={"X-User-Id": str(u.id)})
+    assert r.status_code == 200, r.text

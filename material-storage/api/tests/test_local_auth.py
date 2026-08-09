@@ -1,11 +1,16 @@
-"""本地账号密码登录(#149)单元测试 — 无基础设施(哈希 / 策略 / 限流 FakeRedis)。
+"""本地账号密码登录(#149)单元测试 — 无外部基础设施(哈希 / 策略 / 限流 FakeRedis)。
 
+find_user_by_username 用 aiosqlite 内存 SQLite 跑真查询(无需 DB)。
 集成测试见 tests/test_local_auth_integration.py(容器内跑)。
 """
 from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.db.tables import Base, User
 from app.services.local_auth import LocalAuthService
 from app.settings import Settings
 
@@ -192,3 +197,90 @@ class TestSettingsDefaults:
         s = make_settings()
         assert s.auth_max_failures == 5
         assert s.auth_lock_seconds == 15 * 60
+
+
+# ─── 单元:username → user 解析(F2 review)──────────────────────────────────
+# 用 aiosqlite 内存库跑真查询(无外部 DB):覆盖匹配优先级
+# username 精确 → email(含 @)→ name 兜底,以及重名歧义拒绝。
+@pytest.fixture
+async def db_session():
+    """内存 SQLite(User 单表即可,不建其它表)。"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=[User.__table__])
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    yield factory
+    await engine.dispose()
+
+
+class TestFindUserByUsername:
+    @pytest.fixture
+    async def svc(self) -> LocalAuthService:
+        return make_service()[0]
+
+    async def _seed(self, db_session, users: list[User]) -> None:
+        async with db_session() as db:
+            db.add_all(users)
+            await db.commit()
+
+    async def test_username_exact_match_ignores_case(
+        self, db_session, svc
+    ) -> None:
+        await self._seed(db_session, [
+            User(name="张三", username="zhangsan", email=None),
+        ])
+        async with db_session() as db:
+            u = await svc.find_user_by_username(db, "ZHANGsan")
+        assert u is not None and u.username == "zhangsan"
+
+    async def test_username_priority_over_name(
+        self, db_session, svc
+    ) -> None:
+        """username 命中优先:即使 name 与他人重名,也能按 username 登录。"""
+        await self._seed(db_session, [
+            User(name="张三", username="zhangsan", email=None),
+            User(name="张三", username="zhangsan2", email=None),
+        ])
+        async with db_session() as db:
+            u = await svc.find_user_by_username(db, "zhangsan")
+            u2 = await svc.find_user_by_username(db, "zhangsan2")
+        assert u is not None and u.username == "zhangsan"
+        assert u2 is not None and u2.username == "zhangsan2"
+
+    async def test_email_match_when_contains_at(
+        self, db_session, svc
+    ) -> None:
+        await self._seed(db_session, [
+            User(name="张三", username="zhangsan", email="zs@example.com"),
+        ])
+        async with db_session() as db:
+            u = await svc.find_user_by_username(db, "ZS@example.com")
+        assert u is not None and u.username == "zhangsan"
+
+    async def test_name_fallback_for_legacy_user(
+        self, db_session, svc
+    ) -> None:
+        """老飞书用户:无 username / email,按显示名兜底可登。"""
+        await self._seed(db_session, [
+            User(name="张三", username=None, email=None),
+        ])
+        async with db_session() as db:
+            u = await svc.find_user_by_username(db, "张三")
+        assert u is not None and u.name == "张三"
+
+    async def test_ambiguous_name_returns_none(
+        self, db_session, svc
+    ) -> None:
+        """name 重名且 username 未命中 → 拒绝(不锁死任何人)。"""
+        await self._seed(db_session, [
+            User(name="张三", username="zhangsan", email=None),
+            User(name="张三", username="zhangsan2", email=None),
+        ])
+        async with db_session() as db:
+            u = await svc.find_user_by_username(db, "张三")
+        assert u is None
+
+    async def test_unknown_returns_none(self, db_session, svc) -> None:
+        async with db_session() as db:
+            u = await svc.find_user_by_username(db, "nobody")
+        assert u is None

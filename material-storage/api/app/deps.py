@@ -63,6 +63,13 @@ async def get_audit(request: Request):
         yield AuditService(session)
 
 
+# #149 review F15:must_change_password=true 的会话,后端只放行以下端点
+# (改密页依赖 /me 报告状态、改密端点自身要能过守卫、logout 无鉴权但一并列出);
+# 其余端点一律 403,防止拿临时密码的人绕过前端路由守卫直接调 API。
+# 口径与 /me 一致:必须已设本地密码才算强制改密(存量飞书用户不误伤)。
+_FORCED_CHANGE_OK_ROUTES = frozenset({"me", "change_password", "logout"})
+
+
 # ─── current user(cookie session 优先 + dev header fallback)─────────────────
 async def get_current_user(
     request: Request,
@@ -70,8 +77,10 @@ async def get_current_user(
 ) -> CurrentUser:
     """认证优先级:
       1. cookie 'ms_session'(JWT)— 生产路径,本地账号密码登录(#149)或 OIDC 获得
-         JWT payload 已包 sub(UUID)+ name → 直接构 CurrentUser,不查 db
-      2. X-User-Id header(dev fallback)— 反查 db;生产 env != 'dev' 拒绝
+         JWT payload 已包 sub(UUID)+ name → 直接构 CurrentUser;
+         F15:must_change_password=true 时轻量查库校验,非改密/me 端点拦截(403)
+      2. X-User-Id header(dev fallback)— 反查 db;生产 env != 'dev' 拒绝;
+         dev 通道不做强制改密拦截(本地开发无密码流程)
     """
     settings = get_settings()
     auth: OIDCService = request.app.state.auth
@@ -80,13 +89,22 @@ async def get_current_user(
     if token:
         try:
             payload = auth.decode_session(token)
-            return CurrentUser(
-                id=uuid.UUID(payload["sub"]),
-                name=payload.get("name", ""),
-            )
+            uid = uuid.UUID(payload["sub"])
         except (ValueError, KeyError) as e:
             log.info("session decode failed: %s", e)
             raise HTTPException(401, "会话已过期或无效,请重新登录") from e
+
+        route_name = getattr(request.scope.get("route"), "name", "")
+        if route_name not in _FORCED_CHANGE_OK_ROUTES:
+            async with get_sessionmaker()() as db:
+                user = await db.get(User, uid)
+                if user is None:
+                    raise HTTPException(401, "账号不存在或已被删除,请重新登录")
+                if user.must_change_password and user.password_hash is not None:
+                    raise HTTPException(
+                        403, "首次登录请先设置新密码:请先完成修改密码再继续操作"
+                    )
+        return CurrentUser(id=uid, name=payload.get("name", ""))
 
     if settings.env == "dev" and x_user_id:
         try:

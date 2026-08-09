@@ -5,7 +5,8 @@
   - 密码策略校验(最小长度 + 字母/数字)
   - 登录限流(Redis 计数,per IP + per username 双维度;失败 5 次锁 15min)
   - username 解析:不强制邮箱格式 — 拼音 / 工号友好;
-    匹配 email(含 @,忽略大小写)或 name(忽略大小写);name 重复时拒绝登录
+    匹配优先级 username 精确 → email(含 @)→ name 兜底,全部忽略大小写;
+    任一维度重复(如 name 重名)→ 拒绝登录
 
 约定:
   - 服务实例挂 app.state.local_auth(main.py lifespan 构造,redis client 注入)
@@ -110,18 +111,29 @@ class LocalAuthService:
 
     # ─── username → user 解析 ──────────────────────────────────────────────
     async def find_user_by_username(self, db: AsyncSession, username: str) -> User | None:
-        """按 username 找 user。
+        """按登录输入找 user。匹配优先级:username 精确 → email(含 @)→ name 兜底。
 
-        含 '@' → 匹配 email(忽略大小写);否则匹配 name(忽略大小写,拼音/工号友好)。
-        name 不唯一,匹配到多个 → 记日志返回 None(防止歧义登录)。
+        - username 是 #150 起的本地登录名(拼音/工号,管理后台建号必填);
+          #149 落地时该列尚不存在(review F2 修正):优先匹配 username,
+          老飞书用户 / 历史数据靠 email / name 兜底仍可登录
+        - 全部忽略大小写;任一维度命中多行(如 name 重名)→ 记日志返回 None,
+          避免歧义登录把重名用户全部锁死
         """
         lowered = username.lower()
-        if "@" in lowered:
-            stmt = select(User).where(func.lower(User.email) == lowered).limit(2)
-        else:
-            stmt = select(User).where(func.lower(User.name) == lowered).limit(2)
+        # ① 本地登录名 username(#150 管理后台建的账号)
+        stmt = select(User).where(func.lower(User.username) == lowered).limit(2)
         res = await db.execute(stmt)
         users = list(res.scalars())
+        # ② email(仅输入含 @ 时降级尝试;username 没命中才走这里)
+        if not users and "@" in lowered:
+            stmt = select(User).where(func.lower(User.email) == lowered).limit(2)
+            res = await db.execute(stmt)
+            users = list(res.scalars())
+        # ③ 显示名 name 兜底(老飞书用户无 username / email)
+        if not users:
+            stmt = select(User).where(func.lower(User.name) == lowered).limit(2)
+            res = await db.execute(stmt)
+            users = list(res.scalars())
         if len(users) > 1:
             log.warning("login username ambiguous username=%s", username)
             return None

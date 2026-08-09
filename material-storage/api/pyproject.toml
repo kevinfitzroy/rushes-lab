@@ -29,10 +29,7 @@ dependencies = [
 
     # auth / OIDC(#154:OIDC 为 hand-rolled httpx + provider 配置,无 authlib)
     "python-jose[cryptography]>=3.3",
-    # 本地账号密码登录(#149):argon2id 哈希(不用 passlib,停维护)
-    "argon2-cffi>=23.1",
-
-    # 本地账号密码(#150 管理后台生成临时密码 hash;P1 登录 #149 复用同算法)
+    # 本地账号密码(#149 登录 / #150 管理后台临时密码 hash):argon2id(不用 passlib,停维护)
     "argon2-cffi>=23.1",
 
     # 工具
@@ -55,6 +52,7 @@ dev = [
     "mypy>=1.13",
     "types-redis",
     "freezegun>=1.5",       # OpenFGA conditional grant 测试用
+    "aiosqlite>=0.20",      # find_user_by_username 单测用内存 SQLite(无需外部 DB)
 ]
 
 [tool.uv]
