@@ -22,6 +22,8 @@ const DevLoginPage = lazy(() => import('./pages/DevLoginPage'));
 const ShareLandingPage = lazy(() => import('./pages/ShareLandingPage'));
 const RequestLinkLandingPage = lazy(() => import('./pages/RequestLinkLandingPage'));
 const AdminAuditPage = lazy(() => import('./pages/AdminAuditPage'));
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
+const AdminGroupsPage = lazy(() => import('./pages/AdminGroupsPage'));
 const MyPermissionsPage = lazy(() => import('./pages/MyPermissionsPage'));
 
 const qc = new QueryClient({
@@ -56,6 +58,8 @@ const RouterRoutes = () => (
       <Route path="/approvals" element={<ApprovalsPage />} />
       <Route path="/my-permissions" element={<MyPermissionsPage />} />
       <Route path="/admin/audit" element={<AdminAuditPage />} />
+      <Route path="/admin/users" element={<AdminUsersPage />} />
+      <Route path="/admin/groups" element={<AdminGroupsPage />} />
       <Route path="/s/:token" element={<ShareLandingPage />} />
       <Route path="/r/:token" element={<RequestLinkLandingPage />} />
       <Route path="/dev-login" element={<DevLoginPage />} />

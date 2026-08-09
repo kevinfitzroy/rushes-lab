@@ -55,8 +55,11 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    feishu_open_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # #150:本地用户没有飞书身份 → 列改 nullable;飞书老用户保留历史对照(只读)
+    feishu_open_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     feishu_union_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # 本地登录名(ADR-0007 / P1 #149):拼音/工号友好格式,不强制邮箱;老飞书用户 NULL
+    username: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255))
     # 本地账号密码登录(ADR-0007,P1 #149 启用);password_hash NULL = 未设密码

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import AuditEvent, User
-from app.deps import CurrentUser, require_system_admin, get_feishu_client
+from app.deps import CurrentUser, get_feishu_client, require_system_admin
 from app.services.feishu_card_handlers import registered_intents
 from app.services.feishu_cards import (
     build_approval_card,
@@ -57,7 +57,7 @@ async def feishu_health(
         token = await feishu.get_tenant_access_token()
         out["token"] = f"{token[:8]}…(redacted)"
         out["token_ok"] = True
-    except (FeishuAPIError, Exception) as e:  # noqa: BLE001
+    except (FeishuAPIError, Exception) as e:
         out["token"] = None
         out["token_ok"] = False
         out["error"] = str(e)
@@ -148,6 +148,7 @@ class AuditOut(BaseModel):
 
 
 def _build_audit_query(
+    actor_user_id: uuid.UUID | None,
     actor_open_id: str | None,
     event_type: str | None,
     project_id: uuid.UUID | None,
@@ -157,7 +158,10 @@ def _build_audit_query(
     stmt = select(AuditEvent)
     if event_type:
         stmt = stmt.where(AuditEvent.event_type == event_type)
-    if actor_open_id:
+    # #150:actor 过滤改 users.id UUID(UserPicker 语义切换);open_id 过滤保留兼容老调用
+    if actor_user_id:
+        stmt = stmt.where(AuditEvent.actor_user_id == actor_user_id)
+    elif actor_open_id:
         stmt = stmt.where(AuditEvent.actor_open_id_snapshot == actor_open_id)
     if project_id:
         stmt = stmt.where(AuditEvent.target_project_id == project_id)
@@ -170,7 +174,8 @@ def _build_audit_query(
 
 @router.get("/audit", response_model=list[AuditOut])
 async def list_audit(
-    actor_open_id: str | None = Query(None, description="按 actor open_id 过滤"),
+    actor_user_id: uuid.UUID | None = Query(None, description="按 actor users.id 过滤(#150)"),
+    actor_open_id: str | None = Query(None, description="按 actor open_id 过滤(旧调用方)"),
     event_type: str | None = Query(None, description="精确 event_type 过滤"),
     project_id: uuid.UUID | None = Query(None),
     from_time: datetime | None = Query(None, alias="from"),
@@ -183,7 +188,7 @@ async def list_audit(
     """audit 查询(分页 + filter)— 仅 system admin。"""
     _ = user.id
     stmt = _build_audit_query(
-        actor_open_id, event_type, project_id, from_time, to_time,
+        actor_user_id, actor_open_id, event_type, project_id, from_time, to_time,
     ).order_by(AuditEvent.event_time.desc()).limit(limit).offset(offset)
     res = await db.execute(stmt)
     return [
@@ -206,7 +211,8 @@ async def list_audit(
 
 @router.get("/audit/export.csv")
 async def export_audit_csv(
-    actor_open_id: str | None = Query(None),
+    actor_user_id: uuid.UUID | None = Query(None, description="按 actor users.id 过滤(#150)"),
+    actor_open_id: str | None = Query(None, description="按 actor open_id 过滤(旧调用方)"),
     event_type: str | None = Query(None),
     project_id: uuid.UUID | None = Query(None),
     from_time: datetime | None = Query(None, alias="from"),
@@ -217,7 +223,7 @@ async def export_audit_csv(
     """流式 CSV 导出(同 query filter)— UTF-8 BOM 给 Excel 兼容。"""
     _ = user.id
     stmt = _build_audit_query(
-        actor_open_id, event_type, project_id, from_time, to_time,
+        actor_user_id, actor_open_id, event_type, project_id, from_time, to_time,
     ).order_by(AuditEvent.event_time.desc()).limit(50000)
 
     async def gen():

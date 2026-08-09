@@ -34,6 +34,9 @@ dependencies = [
     "authlib>=1.3",
     "python-jose[cryptography]>=3.3",
 
+    # 本地账号密码(#150 管理后台生成临时密码 hash;P1 登录 #149 复用同算法)
+    "argon2-cffi>=23.1",
+
     # 工具
     "httpx>=0.27",
     "tenacity>=9.0",

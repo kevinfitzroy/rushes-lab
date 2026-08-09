@@ -47,9 +47,9 @@ const PAGE_SIZE = 30;
 export default function AdminAuditPage() {
   const [filters, setFilters] = useState<{
     event_type: string;
-    actor_open_id: string;
+    actor_user_id: string;   // users.id UUID(#148 起)
     range: [Dayjs, Dayjs] | null;
-  }>({ event_type: '', actor_open_id: '', range: null });
+  }>({ event_type: '', actor_user_id: '', range: null });
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -59,7 +59,7 @@ export default function AdminAuditPage() {
       offset: String((page - 1) * PAGE_SIZE),
     };
     if (filters.event_type) p.event_type = filters.event_type;
-    if (filters.actor_open_id) p.actor_open_id = filters.actor_open_id;
+    if (filters.actor_user_id) p.actor_user_id = filters.actor_user_id;
     if (filters.range) {
       p.from = filters.range[0].toISOString();
       p.to = filters.range[1].toISOString();
@@ -75,7 +75,7 @@ export default function AdminAuditPage() {
   const exportUrl = useMemo(() => {
     const u = new URLSearchParams();
     if (filters.event_type) u.set('event_type', filters.event_type);
-    if (filters.actor_open_id) u.set('actor_open_id', filters.actor_open_id);
+    if (filters.actor_user_id) u.set('actor_user_id', filters.actor_user_id);
     if (filters.range) {
       u.set('from', filters.range[0].toISOString());
       u.set('to', filters.range[1].toISOString());
@@ -129,13 +129,14 @@ export default function AdminAuditPage() {
             label: t ? tlabel(t, EVENT_TYPE_LABEL) : '— 全部 —',
           }))}
         />
-        {/* #116 修:actor 过滤从手填 open_id Input 改 UserPicker 选人 */}
+        {/* #116 修:actor 过滤从手填 open_id Input 改 UserPicker 选人;
+            #148 起 value = users.id UUID,传给 backend actor_user_id */}
         <div style={{ width: 280 }}>
           <UserPicker
             multiple={false}
-            value={filters.actor_open_id}
+            value={filters.actor_user_id}
             onChange={(v) => {
-              setFilters({ ...filters, actor_open_id: (v as string) || '' });
+              setFilters({ ...filters, actor_user_id: (v as string) || '' });
               setPage(1);
             }}
             placeholder="按操作者筛选"

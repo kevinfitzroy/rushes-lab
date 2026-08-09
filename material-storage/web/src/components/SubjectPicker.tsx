@@ -7,7 +7,7 @@
  *
  * value:  Subject[] — 每个 {kind: 'user'|'group'|'department', id: '<id>'}
  * 给上层 InviteModal:遍历 subjects 各自走对应 POST body
- *   user → {user_open_id, ...}
+ *   user → {user_id, ...}   (users.id UUID,#148 起)
  *   group → {group_id, ...}
  *   department → {department_id, ...}
  */
@@ -22,7 +22,7 @@ export type SubjectKind = 'user' | 'group' | 'department';
 
 export interface Subject {
   kind: SubjectKind;
-  id: string;       // user.open_id / group.id / dept.open_department_id
+  id: string;       // user.id (users.id UUID,#150 起) / group.id / dept.open_department_id
   name?: string;    // 缓存显示用
 }
 
@@ -72,8 +72,8 @@ export function SubjectPicker({
           <UserPicker
             value={userIds}
             onChange={(v) => setUsers(v as string[])}
-            preset={[{ id: me.id, open_id: me.open_id, union_id: me.union_id,
-                       name: me.name + '(自己)', email: me.email }]}
+            preset={[{ id: me.id, username: null, open_id: me.open_id,
+                       union_id: me.union_id, name: me.name + '(自己)', email: me.email }]}
             placeholder="搜姓名 / 邮箱选用户"
           />
         )}

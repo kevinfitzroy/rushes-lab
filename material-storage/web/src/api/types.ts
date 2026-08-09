@@ -12,8 +12,40 @@ export interface Me {
 }
 
 export interface AdminBrief {
-  open_id: string;
+  user_id: string;   // users.id UUID(#148 起,不再用飞书 open_id)
   name: string;
+}
+
+// ─── directory(#150 本地用户/组 CRUD)───────────────────────────────────────
+export interface DirectoryUser {
+  id: string;
+  username: string | null;
+  name: string;
+  email: string | null;
+  is_active: boolean;
+  must_change_password: boolean;
+  created_at: string;
+  resigned_at: string | null;
+}
+
+export interface DirectoryUserCreateOut extends DirectoryUser {
+  temporary_password: string;
+}
+
+export interface DirectoryGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  member_count: number;
+  created_at: string;
+}
+
+export interface DirectoryGroupMember {
+  user_id: string;
+  username: string | null;
+  name: string;
+  email: string | null;
+  is_active: boolean;
 }
 
 export interface Project {

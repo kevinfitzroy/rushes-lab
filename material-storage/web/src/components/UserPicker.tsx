@@ -1,7 +1,8 @@
 /**
  * UserPicker — antd Select with autocomplete /api/v1/users?q=
- * 支持 multiple 或 single;value 是 open_id 数组(或单 string)。
- * 显示:头像首字 + name + 小字 open_id。
+ * 支持 multiple 或 single;value 默认 = users.id UUID(#148/#150 起),
+ * 传入 valueKey="open_id" 可切回飞书 open_id 语义(仅 ShareModal 等遗留场景)。
+ * 显示:头像首字 + name + 小字 username / open_id。
  */
 import { Avatar, Select, Spin, type SelectProps } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -9,6 +10,7 @@ import { http } from '../api/client';
 
 interface UserBrief {
   id: string;
+  username: string | null;
   open_id: string;
   union_id: string | null;
   name: string;
@@ -16,20 +18,21 @@ interface UserBrief {
 }
 
 interface Props {
-  value?: string[] | string;     // open_id(s)
+  value?: string[] | string;     // 默认 users.id UUID(s);valueKey="open_id" 时为 open_id(s)
   onChange?: (v: string[] | string) => void;
   multiple?: boolean;
   placeholder?: string;
   disabled?: boolean;
   preset?: UserBrief[];          // 可注入预选 / 当前用户等
   size?: SelectProps['size'];
+  valueKey?: 'id' | 'open_id';   // #150:默认 UUID;飞书遗留场景(share)用 'open_id'
 }
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function UserPicker({
-  value, onChange, multiple = true, placeholder = '搜姓名 / 邮箱 / open_id…',
-  disabled, preset, size,
+  value, onChange, multiple = true, placeholder = '搜姓名 / 邮箱 / 用户名…',
+  disabled, preset, size, valueKey = 'id',
 }: Props) {
   const [options, setOptions] = useState<UserBrief[]>([]);
   const [fetching, setFetching] = useState(false);
@@ -37,13 +40,14 @@ export function UserPicker({
   // 导致总是显示自己,'无匹配' 永远不展示)
   const [query, setQuery] = useState('');
   const fetchRef = useRef(0);
+  const keyOf = (u: UserBrief) => (valueKey === 'id' ? u.id : u.open_id);
 
-  // 选中 user 的 brief 缓存(用于显示 tag 含 name,不止 open_id)
+  // 选中 user 的 brief 缓存(用于显示 tag 含 name,不止 value)
   const briefById = useRef<Map<string, UserBrief>>(new Map());
   useEffect(() => {
-    if (preset) preset.forEach(u => briefById.current.set(u.open_id, u));
-    options.forEach(u => briefById.current.set(u.open_id, u));
-  }, [options, preset]);
+    if (preset) preset.forEach(u => briefById.current.set(keyOf(u), u));
+    options.forEach(u => briefById.current.set(keyOf(u), u));
+  }, [options, preset, valueKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const search = (q: string) => {
     setQuery(q);
@@ -76,14 +80,14 @@ export function UserPicker({
     // 不再注入 preset,让 backend 命中结果 + notFoundContent='无匹配' 正常工作
     if (preset && !query.trim()) {
       for (const u of preset) {
-        if (!list.find(x => x.open_id === u.open_id)) list.push(u);
+        if (!list.find(x => keyOf(x) === keyOf(u))) list.push(u);
       }
     }
     return list.map(u => ({
-      value: u.open_id,
+      value: keyOf(u),
       label: <UserRow user={u} />,
     }));
-  }, [options, preset, query]);
+  }, [options, preset, query, valueKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Select
@@ -143,7 +147,7 @@ function UserRow({ user }: { user: UserBrief }) {
           fontFamily: 'var(--ms-font-mono)',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
-          {user.open_id.slice(0, 18)}…{user.email ? ` · ${user.email}` : ''}
+          {user.username || user.open_id.slice(0, 18)}{user.email ? ` · ${user.email}` : ''}
         </div>
       </div>
     </div>

@@ -6,6 +6,10 @@ import type {
   ApprovalAction,
   ApprovalTargetType,
   Asset,
+  DirectoryGroup,
+  DirectoryGroupMember,
+  DirectoryUser,
+  DirectoryUserCreateOut,
   DownloadLink,
   Folder,
   Me,
@@ -45,7 +49,7 @@ export const useCreateProject = () => {
       description?: string;
       organization_id?: string;
       minio_bucket: string;
-      admin_user_open_id: string;   // 必填:指派项目 admin(可以是自己)
+      admin_user_id: string;   // 必填:指派项目 admin(可以是自己;users.id UUID)
     }) => {
       const { organization_id, ...rest } = body;
       const payload = organization_id ? { ...rest, organization_id } : rest;
@@ -90,7 +94,7 @@ export const useInviteFolder = () => {
   return useMutation({
     mutationFn: async (args: {
       folder_id: string;
-      user_open_id?: string;
+      user_id?: string;      // users.id UUID(#148 起)
       group_id?: string;
       department_id?: string;
       level: 'viewer' | 'downloader';
@@ -210,7 +214,7 @@ export const useCreateRequestLink = () =>
       target_type: 'sensitive_folder' | 'asset' | 'project' | 'folder';
       target_id: string;
       allowed_actions: ('access' | 'download')[];
-      receiver_open_id?: string;
+      receiver_user_id?: string;   // users.id UUID(#148 起)
       ttl_seconds?: number;
     }) => (await http.post<RequestLinkCreateOut>('/api/v1/request-links', body)).data,
   });
@@ -282,3 +286,124 @@ export const useResolveShare = (token: string | undefined) =>
     enabled: !!token,
     retry: false,
   });
+
+// ─── directory(#150 本地用户/组管理,admin only)────────────────────────────
+export const useDirectoryUsers = (params: { q?: string; is_active?: boolean } = {}) =>
+  useQuery({
+    queryKey: ['directory-users', params],
+    queryFn: async () =>
+      (await http.get<DirectoryUser[]>('/api/v1/admin/directory/users', { params })).data,
+  });
+
+export const useCreateUser = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { username: string; name: string; email?: string }) =>
+      (await http.post<DirectoryUserCreateOut>('/api/v1/admin/directory/users', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-users'] }),
+  });
+};
+
+export const useDisableUser = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) =>
+      (await http.post<DirectoryUser>(`/api/v1/admin/directory/users/${userId}/disable`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-users'] }),
+  });
+};
+
+export const useEnableUser = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) =>
+      (await http.post<DirectoryUser>(`/api/v1/admin/directory/users/${userId}/enable`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-users'] }),
+  });
+};
+
+export const useResetUserPassword = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) =>
+      (await http.post<{ temporary_password: string }>(
+        `/api/v1/admin/directory/users/${userId}/reset-password`,
+      )).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-users'] }),
+  });
+};
+
+export const useDirectoryGroups = (q = '') =>
+  useQuery({
+    queryKey: ['directory-groups', q],
+    queryFn: async () =>
+      (await http.get<DirectoryGroup[]>('/api/v1/admin/directory/groups', { params: { q } })).data,
+  });
+
+export const useCreateGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { name: string; description?: string }) =>
+      (await http.post<DirectoryGroup>('/api/v1/admin/directory/groups', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-groups'] }),
+  });
+};
+
+export const useUpdateGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { groupId: string; name?: string; description?: string }) => {
+      const { groupId, ...body } = args;
+      return (await http.patch<DirectoryGroup>(`/api/v1/admin/directory/groups/${groupId}`, body)).data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-groups'] }),
+  });
+};
+
+export const useDeleteGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (groupId: string) => {
+      await http.delete(`/api/v1/admin/directory/groups/${groupId}`);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['directory-groups'] }),
+  });
+};
+
+export const useGroupMembers = (groupId: string | undefined) =>
+  useQuery({
+    queryKey: ['directory-group-members', groupId],
+    queryFn: async () =>
+      (await http.get<DirectoryGroupMember[]>(
+        `/api/v1/admin/directory/groups/${groupId}/members`,
+      )).data,
+    enabled: !!groupId,
+  });
+
+export const useAddGroupMember = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { groupId: string; user_id: string }) =>
+      (await http.post<DirectoryGroupMember>(
+        `/api/v1/admin/directory/groups/${args.groupId}/members`,
+        { user_id: args.user_id },
+      )).data,
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['directory-group-members', vars.groupId] });
+      qc.invalidateQueries({ queryKey: ['directory-groups'] });
+    },
+  });
+};
+
+export const useRemoveGroupMember = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { groupId: string; userId: string }) => {
+      await http.delete(`/api/v1/admin/directory/groups/${args.groupId}/members/${args.userId}`);
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['directory-group-members', vars.groupId] });
+      qc.invalidateQueries({ queryKey: ['directory-groups'] });
+    },
+  });
+};

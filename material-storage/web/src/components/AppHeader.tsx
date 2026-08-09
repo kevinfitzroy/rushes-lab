@@ -62,6 +62,13 @@ export function AppHeader({ me }: Props) {
           <NavChip to="/approvals" label="审批" navigate={navigate} />
           <NavChip to="/my-permissions" label="我的权限" navigate={navigate} />
           <NavChip to="/admin/audit" label="审计" navigate={navigate} />
+          {/* #150: 本地用户/组管理 — 仅系统管理员可见 */}
+          {me.is_system_admin && (
+            <>
+              <NavChip to="/admin/users" label="用户" navigate={navigate} />
+              <NavChip to="/admin/groups" label="用户组" navigate={navigate} />
+            </>
+          )}
         </nav>
 
         <div style={{ flex: 1 }} />

@@ -2,7 +2,7 @@
  * /r/{token} — request-link 落地页(#112 PR-2)。
  * 接收者点开链接后:
  *   1. 必须登录(BrowserRouter basename + apiBase login redirect)
- *   2. fetch token meta;若 receiver_open_id 限定且不匹配 → 显示 "此链接不是给你的"
+ *   2. fetch token meta;若 receiver_user_id 限定且不匹配 → 显示 "此链接不是给你的"
  *   3. 否则显示资源信息 + 自动弹 RequestAccessModal,actions filter 按 allowed_actions
  *   4. modal 提交时带 via_link query param,backend 二次 enforce
  */

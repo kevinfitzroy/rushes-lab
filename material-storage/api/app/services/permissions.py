@@ -34,6 +34,29 @@ from app.settings import Settings
 
 log = logging.getLogger(__name__)
 
+# user 可作直接 subject 的 (type, relation) 全集(model v4 + #150 group)。
+# revoke_user_completely 靠它枚举删干净;conditional tuple 无 context 时
+# list_objects 不返回(自动过期),符合"撤权限"语义。
+USER_DIRECT_RELATIONS: tuple[tuple[str, str], ...] = (
+    ("organization", "admin"),
+    ("organization", "member"),
+    ("department", "member"),
+    ("group", "member"),
+    ("project", "admin"),
+    ("project", "viewer"),
+    ("project", "downloader"),
+    ("project", "uploader"),
+    ("project", "explicit_downloader"),
+    ("folder", "explicit_viewer"),
+    ("folder", "explicit_downloader"),
+    ("folder", "explicit_uploader"),
+    ("sensitive_folder", "invited_viewer"),
+    ("sensitive_folder", "invited_downloader"),
+    ("sensitive_folder", "explicit_invited_viewer"),
+    ("sensitive_folder", "explicit_invited_downloader"),
+    ("asset", "explicit_downloader"),
+)
+
 
 # project 三轴 + admin
 ProjectRole = Literal["admin", "viewer", "downloader", "uploader"]
@@ -335,15 +358,37 @@ class PermissionsService:
 
     # ───────────────────────── 离职闭环 ────────────────────────────────────────
     async def revoke_user_completely(self, user_id: str) -> int:
-        """删某 user 所有 tuple(飞书离职事件触发)。"""
-        from openfga_sdk.models import TupleKey
-        resp = await self._client.read(TupleKey(user=f"user:{user_id}"))
-        if not resp.tuples:
+        """删某 user 所有 tuple(离职 / 禁用触发)。
+
+        OpenFGA read 不支持纯 user 过滤(必须带 object),故按
+        USER_DIRECT_RELATIONS 逐 (type, relation) list_objects 找候选对象,
+        再全键 read 验证后批量删除 —— 避免把 group#member 派生来的对象也误删。
+        """
+        from openfga_sdk.models import ReadRequestTupleKey
+        deletes: list[ClientTuple] = []
+        for obj_type, relation in USER_DIRECT_RELATIONS:
+            try:
+                objs = await self.list_objects(
+                    user_subject=f"user:{user_id}",
+                    relation=relation,
+                    object_type=obj_type,
+                )
+            except Exception:
+                continue  # 该 type/relation 不在已部署 model 里 → 跳过
+            for oid in objs:
+                try:
+                    resp = await self._client.read(ReadRequestTupleKey(  # type: ignore[no-untyped-call]
+                        user=f"user:{user_id}", relation=relation,
+                        object=f"{obj_type}:{oid}",
+                    ))
+                except Exception:
+                    continue
+                for t in resp.tuples:
+                    deletes.append(ClientTuple(
+                        user=t.key.user, relation=t.key.relation, object=t.key.object,
+                    ))
+        if not deletes:
             return 0
-        deletes = [
-            ClientTuple(user=t.key.user, relation=t.key.relation, object=t.key.object)
-            for t in resp.tuples
-        ]
         BATCH = 50
         total = 0
         for i in range(0, len(deletes), BATCH):
@@ -442,6 +487,36 @@ class PermissionsService:
                 ]
             )
         )
+
+    async def remove_user_from_group(self, *, group_id: str, user_id: str) -> None:
+        """从组移除成员:删 group:<id>#member tuple(#150 本地组管理用)。"""
+        await self._client.write(
+            ClientWriteRequest(
+                deletes=[
+                    ClientTuple(
+                        user=f"user:{user_id}",
+                        relation="member",
+                        object=f"group:{group_id}",
+                    )
+                ]
+            )
+        )
+
+    async def list_group_member_tuples(self, group_id: str) -> list[tuple[str, str, str]]:
+        """group 对象上全部 tuple 的 (user, relation, object) — 删组时清理用。
+
+        只列以 group:<id> 为 *object* 的 member tuple(成员关系);
+        group#member 作为 *subject* 出现在 project/folder 上的引用按 department 处理
+        惯例(ADR-0007:存量 tuple 保留原样)不回收。
+        """
+        from openfga_sdk.models import ReadRequestTupleKey
+        resp = await self._client.read(ReadRequestTupleKey(  # type: ignore[no-untyped-call]
+            object=f"group:{group_id}"))
+        return [
+            (t.key.user, t.key.relation, t.key.object)
+            for t in resp.tuples
+            if t.key.relation == "member" and t.key.user.startswith("user:")
+        ]
 
     # ───────────────────────── 时间限定下载 grant(approval download)─────────
     async def grant_explicit_download(

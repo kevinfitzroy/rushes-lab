@@ -476,7 +476,7 @@ function InviteModal({
     for (const s of subjects) {
       try {
         const body: Record<string, string> = { role };
-        if (s.kind === 'user') body.user_open_id = s.id;
+        if (s.kind === 'user') body.user_id = s.id;   // users.id UUID(#148 起)
         else if (s.kind === 'group') body.group_id = s.id;
         else body.department_id = s.id;
         await http.post(`/api/v1/projects/${project.id}/members`, body);

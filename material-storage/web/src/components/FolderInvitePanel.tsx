@@ -252,7 +252,7 @@ function InviteModal({
           level,
           duration_seconds: duration > 0 ? duration : undefined,
         };
-        if (s.kind === 'user') args.user_open_id = s.id;
+        if (s.kind === 'user') args.user_id = s.id;   // users.id UUID(#148 起)
         else if (s.kind === 'group') args.group_id = s.id;
         else args.department_id = s.id;
         await invite.mutateAsync(args);

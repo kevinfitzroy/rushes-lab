@@ -101,7 +101,8 @@ async def get_current_user(
             user = res.scalar_one_or_none()
             if user is None:
                 raise HTTPException(401, f"X-User-Id user {uid} not found")
-            return CurrentUser(id=user.id, open_id=user.feishu_open_id, name=user.name)
+            # 本地账号(#150)无 feishu_open_id → 空串占位;open_id 不再作权限 subject
+            return CurrentUser(id=user.id, open_id=user.feishu_open_id or "", name=user.name)
 
     raise HTTPException(401, "not authenticated — call /api/v1/auth/login")
 

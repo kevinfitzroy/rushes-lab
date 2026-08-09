@@ -33,6 +33,16 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   share_link_created: '分享链接创建',
   signed_url_issued: '临时链接签发',
   upload: '上传',
+  // #150 本地目录 CRUD(users/groups)
+  user_created: '用户创建',
+  user_disabled: '用户停用',
+  user_enabled: '用户启用',
+  user_password_reset: '密码重置',
+  group_created: '用户组创建',
+  group_updated: '用户组更新',
+  group_deleted: '用户组删除',
+  group_member_added: '用户组成员添加',
+  group_member_removed: '用户组成员移除',
 };
 
 export const ACTION_LABEL: Record<string, string> = {

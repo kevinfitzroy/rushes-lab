@@ -1,10 +1,10 @@
-"""users router — fuzzy search 给前端 UserPicker(a2.5)。
+"""users router — fuzzy search 给前端 UserPicker(a2.5;#150 数据源本地化)。
 
 endpoints:
-  GET /api/v1/users?q=&limit=  — admin only,fuzzy name/email/open_id 搜本地 db
-  GET /api/v1/groups?q=&limit= — admin only,转调飞书 list_groups + 本地 name filter
+  GET /api/v1/users?q=&limit=  — admin only,fuzzy name/email/username 搜本地 db
+  GET /api/v1/groups?q=&limit= — admin only,本地 groups 表列表(见 routers/groups.py)
 
-(部门 picker 暂不做 — 飞书 OpenAPI 无全局 dept name fuzzy 搜;UI 用 free-text 输 id)
+#150 起 UserPicker 的 value 语义 = users.id UUID(不再用飞书 open_id)。
 """
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ router = APIRouter()
 
 class UserBrief(BaseModel):
     id: str
-    open_id: str
+    username: str | None = None
+    open_id: str | None = None     # 飞书遗留,本地新用户为 None
     union_id: str | None = None
     name: str
     email: str | None = None
@@ -33,12 +34,12 @@ class UserBrief(BaseModel):
 
 @router.get("", response_model=list[UserBrief])
 async def search_users(
-    q: str = Query("", description="模糊关键字,匹配 name/email/open_id;留空 = 返前 N"),
+    q: str = Query("", description="模糊关键字,匹配 name/email/username;留空 = 返前 N"),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(require_admin),
 ) -> list[UserBrief]:
-    """fuzzy 搜 user — UserPicker autocomplete 用。"""
+    """fuzzy 搜 user — UserPicker autocomplete 用(value = users.id UUID)。"""
     _ = user.id  # 至少要认证;细粒度 admin 检查 D iter4 后端 enforcement
     stmt = select(User).where(User.is_active.is_(True))
     term = q.strip()
@@ -48,6 +49,7 @@ async def search_users(
             or_(
                 User.name.ilike(like),
                 User.email.ilike(like),
+                User.username.ilike(like),
                 User.feishu_open_id.ilike(like),
             )
         )
@@ -56,6 +58,7 @@ async def search_users(
     return [
         UserBrief(
             id=str(u.id),
+            username=u.username,
             open_id=u.feishu_open_id,
             union_id=u.feishu_union_id,
             name=u.name,

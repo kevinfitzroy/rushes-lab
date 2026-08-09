@@ -20,19 +20,19 @@ export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
   const create = useCreateProject();
   const [form] = Form.useForm();
   const { message } = App.useApp();
-  const [adminOpenId, setAdminOpenId] = useState<string>(me.open_id);
+  const [adminUserId, setAdminUserId] = useState<string>(me.id);
 
   useEffect(() => {
     if (open) {
       form.resetFields();
-      setAdminOpenId(me.open_id);  // 默认 admin = 自己
+      setAdminUserId(me.id);  // 默认 admin = 自己(users.id UUID)
     }
-  }, [open, form, me.open_id]);
+  }, [open, form, me.id]);
 
   const submit = async () => {
     try {
       const v = await form.validateFields();
-      if (!adminOpenId) {
+      if (!adminUserId) {
         message.warning('请指派项目管理员');
         return;
       }
@@ -42,7 +42,7 @@ export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
         description: v.description?.trim() || undefined,
         organization_id: '',
         minio_bucket: v.minio_bucket || 'ms-dev',
-        admin_user_open_id: adminOpenId,
+        admin_user_id: adminUserId,
       });
       message.success(`项目 "${p.name}" 已创建`);
       onCreated?.(p.id);
@@ -102,13 +102,13 @@ export function NewProjectModal({ open, onClose, onCreated, me }: Props) {
                    extra="可以是自己;创建后会自动获得项目内全部权限,并可进一步邀请成员">
           <UserPicker
             multiple={false}
-            value={adminOpenId}
-            onChange={(v) => setAdminOpenId((v as string) || '')}
-            preset={[{ id: me.id, open_id: me.open_id, union_id: me.union_id,
+            value={adminUserId}
+            onChange={(v) => setAdminUserId((v as string) || '')}
+            preset={[{ id: me.id, username: null, open_id: me.open_id, union_id: me.union_id,
                        name: me.name + '(自己)', email: me.email }]}
             placeholder="选一个项目管理员"
           />
-          {adminOpenId === me.open_id && (
+          {adminUserId === me.id && (
             <div style={{
               marginTop: 6, fontSize: 11, color: 'var(--ms-ink-subtle)',
               display: 'inline-flex', alignItems: 'center', gap: 4,

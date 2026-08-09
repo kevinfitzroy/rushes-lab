@@ -42,7 +42,15 @@ def test_audit_event_indices() -> None:
 
 
 def test_user_open_id_unique() -> None:
-    """飞书 open_id 是 user 唯一标识。"""
+    """飞书 open_id 唯一但可空(#150:本地新用户无飞书身份,ADR-0007)。"""
     col = User.__table__.c.feishu_open_id
     assert col.unique is True
-    assert col.nullable is False
+    assert col.nullable is True
+
+
+def test_user_username_column() -> None:
+    """本地登录名列(#150:唯一 + 可空 + 索引;老飞书用户为 NULL)。"""
+    col = User.__table__.c.username
+    assert col.unique is True
+    assert col.nullable is True
+    assert {i.name for i in User.__table__.indexes} >= {"ix_users_username"}

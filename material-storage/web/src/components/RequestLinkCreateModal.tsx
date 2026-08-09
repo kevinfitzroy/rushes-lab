@@ -51,7 +51,7 @@ export function RequestLinkCreateModal({ open, onClose, targetType, targetId, ta
         target_type: targetType,
         target_id: targetId,
         allowed_actions: v.allowed_actions,
-        receiver_open_id: v.receiver_open_id?.trim() || undefined,
+        receiver_user_id: v.receiver_user_id || undefined,   // users.id UUID(#148 起)
         ttl_seconds: v.ttl_seconds,
       });
       setResult(out);
@@ -120,8 +120,8 @@ export function RequestLinkCreateModal({ open, onClose, targetType, targetId, ta
                 options={TTL_PRESETS.map(p => ({ label: p.label, value: p.value }))}
               />
             </Form.Item>
-            {/* #133: 裸 open_id Input → UserPicker 搜姓名/邮箱(提交体仍是 open_id string) */}
-            <Form.Item name="receiver_open_id"
+            {/* #133/#150: UserPicker 搜姓名/邮箱,提交体 = users.id UUID */}
+            <Form.Item name="receiver_user_id"
                        label="限定接收者(可选)"
                        extra="留空 = 任意登录用户可用;选了 = 只此人能用(防转发)">
               <UserPicker multiple={false} placeholder="搜姓名 / 邮箱限定接收者…" />

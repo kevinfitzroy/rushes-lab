@@ -194,7 +194,7 @@ function ProjectCard({ project: p }: { project: Project }) {
               paddingLeft: 0,
             }}>
               {p.admins.slice(0, 3).map((a, i) => (
-                <span key={a.open_id} title={a.name} style={{
+                <span key={a.user_id} title={a.name} style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   width: 22, height: 22, marginLeft: i === 0 ? 0 : -6,
                   background: 'var(--ms-ink)', color: 'var(--ms-canvas)',

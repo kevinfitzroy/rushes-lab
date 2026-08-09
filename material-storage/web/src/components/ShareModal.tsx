@@ -124,7 +124,8 @@ export function ShareModal({ open, onClose, target, me }: Props) {
             extra="搜姓名 / 邮箱选;留空 = 只生成链接不推 IM"
           >
             <UserPicker
-              preset={[{ id: me.id, open_id: me.open_id, union_id: me.union_id,
+              valueKey="open_id"   // share 走飞书 IM 发卡,仍用 open_id 语义(#150 保留)
+              preset={[{ id: me.id, username: null, open_id: me.open_id, union_id: me.union_id,
                          name: me.name + '(自己)', email: me.email }]}
               placeholder="选一个或多个接收人…"
             />
