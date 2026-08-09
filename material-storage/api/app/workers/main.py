@@ -19,8 +19,6 @@ import boto3
 from arq.connections import RedisSettings
 from botocore.client import Config
 from PIL import Image
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import get_sessionmaker
 from app.db.tables import Asset

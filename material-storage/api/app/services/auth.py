@@ -21,6 +21,13 @@ provider 配置:settings.oidc_provider(dict,默认空 = 纯本地登录,本服�
     "claims": {"sub": "sub", "name": "name", "email": "email"}  # 可选 claim 映射
   }
 env 注入:OIDC_PROVIDER='{...json...}'(pydantic-settings 自动 JSON 解析)。
+
+⚠️ 留口边界(接真实 IdP 前必须补齐,勿当已就绪):
+  - id_token 不校验:只信任 userinfo 的 HTTP 响应(手写 RP,无 authlib)
+  - 无 PKCE(code_challenge / code_verifier)
+  - state 仅防 CSRF 简化实现(state=nonce),无 id_token_hint / nonce claim 校验
+  - 单测覆盖 upsert 的 email 兜底关联分支;网络流(token/userinfo)需在
+    容器集成测试里对 mock IdP 验证
 """
 from __future__ import annotations
 
@@ -33,7 +40,7 @@ from urllib.parse import urlencode
 
 import httpx
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.tables import User
@@ -117,20 +124,48 @@ class OIDCService:
         resp.raise_for_status()
         return resp.json()
 
+    async def _find_by_sub(self, db: AsyncSession, sub: str) -> User | None:
+        res = await db.execute(select(User).where(User.oidc_sub == sub))
+        return res.scalar_one_or_none()
+
+    async def _find_by_email(self, db: AsyncSession, email: str) -> User | None:
+        """按 email 找已有本地账号(email 列无唯一约束,理论上可能多命中)。
+
+        多命中时取 created_at 最早的一个(确定性),并告警供排查。
+        """
+        res = await db.execute(select(User).where(func.lower(User.email) == email))
+        matches = list(res.scalars().all())
+        if len(matches) > 1:
+            log.warning("OIDC email %s 命中 %d 个本地账号,取最早创建的一个", email, len(matches))
+            return min(matches, key=lambda u: u.created_at)
+        return matches[0] if matches else None
+
     async def upsert_user_from_userinfo(
         self, db: AsyncSession, userinfo: dict[str, Any]
     ) -> User:
         """IdP userinfo → upsert users 表,返 ORM User 对象。
 
-        匹配键:oidc_sub(provider 的 sub claim;ADR-0007 决定新用户不再有飞书字段)。
+        匹配顺序(F16:防 IdP 首登时已有本地账号被重复建号):
+          1. oidc_sub(provider 的 sub claim;ADR-0007 起 OIDC 用户的身份匹配键)
+          2. email 兜底关联 — sub miss 时,若 userinfo 带 email,先按 email
+             找已有本地账号并绑定 oidc_sub;仅当该账号尚未绑定其它 oidc_sub
+             才关联(避免把已属于别的 IdP 身份的账号抢过来)。
+          两路都 miss → 新建 User。
         """
         sub = userinfo.get(self._claim("sub")) or userinfo.get("sub")
         if not sub:
             raise RuntimeError(f"OIDC userinfo missing sub: {userinfo}")
+        email = (userinfo.get(self._claim("email")) or userinfo.get("email") or "").strip().lower()
 
-        stmt = select(User).where(User.oidc_sub == sub)
-        res = await db.execute(stmt)
-        user = res.scalar_one_or_none()
+        user = await self._find_by_sub(db, sub)
+        if user is None and email:
+            user = await self._find_by_email(db, email)
+            if user is not None and user.oidc_sub not in (None, sub):
+                log.warning(
+                    "OIDC email %s 已被 oidc_sub=%s 占用,不抢占,按新用户建号",
+                    email, user.oidc_sub,
+                )
+                user = None
 
         if user is None:
             default_org = self._settings.default_organization_id
@@ -147,24 +182,28 @@ class OIDCService:
             await db.refresh(user)
             log.info("created user from OIDC sub=%s name=%s org=%s",
                      sub, user.name, org_uuid)
-        else:
-            # 同步可能变化的字段
-            changed = False
-            new_name = userinfo.get(self._claim("name")) or userinfo.get("name")
-            if new_name and user.name != new_name:
-                user.name = new_name
-                changed = True
-            new_email = userinfo.get(self._claim("email")) or userinfo.get("email")
-            if new_email and user.email != new_email:
-                user.email = new_email
-                changed = True
-            # backfill organization_id(老 user 没绑 org)
-            if user.organization_id is None and self._settings.default_organization_id:
-                user.organization_id = uuid.UUID(self._settings.default_organization_id)
-                changed = True
-            if changed:
-                await db.commit()
-                await db.refresh(user)
+            return user
+
+        # 命中已有用户:email 兜底关联时补绑 sub;同步可能变化的字段
+        changed = False
+        if user.oidc_sub != sub:
+            user.oidc_sub = sub
+            changed = True
+        new_name = userinfo.get(self._claim("name")) or userinfo.get("name")
+        if new_name and user.name != new_name:
+            user.name = new_name
+            changed = True
+        new_email = userinfo.get(self._claim("email")) or userinfo.get("email")
+        if new_email and user.email != new_email:
+            user.email = new_email
+            changed = True
+        # backfill organization_id(老 user 没绑 org)
+        if user.organization_id is None and self._settings.default_organization_id:
+            user.organization_id = uuid.UUID(self._settings.default_organization_id)
+            changed = True
+        if changed:
+            await db.commit()
+            await db.refresh(user)
 
         return user
 

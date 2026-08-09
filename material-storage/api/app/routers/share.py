@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.db.tables import Asset, Folder, User
+from app.db.tables import Asset, Folder
 from app.deps import (
     get_audit,
     CurrentUser,
@@ -32,11 +32,7 @@ from app.deps import (
 from app.services.audit import AuditService
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
-from app.services.share_service import (
-    create_share,
-    get_resource_label,
-    resolve_share,
-)
+from app.services.share_service import create_share, resolve_share
 from app.settings import get_settings
 
 log = logging.getLogger(__name__)

@@ -11,7 +11,6 @@ endpoints:
 from __future__ import annotations
 
 import logging
-import uuid
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
