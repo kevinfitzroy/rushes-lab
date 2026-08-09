@@ -158,10 +158,9 @@ class FolderOut(ORMModel):
 
 
 class FolderInviteIn(BaseModel):
-    # subject 三选一 — 任选其一传(#148 起 user/group 都用本地 UUID):
+    # subject 二选一 — 任选其一传(#154:department 轴写入下线,ADR-0007):
     user_id: uuid.UUID | None = None      # 单人 user(users.id UUID)
     group_id: str | None = None           # 本地用户组(groups.id UUID)
-    department_id: str | None = None      # 飞书部门(已废弃,ADR-0007;保留到 P4 清理)
     # 邀请等级(v4 新增,旧调用方默认 viewer)
     level: str = Field("viewer", pattern=r"^(viewer|downloader)$")
     duration_seconds: int | None = Field(None, ge=60, le=365 * 24 * 3600,

@@ -17,7 +17,7 @@ import logging
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,17 +28,13 @@ from app.deps import (
     get_audit,
     CurrentUser,
     get_current_user,
-    get_feishu_client,
     get_is_system_admin,
     get_permissions,
     get_request_context,
 )
 from app.models import FolderCreateIn, FolderInviteIn, FolderOut
 from app.services.audit import AuditService
-from app.services.feishu_client import FeishuClient
-from app.services.invite_notify import run_notify_folder_invite_bg
 from app.services.permissions import PermissionsService
-from app.settings import get_settings
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -255,18 +251,16 @@ async def get_folder(
 async def invite(
     folder_id: uuid.UUID,
     payload: FolderInviteIn,
-    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
     is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
-    """邀请 user / group / department 进入 sensitive_folder(admin 操作)。
+    """邀请 user / group 进入 sensitive_folder(admin 操作)。
 
-    审批驱动的邀请走 /api/v1/approvals。subject 三选一。"""
+    审批驱动的邀请走 /api/v1/approvals。#154:department 轴写入已下线(ADR-0007)。"""
     user_id = user.id
     folder = await db.get(Folder, folder_id)
     if not folder:
@@ -274,15 +268,14 @@ async def invite(
     if not folder.is_sensitive:
         raise HTTPException(400, "only sensitive_folder needs invite")
 
-    # subject 三选一(普通 OR 排除,只允许一个非 None)
+    # subject 二选一(普通 OR 排除,只允许一个非 None)
     provided = [
         ("user", payload.user_id),
         ("group", payload.group_id),
-        ("department", payload.department_id),
     ]
     chosen = [(k, v) for k, v in provided if v]
     if len(chosen) != 1:
-        raise HTTPException(400, "must specify exactly one of user_id / group_id / department_id")
+        raise HTTPException(400, "must specify exactly one of user_id / group_id")
     subject_kind, subject_id = chosen[0]
 
     # admin check;系统 admin 直通
@@ -323,22 +316,6 @@ async def invite(
         },
         **ctx,
     )
-
-    # iter4 IM 卡:仅 user 类型推送(group/department 没 open_id 集中地址)
-    if subject_kind == "user":
-        # #148:subject_id 已是 users.id UUID,直接主键查
-        from app.db.tables import User as _User
-        invitee = await db.get(_User, uuid.UUID(str(subject_id)))
-        if invitee is not None:
-            background.add_task(
-                run_notify_folder_invite_bg,
-                folder_id=folder_id,
-                invitee_user_id=invitee.id,
-                inviter_user_id=user_id,
-                duration_seconds=payload.duration_seconds,
-                feishu=feishu,
-                settings=get_settings(),
-            )
 
 
 @router.get("/{folder_id}/members")
@@ -583,8 +560,8 @@ async def add_folder_grant(
     is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
 ) -> None:
-    """body:{user_id|group_id|department_id, level: viewer|downloader|uploader}
-    (user_id = users.id UUID,#148 起)"""
+    """body:{user_id|group_id, level: viewer|downloader|uploader}
+    (user_id = users.id UUID,#148 起;#154:department 轴写入下线)"""
     user_id = user.id
     folder = await db.get(Folder, folder_id)
     if folder is None:
@@ -606,12 +583,11 @@ async def add_folder_grant(
     provided = [
         ("user", payload.get("user_id")),
         ("group", payload.get("group_id")),
-        ("department", payload.get("department_id")),
     ]
     chosen = [(k, v) for k, v in provided if v]
     if len(chosen) != 1:
         raise HTTPException(
-            400, "must specify exactly one of user_id / group_id / department_id"
+            400, "must specify exactly one of user_id / group_id"
         )
     subject_kind, subject_id = chosen[0]
 

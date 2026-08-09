@@ -426,7 +426,7 @@ async def add_project_member(
     """加 project 成员。
 
     body: {
-      user_id?: str | group_id?: str | department_id?: str,  # 三选一(user_id = users.id UUID)
+      user_id?: str | group_id?: str,  # 二选一(user_id = users.id UUID;#154:department 轴下线)
       role: 'admin'|'viewer'|'downloader'|'uploader'
     }
     需 can_admin project。
@@ -447,15 +447,13 @@ async def add_project_member(
     provided = [
         ("user", payload.get("user_id")),
         ("group", payload.get("group_id")),
-        ("department", payload.get("department_id")),
     ]
     chosen = [(k, v) for k, v in provided if v]
     if len(chosen) != 1:
-        raise HTTPException(400, "must specify exactly one of user_id / group_id / department_id")
+        raise HTTPException(400, "must specify exactly one of user_id / group_id")
     if role == "admin" and chosen[0][0] != "user":
-        # model v4 限 admin: [user, group#member] — 不允许 department#member
-        if chosen[0][0] == "department":
-            raise HTTPException(400, "admin 不允许直接给部门;请改给 user 或 group")
+        # model v4 限 admin: [user, group#member]
+        raise HTTPException(400, "admin 不允许直接给 group;请改给 user")
     subject_kind, subject_id = chosen[0]
 
     from app.services.permissions import fmt_subject

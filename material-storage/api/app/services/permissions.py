@@ -3,8 +3,11 @@
 subject 约定(#148 / ADR-0007 起):
 - user:<users.id UUID>            — 本地用户(不再用飞书 open_id)
 - group:<本地 groups.id UUID>#member — 本地用户组(groups 表,#148 新建)
-- department:<dept_id>#member      — **废弃**(ADR-0007);存量 tuple 不迁,代码保留到 P4 清理
 - organization:<tenant_key>        — 组织(不变)
+
+#154:department 轴写入已下线(ADR-0007),只保留读路径
+(存量 department tuples 原样保留;USER_DIRECT_RELATIONS 里 ("department","member")
+用于 revoke_user_completely 兜底清理)。
 
 低层接口接 raw subject string("user:<uuid>"),允许 user / group#member 等任意主体。
 高层 helpers:bootstrap_* + add/remove_project_subject + grant_folder_explicit_subject +
@@ -66,9 +69,9 @@ FolderExplicit = Literal["explicit_viewer", "explicit_downloader", "explicit_upl
 SensitiveInviteLevel = Literal["viewer", "downloader"]
 
 
-def fmt_subject(kind: Literal["user", "group", "department", "organization"], id_: str) -> str:
-    """通用 subject 字符串(group / department 自动加 #member 后缀,user / organization 不加)。"""
-    if kind in ("group", "department"):
+def fmt_subject(kind: Literal["user", "group"], id_: str) -> str:
+    """通用 subject 字符串(group 自动加 #member 后缀,user 不加;#154:department 下线)。"""
+    if kind == "group":
         return f"{kind}:{id_}#member"
     return f"{kind}:{id_}"
 
@@ -233,7 +236,6 @@ class PermissionsService:
         """加 project 级 subject(viewer/downloader/uploader/admin)。
 
         subject 通常通过 fmt_subject() 构造,例如:
-          add_project_subject(pid, fmt_subject('department', dept_id), 'viewer')
           add_project_subject(pid, fmt_subject('group', grp_id), 'downloader')
           add_project_subject(pid, fmt_subject('user', user_id), 'admin')
         """
@@ -305,7 +307,7 @@ class PermissionsService:
         self,
         *,
         sensitive_folder_id: str,
-        subject: str,                            # user / group#member / department#member
+        subject: str,                            # user / group#member
         level: SensitiveInviteLevel,             # viewer / downloader
         duration_seconds: int | None = None,    # None = 永久;int = 时间限定
     ) -> None:
@@ -397,11 +399,11 @@ class PermissionsService:
         log.info("revoke_user_completely user=%s deleted=%d", user_id, total)
         return total
 
-    # ───────────────────────── organization / department 同步 ─────────────────
+    # ───────────────────────── organization 同步 ──────────────────────────────
     async def add_user_to_organization(
         self, *, organization_tenant_key: str, user_id: str
     ) -> None:
-        """user OIDC 登录 / contact.user.created 时,加入 org member。"""
+        """user 登录时加入 org member。"""
         await self._client.write(
             ClientWriteRequest(
                 writes=[
@@ -409,48 +411,6 @@ class PermissionsService:
                         user=f"user:{user_id}",
                         relation="member",
                         object=f"organization:{organization_tenant_key}",
-                    )
-                ]
-            )
-        )
-
-    async def add_user_to_department(self, *, department_id: str, user_id: str) -> None:
-        await self._client.write(
-            ClientWriteRequest(
-                writes=[
-                    ClientTuple(
-                        user=f"user:{user_id}",
-                        relation="member",
-                        object=f"department:{department_id}",
-                    )
-                ]
-            )
-        )
-
-    async def remove_user_from_department(self, *, department_id: str, user_id: str) -> None:
-        await self._client.write(
-            ClientWriteRequest(
-                deletes=[
-                    ClientTuple(
-                        user=f"user:{user_id}",
-                        relation="member",
-                        object=f"department:{department_id}",
-                    )
-                ]
-            )
-        )
-
-    async def add_department_as_subdept(
-        self, *, parent_department_id: str, child_department_id: str
-    ) -> None:
-        """嵌套部门:子部门 member 自动算父部门 member。"""
-        await self._client.write(
-            ClientWriteRequest(
-                writes=[
-                    ClientTuple(
-                        user=f"department:{child_department_id}#member",
-                        relation="member",
-                        object=f"department:{parent_department_id}",
                     )
                 ]
             )
