@@ -7,11 +7,7 @@ endpoints:
   POST  /api/v1/approvals/{id}/approve       — admin 批准 → 写 OpenFGA grant
   POST  /api/v1/approvals/{id}/reject        — admin 拒绝
 
-iter7 接入:
-- 创建后 BackgroundTask 推 IM 卡片给 target admin(approvals_notify.notify_pending)
-- 决策后 BackgroundTask 推结果卡给申请者(approvals_notify.notify_decided)
-- card.action.trigger 'approval_decision' 回调亦走 approval_service.decide
-  (services/feishu_card_handlers.handle_approval_decision)
+#154:飞书 IM 通知已下线(ADR-0007);通知中心(P3 #153)在独立模块,本 router 不直接推送。
 
 admin 判定:依赖 OpenFGA can_admin 关系(approval_service.enforce_admin_for_target):
   target_type=asset            → can_delete on asset
@@ -23,7 +19,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +29,6 @@ from app.deps import (
     get_audit,
     CurrentUser,
     get_current_user,
-    get_feishu_client,
     get_is_system_admin,
     get_permissions,
     get_request_context,
@@ -44,14 +39,8 @@ from app.services.approval_service import (
     DecisionContext,
     decide,
 )
-from app.services.approvals_notify import (
-    run_notify_decided_bg,
-    run_notify_pending_bg,
-)
 from app.services.audit import AuditService
-from app.services.feishu_client import FeishuClient
 from app.services.permissions import PermissionsService
-from app.settings import get_settings
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,7 +61,6 @@ async def _enrich_out(db: AsyncSession, approval: ApprovalRequest) -> ApprovalOu
 @router.post("", response_model=ApprovalOut, status_code=201)
 async def create_approval(
     payload: ApprovalCreateIn,
-    background: BackgroundTasks,
     via_link: str | None = Query(
         None, description="若来自 request-link 落地页,带 token 让 backend enforce "
                           "(target 必须匹配,receiver_user_id 限定时必须匹配当前 user)",
@@ -80,7 +68,6 @@ async def create_approval(
     db: AsyncSession = Depends(get_db),
     audit: AuditService = Depends(get_audit),
     permissions: PermissionsService = Depends(get_permissions),
-    feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
     ctx: dict = Depends(get_request_context),
 ) -> ApprovalOut:
@@ -139,15 +126,6 @@ async def create_approval(
     )
     log.info("approval submitted id=%s applicant=%s target=%s:%s",
              approval.id, user_id, payload.target_type, payload.target_id)
-
-    # iter7:推 IM 卡片给 target admin(BackgroundTask,失败不影响主流程)
-    background.add_task(
-        run_notify_pending_bg,
-        approval_id=approval.id,
-        feishu=feishu,
-        permissions=permissions,
-        settings=get_settings(),
-    )
     return await _enrich_out(db, approval)
 
 
@@ -192,11 +170,9 @@ async def get_approval(
 async def approve(
     approval_id: uuid.UUID,
     payload: ApprovalDecisionIn,
-    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
     is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
@@ -216,13 +192,6 @@ async def approve(
         )
     except ApprovalDecisionError as e:
         raise HTTPException(e.status_code, e.message) from e
-
-    background.add_task(
-        run_notify_decided_bg,
-        approval_id=approval.id,
-        feishu=feishu,
-        settings=get_settings(),
-    )
     return await _enrich_out(db, approval)
 
 
@@ -230,11 +199,9 @@ async def approve(
 async def reject(
     approval_id: uuid.UUID,
     payload: ApprovalDecisionIn,
-    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
     is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
@@ -254,11 +221,4 @@ async def reject(
         )
     except ApprovalDecisionError as e:
         raise HTTPException(e.status_code, e.message) from e
-
-    background.add_task(
-        run_notify_decided_bg,
-        approval_id=approval.id,
-        feishu=feishu,
-        settings=get_settings(),
-    )
     return await _enrich_out(db, approval)

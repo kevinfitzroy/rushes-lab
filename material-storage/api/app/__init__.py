@@ -4,7 +4,7 @@
   app/
     main.py         FastAPI app + lifespan + middleware
     settings.py     Pydantic Settings(env-driven)
-    deps.py         Dependency Injection:db/openfga/feishu/s3 client
+    deps.py         Dependency Injection:db/openfga/s3 client
     routers/        REST API endpoints,按业务域分包
     services/       业务逻辑封装,被 routers 调
     db/             SQLAlchemy 2.x async + alembic migrations

@@ -19,7 +19,7 @@ import sys
 from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
 
 from app.db.session import get_sessionmaker
-from app.services.contact_sync import get_default_organization
+from app.services.org import get_default_organization
 from app.services.permissions import create_permissions_service
 from app.settings import get_settings
 

@@ -1,9 +1,7 @@
 """审批决策核心服务 — iter a1 适配 v4 OpenFGA model;#148 subject 切 users.id UUID。
 
-decide 入口两个:
-  1. HTTP:POST /api/v1/approvals/{id}/approve|reject — router endpoint
-  2. 飞书卡片回调:card.action.trigger value.intent='approval_decision' — feishu_card_handlers
-两个入口都调本服务,共用 admin check + grant 写入 + 落库 + audit 逻辑。
+decide 入口:HTTP POST /api/v1/approvals/{id}/approve|reject — router endpoint。
+(#154:飞书卡片回调入口随飞书下线删除,ADR-0007)
 """
 from __future__ import annotations
 

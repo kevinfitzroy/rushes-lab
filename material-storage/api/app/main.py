@@ -28,7 +28,6 @@ from app.routers import (
     request_links,
     share,
     users,
-    webhooks,
 )
 from app.settings import get_settings
 
@@ -43,14 +42,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Phase B-2:wire 服务到 app.state
     from app.services.arq_pool import create_arq_pool
     from app.services.auth import create_auth_service
-    from app.services.feishu_client import create_feishu_client
     from app.services.permissions import create_permissions_service
     from app.services.presign import PresignService
 
     app.state.permissions = await create_permissions_service(settings)
     app.state.presign = PresignService(settings)
     app.state.auth = await create_auth_service(settings)
-    app.state.feishu_client = await create_feishu_client(settings)
     app.state.arq_pool = await create_arq_pool(settings)
 
     # 独立 redis client 给 maintenance banner 等轻量 KV 用(arq pool 不复用避免污染 queue keys)
@@ -61,18 +58,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.services.local_auth import LocalAuthService
     app.state.local_auth = LocalAuthService(settings, app.state.redis)
 
-    # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
-    # iter1:noop;iter2 起按 intent 注册具体 handler
-    # 注:用 from-import 以免 `app` 名 shadow lifespan 参数 (Python 名字解析坑)
-    from app.services import feishu_card_handlers as _h  # noqa: F401
-    log.info("startup complete — permissions + presign + auth + feishu_client + arq + redis ready")
+    log.info("startup complete — permissions + presign + auth + arq + redis ready")
 
     yield
 
     log.info("shutting down")
     await app.state.permissions.close()
     await app.state.auth.close()
-    await app.state.feishu_client.close()
     await app.state.arq_pool.aclose()
     await app.state.redis.aclose()
 
@@ -86,7 +78,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS(给业务前端 React + 飞书 H5 内嵌 webview 用)
+    # CORS(给业务前端 React 用)
     # 默认从 web_app_base_url derive 同源 origin;`allow_credentials=True` 时
     # CORS spec 不允许 `*` wildcard,所以 explicit list 是必须的
     from urllib.parse import urlparse
@@ -112,7 +104,6 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
     app.include_router(groups.router, prefix="/api/v1/groups", tags=["groups"])
     app.include_router(share.router, prefix="/api/v1/share", tags=["share"])
-    app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(directory.router, prefix="/api/v1/admin/directory", tags=["directory"])
     app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["maintenance"])

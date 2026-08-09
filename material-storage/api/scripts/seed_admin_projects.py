@@ -34,7 +34,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_sessionmaker
 from app.db.tables import Folder, Organization, Project, User
-from app.services.contact_sync import get_default_organization
+from app.services.org import get_default_organization
 from app.services.permissions import create_permissions_service
 from app.settings import get_settings
 

@@ -27,9 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.tables import Asset, AuditEvent, Folder, Project, User
 from app.services.audit import AuditService
-from app.services.feishu_cards import build_share_card
-from app.services.feishu_client import FeishuAPIError, FeishuClient
-from app.settings import Settings
 
 log = logging.getLogger(__name__)
 
@@ -109,46 +106,6 @@ async def resolve_share(db: AsyncSession, token: str) -> dict[str, Any] | None:
     }
 
 
-# ─── 推 IM 卡片 ───────────────────────────────────────────────────────────────
-async def send_share_cards(
-    *,
-    feishu: FeishuClient,
-    settings: Settings,
-    sharer_name: str,
-    resource_label: str,
-    resource_type: ShareKind,
-    token: str,
-    expires_at: datetime,
-    receive_open_ids: list[str],
-    message: str | None = None,
-) -> list[dict[str, Any]]:
-    """fan-out 发卡;失败不抛,记录在返回列表。"""
-    if not settings.feishu_im_enabled or not receive_open_ids:
-        return []
-    open_url = _share_landing_url(settings, token)
-    expires_label = _expires_label(expires_at)
-    card = build_share_card(
-        sharer_name=sharer_name,
-        resource_label=resource_label,
-        resource_type=resource_type,
-        open_url=open_url,
-        expires_label=expires_label,
-        message=message,
-    )
-    sent: list[dict[str, Any]] = []
-    for open_id in receive_open_ids:
-        try:
-            data = await feishu.send_im_card(open_id, card, receive_id_type="open_id")
-            sent.append({"open_id": open_id, "message_id": data.get("message_id")})
-        except FeishuAPIError as e:
-            log.warning("share send fail open_id=%s code=%s msg=%s", open_id, e.code, e.msg)
-            sent.append({"open_id": open_id, "error": f"{e.code}:{e.msg[:120]}"})
-        except Exception as e:  # noqa: BLE001
-            log.warning("share send unexpected fail open_id=%s err=%s", open_id, e)
-            sent.append({"open_id": open_id, "error": str(e)[:120]})
-    return sent
-
-
 # ─── target label(asset / folder)─────────────────────────────────────────────
 async def get_resource_label(
     db: AsyncSession, kind: ShareKind, target_id: uuid.UUID
@@ -166,23 +123,6 @@ async def get_resource_label(
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
-def _share_landing_url(settings: Settings, token: str) -> str:
-    base = settings.web_app_base_url.rstrip("/") + "/"
-    return f"{base}s/{token}"
-
-
-def _expires_label(expires_at: datetime) -> str:
-    delta = expires_at - datetime.now(timezone.utc)
-    seconds = max(0, int(delta.total_seconds()))
-    if seconds < 3600:
-        return f"{max(1, seconds // 60)} 分钟"
-    if seconds < 86400:
-        h = seconds / 3600
-        return f"{int(h)} 小时" if h.is_integer() else f"{h:.1f} 小时"
-    d = seconds / 86400
-    return f"{int(d)} 天" if d.is_integer() else f"{d:.1f} 天"
-
-
 def _humanize_bytes(n: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
     i = 0

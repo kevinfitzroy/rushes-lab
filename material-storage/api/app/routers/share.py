@@ -1,13 +1,13 @@
-"""share router — 资源分享短链 + 飞书 IM 卡片推送(iter3 最小版)。
+"""share router — 资源分享短链(#154:飞书 IM 推送下线后为纯链接分享)。
 
 endpoints:
-  POST /api/v1/share/assets/{asset_id}   — 创建 asset 分享 + 推 IM 卡;需 can_download
-  POST /api/v1/share/folders/{folder_id} — 创建 folder 分享 + 推 IM 卡;需 can_view
+  POST /api/v1/share/assets/{asset_id}   — 创建 asset 分享链接;需 can_download
+  POST /api/v1/share/folders/{folder_id} — 创建 folder 分享链接;需 can_view
   GET  /api/v1/share/{token}             — 解析短链 → 返资源 metadata + presigned URL
 
 短链 token 存 audit_events.details(iter3 最小版,不引新表);
 GET endpoint 必须有 session cookie(短链默认 requires_login=True);
-不登录 → 401(前端 SPA 跳 OIDC login + next=当前 URL)。
+不登录 → 401(前端 SPA 跳本地登录页 + next=当前 URL)。
 """
 from __future__ import annotations
 
@@ -24,21 +24,18 @@ from app.deps import (
     get_audit,
     CurrentUser,
     get_current_user,
-    get_feishu_client,
     get_is_system_admin,
     get_permissions,
     get_presign,
     get_request_context,
 )
 from app.services.audit import AuditService
-from app.services.feishu_client import FeishuClient
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
 from app.services.share_service import (
     create_share,
     get_resource_label,
     resolve_share,
-    send_share_cards,
 )
 from app.settings import get_settings
 
@@ -48,9 +45,6 @@ router = APIRouter()
 
 # ─── input / output models ────────────────────────────────────────────────────
 class ShareCreateIn(BaseModel):
-    receive_open_ids: list[str] = Field(default_factory=list, max_length=20,
-                                         description="接收方飞书 open_id 列表,留空 = 只生成链接不推卡")
-    message: str | None = Field(None, max_length=500)
     expires_in_seconds: int = Field(86400, ge=60, le=30 * 86400,
                                      description="链接有效期;60s ~ 30 天")
     requires_login: bool = Field(True, description="True = 访问短链必须登录(默认)")
@@ -60,7 +54,6 @@ class ShareCreateOut(BaseModel):
     token: str
     landing_url: str
     expires_at: str
-    sent: list[dict]
 
 
 class ShareResolveOut(BaseModel):
@@ -84,7 +77,6 @@ async def share_asset(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
     is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
@@ -114,22 +106,11 @@ async def share_asset(
         expires_in_seconds=payload.expires_in_seconds,
         requires_login=payload.requires_login,
     )
-
-    sharer = await db.get(User, user_id)
-    resource_label = await get_resource_label(db, "asset", asset_id)
     settings = get_settings()
-    sent = await send_share_cards(
-        feishu=feishu, settings=settings,
-        sharer_name=sharer.name if sharer else "(未知)",
-        resource_label=resource_label, resource_type="asset",
-        token=info["token"], expires_at=info["expires_at"],
-        receive_open_ids=payload.receive_open_ids, message=payload.message,
-    )
     return ShareCreateOut(
         token=info["token"],
         landing_url=_landing_url(settings, info["token"]),
         expires_at=info["expires_at"].isoformat(),
-        sent=sent,
     )
 
 
@@ -141,7 +122,6 @@ async def share_folder(
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
-    feishu: FeishuClient = Depends(get_feishu_client),
     user: CurrentUser = Depends(get_current_user),
     is_system_admin: bool = Depends(get_is_system_admin),
     ctx: dict = Depends(get_request_context),
@@ -173,21 +153,11 @@ async def share_folder(
         expires_in_seconds=payload.expires_in_seconds,
         requires_login=payload.requires_login,
     )
-    sharer = await db.get(User, user_id)
-    resource_label = await get_resource_label(db, "folder", folder_id)
     settings = get_settings()
-    sent = await send_share_cards(
-        feishu=feishu, settings=settings,
-        sharer_name=sharer.name if sharer else "(未知)",
-        resource_label=resource_label, resource_type="folder",
-        token=info["token"], expires_at=info["expires_at"],
-        receive_open_ids=payload.receive_open_ids, message=payload.message,
-    )
     return ShareCreateOut(
         token=info["token"],
         landing_url=_landing_url(settings, info["token"]),
         expires_at=info["expires_at"].isoformat(),
-        sent=sent,
     )
 
 
@@ -205,7 +175,7 @@ async def resolve(
     user_id = user.id
     """解析短链 → 返 metadata + presigned download_url(asset)。
 
-    minimal 版:始终 require login(get_current_user 401 时前端 SPA 引导 OIDC)。
+    minimal 版:始终 require login(get_current_user 401 时前端 SPA 引导本地登录)。
     """
     info = await resolve_share(db, token)
     if info is None:

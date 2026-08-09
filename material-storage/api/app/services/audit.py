@@ -93,31 +93,6 @@ class AuditService:
     async def proxy_download(self, **kwargs: Any) -> AuditEvent:
         return await self.write(event_type="proxy_download", **kwargs)
 
-    async def approval_state_changed(
-        self,
-        *,
-        approval_id: str,
-        previous_status: str,
-        current_status: str,
-        decided_by_open_id: str | None,
-        feishu_event_id: str,
-        details: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AuditEvent:
-        merged_details = {
-            "approval_id": approval_id,
-            "previous_status": previous_status,
-            "current_status": current_status,
-            "decided_by_open_id": decided_by_open_id,
-            **(details or {}),
-        }
-        return await self.write(
-            event_type="approval_state_changed",
-            dedup_key=f"feishu:{feishu_event_id}:{current_status}",
-            details=merged_details,
-            **kwargs,
-        )
-
 
 def decode_minio_event_key(key: str) -> str:
     """MinIO bucket notification key URL-encoded(`/` → `%2F`),P-11。"""

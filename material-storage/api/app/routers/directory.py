@@ -33,7 +33,7 @@ from app.db.session import get_db
 from app.db.tables import Group, GroupMembership, User
 from app.deps import CurrentUser, get_audit, get_permissions, require_system_admin
 from app.services.audit import AuditService
-from app.services.contact_sync import get_default_organization
+from app.services.org import get_default_organization
 from app.services.passwords import generate_temp_password, hash_password
 from app.services.permissions import PermissionsService
 
