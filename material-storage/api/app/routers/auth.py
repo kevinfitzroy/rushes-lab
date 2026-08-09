@@ -1,10 +1,14 @@
-"""auth router — 飞书 OIDC RP(Phase B-2 iter5)。
+"""auth router — 飞书 OIDC RP(Phase B-2 iter5)+ 本地账号密码登录(#149)。
 
 endpoints:
-  GET  /api/v1/auth/login           → 302 → 飞书 authorize
+  GET  /api/v1/auth/login           → 302 → 飞书 authorize(飞书 OIDC,P4 才下线)
   GET  /api/v1/auth/callback        → exchange code + set session cookie + redirect next
   GET  /api/v1/auth/me              → 返当前 session user(JSON)
   POST /api/v1/auth/logout          → 清 session cookie
+  POST /api/v1/auth/local/login     → 账号密码登录(限流 + audit;session JWT 复用 #149)
+  POST /api/v1/auth/change-password → 修改密码(首登 must_change_password 强制流程 #149)
+
+#149 约定:本文件只加不删(飞书 OIDC 下线归 #154)。
 """
 from __future__ import annotations
 
@@ -17,8 +21,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import User
-from app.deps import CurrentUser, get_current_user
+from app.deps import (
+    CurrentUser,
+    get_audit,
+    get_current_user,
+    get_local_auth,
+    get_request_context,
+)
+from app.models import ChangePasswordIn, LocalLoginIn
+from app.services.audit import AuditService
 from app.services.auth import FeishuOIDCService
+from app.services.local_auth import LocalAuthService
 from app.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -133,6 +146,11 @@ async def me(
         "organization_id": str(user.organization_id) if user.organization_id else None,
         "is_active": user.is_active,
         "is_system_admin": is_system_admin,
+        # #149:本地认证字段(加在 /me 供前端路由守卫用)。
+        # password_set = 是否已设本地密码;must_change_password 仅在已设密码时生效
+        # (存量飞书用户无本地密码,must_change_password 对他们是假值,不会误跳改密页)
+        "password_set": user.password_hash is not None,
+        "must_change_password": bool(user.must_change_password and user.password_hash is not None),
     }
 
 
@@ -142,3 +160,145 @@ async def logout() -> JSONResponse:
     resp = JSONResponse({"status": "ok"})
     resp.delete_cookie(settings.session_cookie_name, path="/")
     return resp
+
+
+# ─── 本地账号密码登录(#149,ADR-0007)— 只加不删,飞书 OIDC 保留到 P4 ──────
+
+
+@router.post("/local/login")
+async def local_login(
+    body: LocalLoginIn,
+    db: AsyncSession = Depends(get_db),  # noqa: B008  # FastAPI DI,repo 全量同款
+    auth: FeishuOIDCService = Depends(get_auth_service),  # noqa: B008
+    local_auth: LocalAuthService = Depends(get_local_auth),  # noqa: B008
+    audit: AuditService = Depends(get_audit),  # noqa: B008
+    ctx: dict[str, str | None] = Depends(get_request_context),  # noqa: B008
+) -> JSONResponse:
+    """账号密码登录 → 复用 encode_session 签 session JWT + set cookie。
+
+    限流:per IP + per username 双维度 Redis 计数,失败 5 次锁 15min(#149)。
+    username 不强制邮箱格式:含 @ 匹配 email,否则匹配 name(拼音/工号友好)。
+    """
+    settings = get_settings()
+    ip = ctx.get("request_ip") or "unknown"
+    username = body.username.strip()
+    if not username:
+        raise HTTPException(400, "用户名不能为空")
+
+    if await local_auth.is_locked(ip, username):
+        raise HTTPException(
+            429,
+            f"登录失败次数过多,账号已锁定 {settings.auth_lock_seconds // 60} 分钟,请稍后再试",
+        )
+
+    user = await local_auth.find_user_by_username(db, username)
+    # 统一文案:用户不存在 / 未设本地密码 / 密码错误都不区分(不泄露账号存在性)
+    ok = (
+        user is not None
+        and user.password_hash is not None
+        and local_auth.verify_password(body.password, user.password_hash)
+    )
+    if not ok:
+        await local_auth.record_failure(ip, username)
+        await audit.write(
+            event_type="local_login_failed",
+            actor_user_id=user.id if user else None,
+            request_ip=ip,
+            user_agent=ctx.get("user_agent"),
+            details={"username": username, "reason": "bad_credentials"},
+        )
+        raise HTTPException(401, "用户名或密码错误")
+
+    assert user is not None  # ok=True 蕴含 user 存在
+    if not user.is_active:
+        await local_auth.record_failure(ip, username)
+        await audit.write(
+            event_type="local_login_failed",
+            actor_user_id=user.id,
+            request_ip=ip,
+            user_agent=ctx.get("user_agent"),
+            details={"username": username, "reason": "inactive"},
+        )
+        raise HTTPException(403, "用户已离职 / 被禁用,请联系管理员")
+
+    await local_auth.reset_failures(ip, username)
+    await audit.write(
+        event_type="local_login_success",
+        actor_user_id=user.id,
+        request_ip=ip,
+        user_agent=ctx.get("user_agent"),
+        details={"username": username},
+    )
+
+    session_token = auth.encode_session(user)
+    resp = JSONResponse({
+        "status": "ok",
+        "user_id": str(user.id),
+        "name": user.name,
+        "must_change_password": user.must_change_password,
+    })
+    resp.set_cookie(
+        settings.session_cookie_name,
+        session_token,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,  # type: ignore[arg-type]
+        max_age=settings.session_jwt_ttl_seconds,
+        path="/",
+    )
+    log.info("local login success user_id=%s", user.id)
+    return resp
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordIn,
+    cur: CurrentUser = Depends(get_current_user),  # noqa: B008  # FastAPI DI,repo 全量同款
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    local_auth: LocalAuthService = Depends(get_local_auth),  # noqa: B008
+    audit: AuditService = Depends(get_audit),  # noqa: B008
+    ctx: dict[str, str | None] = Depends(get_request_context),  # noqa: B008
+) -> JSONResponse:
+    """修改密码;首登 must_change_password=true 时前端强制走此流程(#149)。
+
+    原密码校验通过 → 新密码过策略 → 写库 + must_change_password 置 false。
+    已登录 session 不失效(stateless JWT,机制零改动)。
+    """
+    ip = ctx.get("request_ip") or "unknown"
+    user = await db.get(User, cur.id)
+    if not user:
+        raise HTTPException(401, "session user not found")
+
+    if user.password_hash is None:
+        # 存量飞书用户从未设本地密码:拒绝盲改,走管理后台初始化(P2)
+        raise HTTPException(400, "该账号尚未设置本地密码,请联系管理员初始化")
+
+    if not local_auth.verify_password(body.old_password, user.password_hash):
+        await audit.write(
+            event_type="password_changed",
+            actor_user_id=user.id,
+            request_ip=ip,
+            user_agent=ctx.get("user_agent"),
+            details={"ok": False, "reason": "wrong_old_password"},
+        )
+        raise HTTPException(400, "原密码不正确")
+
+    policy_error = local_auth.validate_password_policy(body.new_password)
+    if policy_error:
+        raise HTTPException(400, policy_error)
+    if body.new_password == body.old_password:
+        raise HTTPException(400, "新密码不能与原密码相同")
+
+    user.password_hash = local_auth.hash_password(body.new_password)
+    user.must_change_password = False
+    await db.commit()
+
+    await audit.write(
+        event_type="password_changed",
+        actor_user_id=user.id,
+        request_ip=ip,
+        user_agent=ctx.get("user_agent"),
+        details={"ok": True},
+    )
+    log.info("password changed user_id=%s", user.id)
+    return JSONResponse({"status": "ok"})

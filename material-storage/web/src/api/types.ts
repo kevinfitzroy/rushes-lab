@@ -9,6 +9,10 @@ export interface Me {
   organization_id: string | null;
   is_active: boolean;
   is_system_admin: boolean;
+  // #149: 本地密码已设置(可走账号密码登录 / 修改密码)
+  password_set: boolean;
+  // #149: 首次登录强制改密(仅 password_set=true 时后端才报 true)
+  must_change_password: boolean;
 }
 
 export interface AdminBrief {

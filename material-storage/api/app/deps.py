@@ -13,6 +13,7 @@ from app.db.tables import User
 from app.services.audit import AuditService
 from app.services.auth import FeishuOIDCService
 from app.services.feishu_client import FeishuClient
+from app.services.local_auth import LocalAuthService
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
 from app.settings import Settings, get_settings
@@ -50,6 +51,10 @@ def get_presign(request: Request) -> PresignService:
 
 def get_auth(request: Request) -> FeishuOIDCService:
     return request.app.state.auth
+
+
+def get_local_auth(request: Request) -> LocalAuthService:
+    return request.app.state.local_auth  # type: ignore[no-any-return]  # app.state 是 Any
 
 
 def get_feishu_client(request: Request) -> FeishuClient:

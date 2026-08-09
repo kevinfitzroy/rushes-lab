@@ -165,3 +165,18 @@ class ApprovalOut(ORMModel):
     # target_name = 人类可读资源名;parent_project_id = folder/asset 时的父项目(导航用)
     target_name: str | None = None
     parent_project_id: uuid.UUID | None = None
+
+
+# ─── 本地账号密码登录(#149)──────────────────────────────────────────────
+class LocalLoginIn(BaseModel):
+    """账号密码登录;username 不强制邮箱格式(拼音 / 工号友好)。"""
+
+    username: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class ChangePasswordIn(BaseModel):
+    """修改密码:old_password 必填;new_password 走密码策略校验。"""
+
+    old_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=1, max_length=128)

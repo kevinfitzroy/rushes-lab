@@ -5,7 +5,7 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@ta
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import { useMe } from './api/hooks';
-import { apiBase, errorMessage } from './api/client';
+import { errorMessage } from './api/client';
 import { AppHeader } from './components/AppHeader';
 import { PersistentUploadDrawer } from './components/PersistentUploadDrawer';
 import { UploadFloatingIndicator } from './components/UploadFloatingIndicator';
@@ -19,6 +19,8 @@ const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
 const FolderDetailPage = lazy(() => import('./pages/FolderDetailPage'));
 const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
 const DevLoginPage = lazy(() => import('./pages/DevLoginPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const ShareLandingPage = lazy(() => import('./pages/ShareLandingPage'));
 const RequestLinkLandingPage = lazy(() => import('./pages/RequestLinkLandingPage'));
 const AdminAuditPage = lazy(() => import('./pages/AdminAuditPage'));
@@ -59,6 +61,8 @@ const RouterRoutes = () => (
       <Route path="/s/:token" element={<ShareLandingPage />} />
       <Route path="/r/:token" element={<RequestLinkLandingPage />} />
       <Route path="/dev-login" element={<DevLoginPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/change-password" element={<ChangePasswordPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   </Suspense>
@@ -67,6 +71,9 @@ const RouterRoutes = () => (
 function AppShell() {
   const { data: me, isLoading, isError } = useMe();
   const location = useLocation();
+
+  // #149: 本地登录 / 改密是独立页(无 AppShell),未登录时也放行(useLocation 为 basename 相对路径)
+  const onAuthPage = location.pathname === '/login' || location.pathname === '/change-password';
 
   if (location.pathname === '/dev-login') return <RouterRoutes />;
 
@@ -87,9 +94,21 @@ function AppShell() {
       window.location.href = '/ms-static/web/dev-login';
       return null;
     }
+    // #149: 未登录 → 本地登录页(飞书入口在页内);next 带完整路径回业务前端
+    if (onAuthPage) return <RouterRoutes />;
     const next = window.location.pathname + window.location.search;
-    window.location.href = `${apiBase}/api/v1/auth/login?next=${encodeURIComponent(next)}`;
+    window.location.href = `/ms-static/web/login?next=${encodeURIComponent(next)}`;
     return null;
+  }
+
+  // #149: 已登录访问 /login → 回首页(首登强制改密则先去改密页)
+  if (location.pathname === '/login') {
+    return <Navigate to={me.must_change_password ? '/change-password' : '/'} replace />;
+  }
+
+  // #149: must_change_password 路由守卫 — 只放行改密页,其余一律强制跳转
+  if (me.must_change_password && !onAuthPage) {
+    return <Navigate to="/change-password" replace />;
   }
 
   return (

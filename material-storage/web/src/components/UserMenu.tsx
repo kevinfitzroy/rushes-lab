@@ -1,8 +1,8 @@
 import { App, Avatar, Dropdown } from 'antd';
-import { Check, Copy, LogOut, User as UserIcon } from 'lucide-react';
+import { Check, Copy, KeyRound, LogOut, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { apiBase, setDevUserId, getDevUserId, http } from '../api/client';
+import { setDevUserId, getDevUserId, http } from '../api/client';
 import type { Me } from '../api/types';
 
 export function UserMenu({ me }: { me: Me }) {
@@ -30,9 +30,9 @@ export function UserMenu({ me }: { me: Me }) {
       return;
     }
     try { await http.post('/api/v1/auth/logout'); } catch { /* ignore */ }
-    // 显式传 next 回 SPA 根,避免 callback fallback 到 nginx /(MinIO Console)
+    // #149: 退出 → 本地登录页(页内保留飞书 OIDC 入口);next 回 SPA 根
     const next = encodeURIComponent('/ms-static/web/');
-    window.location.href = `${apiBase}/api/v1/auth/login?next=${next}`;
+    window.location.href = `/ms-static/web/login?next=${next}`;
   };
 
   // 头像 fallback:用名字首字
@@ -93,6 +93,12 @@ export function UserMenu({ me }: { me: Me }) {
           },
           { type: 'divider' },
           { key: 'apps', icon: <UserIcon size={14} />, label: <Link to="/approvals">我的申请</Link> },
+          // #149: 仅已设本地密码的用户可自助改密(未设密码走管理员初始化)
+          ...(me.password_set ? [{
+            key: 'change-pw',
+            icon: <KeyRound size={14} />,
+            label: <Link to="/change-password">修改密码</Link>,
+          }] : []),
           { type: 'divider' },
           { key: 'logout', icon: <LogOut size={14} />, label: '退出登录',
             onClick: handleLogout, danger: true },

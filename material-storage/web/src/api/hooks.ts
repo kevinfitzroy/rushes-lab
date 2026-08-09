@@ -22,6 +22,31 @@ export const useMe = () =>
     retry: false,
   });
 
+// #149: 本地账号密码登录(成功置 cookie;must_change_password=true 时前端强制改密)
+export const useLocalLogin = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { username: string; password: string }) =>
+      (await http.post<{
+        status: string;
+        user_id: string;
+        name: string;
+        must_change_password: boolean;
+      }>('/api/v1/auth/local/login', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+  });
+};
+
+// #149: 修改密码(旧密码 + 新密码;新密码需过服务端策略)
+export const useChangePassword = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { old_password: string; new_password: string }) =>
+      (await http.post<{ status: string }>('/api/v1/auth/change-password', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+  });
+};
+
 // ─── projects ──────────────────────────────────────────────────────────────
 export const useProjects = () =>
   useQuery({

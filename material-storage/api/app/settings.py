@@ -65,10 +65,19 @@ class Settings(BaseSettings):
     # ─── session JWT ─────────────────────────────────────────────────────────
     session_jwt_secret: str = Field(..., description="HS256 签名密钥,至少 32 字节随机")
     session_jwt_alg: str = "HS256"
-    session_jwt_ttl_seconds: int = 24 * 3600
+    # #149:本地认证主路径下会话期默认 7 天(局域网使用,降低频繁登录摩擦)
+    session_jwt_ttl_seconds: int = 7 * 24 * 3600
     session_cookie_name: str = "ms_session"
     session_cookie_secure: bool = True
     session_cookie_samesite: str = "lax"     # H5 webview 同站访问,lax 足够
+
+    # ─── 本地账号密码登录(#149)─────────────────────────────────────────────
+    # 登录限流:同一 username / 同一 IP 连续失败 auth_max_failures 次,
+    # 锁定 auth_lock_seconds 秒(Redis 计数,per IP + per username 双维度)
+    auth_max_failures: int = 5
+    auth_lock_seconds: int = 15 * 60
+    # 密码策略:最小长度;且必须同时含字母和数字(validate_password_policy 判定)
+    auth_password_min_length: int = 8
 
     # ─── presigned URL TTL ────────────────────────────────────────────────────
     presigned_normal_ttl_seconds: int = 900       # 15 min,普通文件

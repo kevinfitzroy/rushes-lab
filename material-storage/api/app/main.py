@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import redis.asyncio as redis_asyncio
     app.state.redis = redis_asyncio.from_url(str(settings.redis_url), decode_responses=True)
 
+    # #149 本地账号密码登录:密码哈希 + 登录限流(复用上面的 redis client)
+    from app.services.local_auth import LocalAuthService
+    app.state.local_auth = LocalAuthService(settings, app.state.redis)
+
     # 注册 card-action handler(import 即注册 — services/feishu_card_handlers 等)
     # iter1:noop;iter2 起按 intent 注册具体 handler
     # 注:用 from-import 以免 `app` 名 shadow lifespan 参数 (Python 名字解析坑)

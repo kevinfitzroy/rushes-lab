@@ -32,10 +32,17 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
   (r) => r,
   (err: AxiosError) => {
-    if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
-      // HashRouter 下需带 hash 完整路径回业务前端;否则 callback 跳 /(MinIO Console)
-      const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
-      window.location.href = `${apiBase}/api/v1/auth/login?next=${next}`;
+    if (err.response?.status === 401) {
+      // #149: 认证页(本地登录 / 改密 / dev)自身的 401 是业务响应(如密码错误),不跳转;
+      // 其余页面 401(会话失效)→ 本地登录页。带 next 完整路径回业务前端
+      // (注意 pathname 含 /ms-static/web basename,所以用 endsWith 判断)
+      const path = window.location.pathname;
+      const onAuthPage = path.endsWith('/login') || path.endsWith('/change-password')
+        || path.endsWith('/dev-login');
+      if (!onAuthPage) {
+        const next = encodeURIComponent(path + window.location.search + window.location.hash);
+        window.location.href = `/ms-static/web/login?next=${next}`;
+      }
     }
     return Promise.reject(err);
   }

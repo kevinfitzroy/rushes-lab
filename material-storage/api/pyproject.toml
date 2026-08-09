@@ -33,6 +33,8 @@ dependencies = [
     # auth / OIDC
     "authlib>=1.3",
     "python-jose[cryptography]>=3.3",
+    # 本地账号密码登录(#149):argon2id 哈希(不用 passlib,停维护)
+    "argon2-cffi>=23.1",
 
     # 工具
     "httpx>=0.27",
