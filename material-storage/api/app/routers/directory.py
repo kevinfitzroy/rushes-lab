@@ -216,7 +216,12 @@ async def enable_directory_user(
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
 ) -> dict[str, object]:
-    """启用:is_active=true + 恢复组织成员 tuple(项目级权限需另行授予)。"""
+    """启用:is_active=true + 恢复组织成员 tuple + 按 group_memberships 重建组 tuple(F6)。
+
+    禁用时 revoke_user_completely 撤掉了全部 tuple(含 group#member),但
+    group_memberships 表行保留 —— 启用必须逐条重建,否则 UI 显示还在组里、
+    OpenFGA 里没有 tuple,组带来的项目权限静默失效。
+    """
     target = await db.get(User, user_id)
     if target is None:
         raise HTTPException(404, f"user not found:{user_id}")
@@ -237,15 +242,36 @@ async def enable_directory_user(
         except Exception as e:
             log.warning("enable user org member tuple fail user=%s err=%s", user_id, e)
 
+    # 重建组内成员 tuple(F6:disable 时被撤,DB 行保留)
+    gm_res = await db.execute(
+        select(GroupMembership).where(GroupMembership.user_id == user_id)
+    )
+    groups_restored = 0
+    for gm in gm_res.scalars().all():
+        try:
+            await permissions.add_user_to_group(
+                group_id=str(gm.group_id), user_id=str(user_id),
+            )
+            groups_restored += 1
+        except Exception as e:
+            log.warning(
+                "enable user group tuple fail user=%s group=%s err=%s",
+                user_id, gm.group_id, e,
+            )
+
     await audit.write(
         event_type="user_enabled",
         actor_user_id=user.id,
-        details={"user_id": str(user_id), "username": target.username, "name": target.name},
+        details={
+            "user_id": str(user_id), "username": target.username, "name": target.name,
+            "groups_restored": groups_restored,
+        },
         request_ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
-    log.info("user enabled id=%s by admin=%s", user_id, user.id)
-    return {"ok": True, "user_id": str(user_id)}
+    log.info("user enabled id=%s by admin=%s groups_restored=%d",
+             user_id, user.id, groups_restored)
+    return {"ok": True, "user_id": str(user_id), "groups_restored": groups_restored}
 
 
 @router.post("/users/{user_id}/reset-password", response_model=UserResetPasswordOut)

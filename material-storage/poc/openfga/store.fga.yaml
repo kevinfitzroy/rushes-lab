@@ -1,11 +1,17 @@
 name: material-storage-poc
 
-# v4(iter a1, 2026-05-16):权限模型升级 — 飞书 ID 直接作 subject
+# v4(iter a1, 2026-05-16):权限模型升级 — 本地身份直接作 subject(2026-08-09 修订,F17)
 #
 # 关键变化(v3 → v4):
-#   1. subject ID 切飞书 ID:user:<open_id> / department:<dept_id> / group:<group_id>
-#                          / organization:<tenant_key>(不再 internal UUID)
-#   2. 新增 type department(member 自递归,自然含子部门)
+#   1. subject 一律本地身份(ADR-0007,不再是飞书 ID;2026-08-09 #148/#150 起):
+#        user:<users.id UUID>                       — 用户(users 表主键)
+#        group:<本地 groups.id UUID>#member         — 本地用户组(groups 表主键,#150 起)
+#        organization:<tenant_key>                  — 组织(tenant_key =
+#                                                        Organization.feishu_tenant_key
+#                                                        或 str(org id) 兜底)
+#      department:<dept_id> 轴已废弃(ADR-0007 砍部门轴):不再授予新权限,
+#      仅存量 tuple 保留(迁移见 scripts/migrate_subjects_to_uuid.py)
+#   2. 新增 type department(member 自递归,自然含子部门;历史遗留,已废弃)
 #   3. project 权限三轴并列:viewer / downloader / uploader(全部 ⊃ view)
 #      - downloader ⊃ view,uploader ⊃ view,uploader 隐含创建 sub folder
 #      - admin ⊃ everything

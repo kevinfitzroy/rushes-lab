@@ -4,16 +4,27 @@
   docker exec ms-api python -m scripts.migrate_subjects_to_uuid            # dry-run(默认,只打印计划 + 写报告)
   docker exec ms-api python -m scripts.migrate_subjects_to_uuid --apply    # 真重写
 
+⚠️ 部门轴先行(ADR-0007 已砍 department 轴;cutover 前必须处理,判断存量
+   一律查 OpenFGA store,dry-run 输出的 department_skipped 就是全量清单):
+   1. 先列出全部 department tuple(dry-run 报告 department_tuples 字段)
+   2. 把需要保留的部门授权**物化成本地组或用户直授**(admin 后台建组/加人/授原权限)
+   3. 确认处理完再 --apply;存在存量 department tuple 时 --apply 会被拒绝,
+      必须加 --skip-department-gate 才放行(不推荐)
+
 行为(idempotent,重跑无副作用):
   1. db 读全量 users → {feishu_open_id: str(users.id)} 映射
   2. 快照(before):每个 user 用旧 subject user:<open_id> 跑 list_objects
-     (project/folder/sensitive_folder/asset x can_view/can_download/can_upload/can_admin)
+     (project/folder/sensitive_folder/asset x can_view/can_download/can_upload/can_admin;
+     无飞书身份的本地账号本就是新格式,直接用 user:<users.id> 快照,不拼 user:None)
   3. OpenFGA read 分页拉全量 tuple,逐条制定重写计划:
      - user:<open_id>         → user:<users.id UUID>(映射不到 → 记 unknown_open_id,跳过不删)
      - user:<UUID 且在 users> → 已是新格式,跳过
      - group:<飞书 gid>[#member] → group:<本地 groups.id UUID>[#member]
-       (本地组 id = uuid5(NAMESPACE_DNS, "feishu:group:{gid}"),--apply 时在 groups 表建行)
+       (本地组 id:同名组已存在 → 用同名组 id;否则 uuid5(NAMESPACE_DNS,
+        "feishu:group:{gid}")确定性 id,与 _ensure_local_group 同一规则;
+        --apply 时在 groups 表建行)
      - department:*(user 侧或 object 侧)→ 不迁,记 department_skipped,tuple 原样保留
+       (见上方"部门轴先行":--apply 前必须已物化部门授权,否则拒绝执行)
      - object 侧 group:<飞书 gid> → 同步映射到本地组 uuid
   4. --apply:每个 batch(50)内**先写新 tuple 再删旧 tuple** —— 避免中间态丢权限;
      写遇到 'already existed' / 删遇到不存在都 tolerate(幂等)
@@ -75,7 +86,12 @@ async def _snapshot(
     """
     out: dict[str, dict[str, list[str]]] = {}
     for u in users:
-        subject = subject_fmt.format(open_id=u.feishu_open_id, uid=str(u.id))
+        if u.feishu_open_id:
+            subject = subject_fmt.format(open_id=u.feishu_open_id, uid=str(u.id))
+        else:
+            # 本地账号无飞书身份:subject 本就是新格式 user:<users.id>,两种快照
+            # 都用 uid —— 否则会拼出字面量 'user:None' 导致 before 恒空、验收恒红(F7-①)
+            subject = f"user:{u.id}"
         per: dict[str, list[str]] = {}
         for obj_type in _SNAPSHOT_TYPES:
             for rel in _SNAPSHOT_RELATIONS:
@@ -142,6 +158,8 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true",
                         help="真重写(默认 dry-run 只打印计划 + 写报告)")
+    parser.add_argument("--skip-department-gate", action="store_true",
+                        help="跳过部门轴检查:存在存量 department tuple 时仍允许 --apply(不推荐)")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -166,6 +184,16 @@ async def main() -> int:
     async with sm() as db:
         existing_groups = list((await db.execute(select(Group))).scalars().all())
     known_group_ids = {str(g.id) for g in existing_groups}
+    name_to_gid = {g.name: g.id for g in existing_groups}
+
+    def _resolve_group_id(feishu_gid: str) -> uuid.UUID:
+        """计划期确定本地组 id,与 _ensure_local_group 同一规则(F7-③):
+
+        同名组已存在 → 用同名组的 id;否则 uuid5 确定性 id。
+        原来只按 uuid5 计划、_ensure_local_group 同名复用另一 id,导致写出的
+        tuple 指向不存在的 group 行(权限悬空)。
+        """
+        return name_to_gid.get(feishu_gid, _local_group_uuid(feishu_gid))
 
     # (old_key, new_key) 对;key = (user, relation, object, condition)
     plan: list[tuple[Any, ClientTuple, ClientTuple]] = []
@@ -206,7 +234,7 @@ async def main() -> int:
                 already_new += 1
                 skip = True
             else:
-                local = group_id_map.setdefault(gid, _local_group_uuid(gid))
+                local = group_id_map.setdefault(gid, _resolve_group_id(gid))
                 new_user = f"group:{local}{suffix}"
         # 其他 user 侧(organization: / project: / folder: parent 等)不动
 
@@ -215,7 +243,7 @@ async def main() -> int:
         if obj.startswith("group:"):
             gid = obj.split(":", 1)[1]
             if not (_is_uuid(gid) and gid in known_group_ids):
-                local = group_id_map.setdefault(gid, _local_group_uuid(gid))
+                local = group_id_map.setdefault(gid, _resolve_group_id(gid))
                 new_obj = f"group:{local}"
 
         if skip or (new_user == old_user and new_obj == obj):
@@ -231,6 +259,21 @@ async def main() -> int:
 
     log.info("计划:重写 %d 条;已是新格式 %d;department 跳过 %d;未知 open_id 跳过 %d",
              len(plan), already_new, len(department_skipped), len(unknown_open_ids))
+
+    # ─── 3.5) 部门轴闸门(F7-②):存量 department tuple 未物化前拒绝 --apply ──
+    if args.apply and department_skipped and not args.skip_department_gate:
+        print("\n=== 部门轴权限存在,拒绝执行 --apply ===")
+        print("迁移只把 user 侧 subject 换成 UUID,department tuple 原样保留 →")
+        print("迁移后旧 subject 的用户不再是部门 member,部门授权会**静默失效**。")
+        print("cutover 前必须先把要保留的部门授权物化成本地组 / 用户直授")
+        print("(判断存量一律查 OpenFGA store;下方列表即 dry-run 报告 department_tuples)。")
+        print("确认全部处理完再重跑 --apply;确实确认无影响可加 --skip-department-gate 放行。")
+        for d in department_skipped[:20]:
+            print(f"  {d['user']} {d['relation']} {d['object']}")
+        if len(department_skipped) > 20:
+            print(f"  …共 {len(department_skipped)} 条,其余见报告 department_tuples")
+        await permissions.close()
+        return 3
 
     # ─── 4) approvals.granted_tuple_ref JSONB 重写计划 ─────────────────────
     async with sm() as db:

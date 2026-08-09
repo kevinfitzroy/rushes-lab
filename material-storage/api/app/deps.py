@@ -71,14 +71,31 @@ _FORCED_CHANGE_OK_ROUTES = frozenset({"me", "change_password", "logout"})
 
 
 # ─── current user(cookie session 优先 + dev header fallback)─────────────────
+async def _load_active_user(uid: uuid.UUID) -> CurrentUser:
+    """按 users.id 查库并校验 is_active(F5:禁用必须立即下线,不能等 JWT 7 天过期)。
+
+    每次认证一次 PK 查询 + 一行判断(users 百人级,可忽略);dev 通道与 JWT 路径共用,
+    保证两边语义一致。被禁用的用户:所有需要登录的端点(含缩略图 URL / 改密 / 通知)
+    一律 401。
+    """
+    async with get_sessionmaker()() as db:
+        stmt = select(User.id, User.name, User.is_active).where(User.id == uid)
+        row = (await db.execute(stmt)).first()
+        if row is None:
+            raise HTTPException(401, "用户不存在或已删除")
+        if not row.is_active:
+            raise HTTPException(401, "账号已停用,请联系管理员")
+        return CurrentUser(id=row.id, name=row.name)
+
+
 async def get_current_user(
     request: Request,
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ) -> CurrentUser:
     """认证优先级:
-      1. cookie 'ms_session'(JWT)— 生产路径,本地账号密码登录(#149)或 OIDC 获得
-         JWT payload 已包 sub(UUID)+ name → 直接构 CurrentUser;
-         F15:must_change_password=true 时轻量查库校验,非改密/me 端点拦截(403)
+      1. cookie 'ms_session'(JWT)— 生产路径,本地账号密码登录(#149)或 OIDC 获得;
+         F5:解出 sub 后查库校验 is_active(见 _load_active_user),禁用立即 401,名称以库内为准;
+         F15:must_change_password=true 时非改密/me/logout 端点拦截(403)
       2. X-User-Id header(dev fallback)— 反查 db;生产 env != 'dev' 拒绝;
          dev 通道不做强制改密拦截(本地开发无密码流程)
     """
@@ -93,32 +110,29 @@ async def get_current_user(
         except (ValueError, KeyError) as e:
             log.info("session decode failed: %s", e)
             raise HTTPException(401, "会话已过期或无效,请重新登录") from e
-
+        # F5:is_active 校验放最前 —— 禁用账号任何端点一律 401(含改密/me),
+        # 优先于 F15 的 403(禁用状态下的改密诉求无意义)
+        user = await _load_active_user(uid)
+        # F15:强制改密拦截(must_change_password=true 只放行改密/me/logout)
         route_name = getattr(request.scope.get("route"), "name", "")
         if route_name not in _FORCED_CHANGE_OK_ROUTES:
             async with get_sessionmaker()() as db:
-                user = await db.get(User, uid)
-                if user is None:
+                db_user = await db.get(User, uid)
+                if db_user is None:
                     raise HTTPException(401, "账号不存在或已被删除,请重新登录")
-                if user.must_change_password and user.password_hash is not None:
+                if db_user.must_change_password and db_user.password_hash is not None:
                     raise HTTPException(
                         403, "首次登录请先设置新密码:请先完成修改密码再继续操作"
                     )
-        return CurrentUser(id=uid, name=payload.get("name", ""))
+        return user
 
     if settings.env == "dev" and x_user_id:
         try:
             uid = uuid.UUID(x_user_id)
         except ValueError as e:
             raise HTTPException(400, "X-User-Id 必须是 UUID 格式") from e
-        # dev fallback 反查 db
-        async with get_sessionmaker()() as db:
-            stmt = select(User).where(User.id == uid)
-            res = await db.execute(stmt)
-            user = res.scalar_one_or_none()
-            if user is None:
-                raise HTTPException(401, f"X-User-Id user {uid} not found")
-            return CurrentUser(id=user.id, name=user.name)
+        # dev fallback 反查 db(与 JWT 路径同一校验)
+        return await _load_active_user(uid)
 
     raise HTTPException(401, "not authenticated — call /api/v1/auth/login")
 

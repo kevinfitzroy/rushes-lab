@@ -62,3 +62,30 @@ def test_user_username_column() -> None:
     assert col.unique is True
     assert col.nullable is True
     assert {i.name for i in User.__table__.indexes} >= {"ix_users_username"}
+
+
+# ─── 数据库层唯一约束(F3,容器测试)────────────────────────────────────────────
+async def test_live_db_unique_constraints_on_local_identity() -> None:
+    """F3:username / oidc_sub 的 UNIQUE 必须真实存在于数据库层。
+
+    migration 0008/0010 的 `op.add_column(unique=True)` 不渲染 UNIQUE,
+    ix_users_username / ix_users_oidc_sub 只是普通 btree —— 上面 ORM 元数据断言
+    是假绿。0009 迁移补了 uq_users_username / uq_users_oidc_sub,这里直接查
+    pg_constraint 验证。需要可连的 PG(容器测试,待 docker);本机无 DB 自动 skip。
+    """
+    import pytest
+    from sqlalchemy import text
+
+    from app.db.session import get_sessionmaker
+
+    try:
+        async with get_sessionmaker()() as db:
+            rows = (await db.execute(text(
+                "SELECT conname FROM pg_constraint"
+                " WHERE conrelid = 'users'::regclass AND contype = 'u'"
+            ))).scalars().all()
+    except Exception as e:  # 环境不可用 → skip(连接拒绝 / 无 docker 等)
+        pytest.skip(f"需要可连的 PG(容器测试,待 docker): {e}")
+    uniques = set(rows)
+    assert "uq_users_username" in uniques, f"缺 uq_users_username,实际: {uniques}"
+    assert "uq_users_oidc_sub" in uniques, f"缺 uq_users_oidc_sub,实际: {uniques}"

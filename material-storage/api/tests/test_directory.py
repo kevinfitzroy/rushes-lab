@@ -11,7 +11,8 @@
   - 重名 username → 409
   - 组 CRUD + 重名 → 409
   - **建组 → 加人 → 组 viewer 挂 project → permissions.check 立即生效**;移出组立即失效
-  - 禁用用户 → OpenFGA tuple 全撤 + is_active=false;启用 → 恢复 org member
+  - 禁用用户 → OpenFGA tuple 全撤 + 认证立即 401(F5,dev 通道与 JWT cookie 双路径)
+  - 启用 → 恢复 org member + 按 group_memberships 重建组 tuple(F6)
   - admin 重置密码 → 新临时密码 + must_change_password
 """
 from __future__ import annotations
@@ -122,37 +123,104 @@ async def test_disable_revokes_tuples_and_enable_restores_org_member(
     uid = r.json()["id"]
 
     perms = app_with_lifespan.state.permissions
-    # 禁用 → tuple 全撤
+    # 先入组(F6:禁用→启用必须恢复组 tuple)
+    g = (await client.post(
+        "/api/v1/admin/directory/groups",
+        json={"name": _uniq("grp")}, headers=_h(EVAN_ID),
+    )).json()
+    rg = await client.post(
+        f"/api/v1/admin/directory/groups/{g['id']}/members",
+        json={"user_id": uid}, headers=_h(EVAN_ID),
+    )
+    assert rg.status_code == 201, rg.text
+
+    # 禁用 → tuple 全撤(org member + group member 两条)
     r2 = await client.post(f"/api/v1/admin/directory/users/{uid}/disable", headers=_h(EVAN_ID))
     assert r2.status_code == 200, r2.text
-    assert r2.json()["tuples_revoked"] == 1  # org member 那一条
-    me = (await client.get("/api/v1/auth/me", headers=_h(uid))).json()
-    assert me["is_active"] is False
-    # OpenFGA store 直接核对:该 user 已无任何 tuple
-    from openfga_sdk.models import TupleKey
-    resp = await perms._client.read(TupleKey(user=f"user:{uid}"))
-    assert resp.tuples == [], f"禁用后 store 应无该 user 的 tuple: {resp.tuples}"
+    assert r2.json()["tuples_revoked"] == 2
+    # F5:禁用后认证立即失效(dev 通道查库带 is_active 校验)→ 401,不再是 200+is_active=false
+    me = await client.get("/api/v1/auth/me", headers=_h(uid))
+    assert me.status_code == 401, me.text
+    # store 核对:该 user 已无任何 tuple(逐 (type, relation) list_objects 枚举;
+    # 不能用 read(user=...) 部分键 —— 该 SDK/服务端不支持)
+    from app.services.permissions import USER_DIRECT_RELATIONS
+    for obj_type, rel in USER_DIRECT_RELATIONS:
+        objs = await perms.list_objects(
+            user_subject=f"user:{uid}", relation=rel, object_type=obj_type,
+        )
+        assert objs == [], f"禁用后 user:{uid} 不应有 {obj_type}#{rel} 的 tuple: {objs}"
 
     # 重复禁用 → 409
     r3 = await client.post(f"/api/v1/admin/directory/users/{uid}/disable", headers=_h(EVAN_ID))
     assert r3.status_code == 409
 
     # 禁用用户不能再加组(400)
-    g = (await client.post(
+    g2 = (await client.post(
         "/api/v1/admin/directory/groups",
-        json={"name": _uniq("grp")}, headers=_h(EVAN_ID),
+        json={"name": _uniq("grp2")}, headers=_h(EVAN_ID),
     )).json()
     r4 = await client.post(
-        f"/api/v1/admin/directory/groups/{g['id']}/members",
+        f"/api/v1/admin/directory/groups/{g2['id']}/members",
         json={"user_id": uid}, headers=_h(EVAN_ID),
     )
     assert r4.status_code == 400
 
-    # 启用 → 恢复 org member tuple + is_active
+    # 启用 → 恢复 org member tuple + 组 tuple(F6)+ is_active
     r5 = await client.post(f"/api/v1/admin/directory/users/{uid}/enable", headers=_h(EVAN_ID))
     assert r5.status_code == 200, r5.text
+    assert r5.json()["groups_restored"] == 1
+    org_objs = await perms.list_objects(
+        user_subject=f"user:{uid}", relation="member", object_type="organization",
+    )
+    assert org_objs, "启用后 org member tuple 应恢复"
+    grp_objs = await perms.list_objects(
+        user_subject=f"user:{uid}", relation="member", object_type="group",
+    )
+    assert g["id"] in grp_objs, f"启用后组 member tuple 应恢复(F6): {grp_objs}"
     me2 = (await client.get("/api/v1/auth/me", headers=_h(uid))).json()
     assert me2["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_disabled_user_existing_session_rejected(
+    client: AsyncClient, app_with_lifespan,
+) -> None:
+    """F5:禁用用户的已签发 JWT(cookie)必须立即失效。
+
+    session 最长 7 天;旧实现 get_current_user 纯解 JWT 不查库,禁用后 cookie
+    仍能拉 /me / 缩略图 / 改密。修复后同一 cookie 在禁用后 → 401。
+    """
+    from app.db.tables import User
+    from app.services.auth import create_auth_service
+    from app.settings import get_settings
+
+    uname = _uniq("jwtcarol")
+    r = await client.post(
+        "/api/v1/admin/directory/users",
+        json={"username": uname, "name": "Jwt Carol"}, headers=_h(EVAN_ID),
+    )
+    assert r.status_code == 201, r.text
+    uid = r.json()["id"]
+
+    settings = get_settings()
+    auth = await create_auth_service(settings)
+    token = auth.encode_session(User(id=uuid.UUID(uid), name="Jwt Carol"))
+
+    # 启用状态:cookie 可访问
+    ok = await client.get(
+        "/api/v1/auth/me", cookies={settings.session_cookie_name: token},
+    )
+    assert ok.status_code == 200, ok.text
+
+    # 禁用后:同一 cookie → 401
+    rd = await client.post(
+        f"/api/v1/admin/directory/users/{uid}/disable", headers=_h(EVAN_ID),
+    )
+    assert rd.status_code == 200, rd.text
+    bad = await client.get(
+        "/api/v1/auth/me", cookies={settings.session_cookie_name: token},
+    )
+    assert bad.status_code == 401, bad.text
 
 
 @pytest.mark.asyncio

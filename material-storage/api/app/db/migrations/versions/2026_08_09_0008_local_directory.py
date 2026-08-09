@@ -32,6 +32,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_users_username", table_name="users")
     op.drop_column("users", "username")
-    # 回滚前清掉本地新建的无飞书用户(否则 not-null 约束过不去)
+    # ⚠️ 破坏性回滚(review F18):会删掉全部本地创建的用户(feishu_open_id IS NULL,
+    # 即 #150 之后 admin 后台建的所有账号);且 approvals.applicant_user_id 等 FK
+    # 为 RESTRICT,有本地用户被引用时此语句直接失败。仅限开发环境回滚;
+    # 生产一旦开过本地账号,不要 downgrade 到本版本。
     op.execute("DELETE FROM users WHERE feishu_open_id IS NULL")
     op.alter_column("users", "feishu_open_id", nullable=False)
