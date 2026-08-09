@@ -11,10 +11,9 @@
 # 如果只想兜底用密码,设 SSH_PASS 即走 sshpass 路径(需要 brew install sshpass)。
 #
 # ⚠️ .env 处理(踩过坑,2026-05-17):
-#   默认 *不会* 覆盖 server2 已有的 .env(怕 clobber 手工调过的飞书 app 凭据等)
+#   默认 *不会* 覆盖 server2 已有的 .env(怕 clobber 手工调过的凭据)
 #   首次 bootstrap 或确实想重置时:`INIT_ENV=1 bash scripts/deploy_server2.sh`
-#   heredoc 里飞书凭据全是占位符(#152 起 — 泄露过的旧 app 值已清换)— 真实凭据
-#   只在本机 server.md 维护,或通过 env 注入(FEISHU_APP_ID/FEISHU_APP_SECRET 等)。
+#   heredoc 里敏感值全是占位符 — 真实凭据只在本机 server.md 维护,或通过 env 注入。
 set -euo pipefail
 
 HOST="${HOST:-8.156.34.238}"
