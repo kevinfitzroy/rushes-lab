@@ -1,12 +1,29 @@
 # material-storage — 工作 ROADMAP / 待办
 
 > 持续更新,作为 context compact 后的"事项备忘"。当一个 iter 完成 → 移到 Done 区。
-> 最后更新:2026-05-18 晚(本日批量 ship #108-#130 共 11 个 PR / 12 个 issue close;开 #131 给 gatekeeper 接力测 request-link 端到端)
+> 最后更新:2026-08-09(**产品方向校正** + 生产改局域网 + 弃用飞书;见下方"2026-08-09 方向校正"节。此前最后更新:2026-05-18 晚,批量 ship #108-#130 共 11 个 PR / 12 个 issue close)
 >
 > 相关文档:
 > - [`permissions-model-v4.md`](./permissions-model-v4.md) — 权限模型详细
 > - [`ops-manual.md`](./ops-manual.md) — **运维手册**(系统 admin / 部署 / 排查 / 灾后恢复)
 > - [`COLLABORATION.md`](./COLLABORATION.md) — tester / gatekeeper / dev 协作契约(2026-05-17 起)
+> - [`research/identity-source-alternatives.md`](./research/identity-source-alternatives.md) — 身份体系选型调研(v0.3)
+> - [`decisions/0007-drop-feishu-self-built-identity.md`](./decisions/0007-drop-feishu-self-built-identity.md) — 弃用飞书 ADR(accepted)
+
+## 2026-08-09 方向校正(产品优先级 + 部署形态 + 身份体系)
+
+业务方对话(2026-08-09,已匿名化)确认产品真实目标排序,纠正 5 月迭代的重心错位:
+
+- **核心目标是素材的储存 / 下载 / 使用 / 分享方便,让往期素材能被发现且被利用;权限隔离不是重点,"权限可以陆续完善"。**
+- 检索是关键抓手:上传/入库时打标签,支持"盲搜"直接找到素材。
+- 业务方自认:"5 月份弄的时候,重点放在了权限管理上了。"
+
+**对路线的影响:**
+
+1. 权限体系 v4(OpenFGA 三轴 / sensitive 邀请制 / 临时授权)**保持现状、不再追加投入** —— 已建成的合规底线(顾客照片保护)保留,但不继续镀金;新功能默认分享友好。
+2. 新增投入转向**标签 + 盲搜 + 发现 UX**(见待办"标签 + 盲搜",原 B-4 iter3 升格)。
+3. 生产环境改**局域网部署**;身份体系**弃用飞书、本地自建**(ADR-0007 accepted;调研 v0.3)—— 飞书相关待办(真审批闭环 / H5 jsapi)作废,身份自建按 P1→P2→P4 走(调研 §7)。
+4. 教训回写:身份/权限重建务必保持最小可用(本地账号 + 组),不重复 5 月"过度建设错误层"的错误。
 
 ## Phase B 完成里程碑
 
@@ -77,14 +94,10 @@
 
 ## 待办
 
-### 飞书 OpenAPI 真审批闭环 — **等用户先在飞书后台配审批模板**
+### ~~飞书 OpenAPI 真审批闭环~~ — 作废(ADR-0007 弃用飞书,2026-08-09)
 
 IM 卡片已就绪 + approval_service.decide 抽好;只缺接飞书"工作台 → 审批"应用,让 admin 可在飞书审批后台同步处理(企业既有 SOP)。
-- **前置依赖**:飞书后台先配审批模板,把 approval_code 填 .env `FEISHU_APPROVAL_CODE`
-- **backend**:
-  - `POST /api/v1/approvals` 同时调 `lark-oapi` 创建审批 instance,存 `feishu_instance_code`
-  - `POST /api/v1/webhooks/feishu` `approval_instance` 分支:status==APPROVED 调内部 `approval_service.decide(approve)`
-- **场景**:user web 申请 → 同时 IM 卡 + 飞书审批工单 → admin 任一渠道一键批 → backend 落库 + 通知
+- **作废原因**:团队日常 IM 是企业微信而非飞书,飞书集成整体放弃(ADR-0007 proposed);审批通知改走应用内通知中心(调研 §7 P3)
 
 ### B-4 iter2 收尾 — 视频缩略图 backfill + 真测试(issue #101 / #104)
 
@@ -93,23 +106,28 @@ vertical slice 已 ship(PR #102 + #103 deploy 修)。剩:
 - 真 mp4 e2e 测试 — issue #104 给 gatekeeper 的 7-case 矩阵(小/中/大/mov/短/h265/损坏);跑过 + 评论后 close #101 #104
 - 现在 demo-onboarding 没视频不阻塞,等 gatekeeper 上传几个 mp4 后再 backfill
 
-### B-4 iter3 — AI 标签
+### 标签 + 盲搜(原 B-4 iter3 升格为核心迭代 — 2026-08-09 方向校正)
 
-- worker 调云端 AI(qwen-vl / openai vision)给图片打 tag
-- 写 `assets.tags.ai = {labels: [...], confidence: [...]}`
-- 前端 search by tag(列表过滤 + 标签云)
+业务原话:老素材能被发现且被利用;最好带标签、盲搜直接找到;使用方便一开始储存的时候就要加标签。
 
-### B-4 iter4 — 阿里云 OSS 灾备
+**现状**:`assets.tags`(JSONB)目前只装 thumbnail 元数据(`thumbnail_key` / `thumbnail_failed`);无用户标签、无搜索 endpoint(asset 只有按 folder 列表)。
 
-- MinIO `mc mirror` 或 lifecycle → OSS bucket
-- 配 lifecycle: deleted_at > 30d 移到 OSS cold archive
-- 异地灾备元数据复制
+**MVP(手工标签 + 盲搜)先做:**
+- asset 用户标签:上传时引导打标 + 详情/批量补标(`tags.user_labels` 或独立列,实施时定)
+- `GET /api/v1/assets/search?q=` 跨 folder 盲搜:文件名 + 标签 + 备注;数据量预估 50-100 万文件,PG `ILIKE`+`pg_trgm` 索引起步,不够再上全文检索
+- 前端:⌘K 命令栏接盲搜(入口已有)+ 搜索结果页 + 上传流程打标引导
+- **权限边界(权限体系在此处仍起作用)**:搜索结果必须按 `can_view` 过滤(list_objects),不得泄露 sensitive 素材的存在性
 
-### 飞书 H5 jsapi-ticket
+**后续增强(按序):**
+- AI 自动标签(原 B-4 iter3:vision 模型给图片打 tag 写 `tags.ai`)—— **注意局域网部署下云端 AI(qwen-vl / openai)需出网;无 egress 时降级本地模型或维持纯手工**
+- 视频转写文本入搜索(更后期)
 
-- 当前 `lib/feishu.ts` 是 stub
-- 后端 `GET /api/v1/auth/feishu-jsapi-ticket?url=` 用 `app_access_token` 拿 ticket + HMAC-SHA1 签
-- 前端 initFeishu config 获 native 能力(分享 / 扫码 / 本地存储)
+### B-4 iter4 — 备份/灾备(局域网化后需重评估,2026-08-09)
+
+- 原方案:MinIO `mc mirror` 或 lifecycle → 阿里云 OSS bucket;deleted_at > 30d 移 OSS cold archive;异地灾备元数据复制
+- **重评估点**:生产改局域网后,云灾备取决于内网有无公网 egress;无 egress 则改本地异地备份(第二台机器/外置存储定期 `mc mirror`);**当前代码无任何备份机制,P0 级生产缺口**(2026-08-08 review 发现)
+
+### ~~飞书 H5 jsapi-ticket~~ — 作废(ADR-0007 弃用飞书,2026-08-09;纯浏览器使用本就不需要客户端内嵌能力)
 
 ### D iter5(低优先级)— 项目编辑 / 归档
 
@@ -198,12 +216,12 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 - default org id:`00000000-0000-0000-0000-0000000000a1`(tenant_key `dev_tenant_001`)
 - OpenFGA store:`01KRR4CPBJRTTTBEG0X802R07A` — 2026-05-18 latest model `01KRXQ03DREZK7B3BJM3R1KGVT`(folder.explicit_* 加 condition 后);**注 v4 model 之前的 store id `01KRRR86H5HDM0KP0ZKBZC19TN` 是别的环境,本环境 server2 一直是 01KRR4CPBJRTTTBEG0X802R07A**
 
-## 推荐顺序
+## 推荐顺序(2026-08-09 按方向校正重排)
 
-1. **idle 等 gatekeeper #131 + #104 反馈** — #131 request-link 端到端测试(项目级 + folder 级 + receiver 限定 + 过期 + FolderGrantsPanel 回归);#104 视频缩略图 7-case
-2. **飞书审批模板配置**(用户操作)→ 飞书 OpenAPI 真审批闭环 — 最高 ROI 完成企业 SOP 自洽
-3. B-4 iter3 — AI 标签(图片打 tag + search by tag)— 用户找素材的核心 UX 跃迁
-4. #69 dev_bootstrap v3 真修 — 消 deploy step 6/7 ⚠ 噪音
-5. B bucket 测试厚度补一组 integration test — prod 化前的硬要求
-6. approval 自动过期 + AI 标签 + OSS 灾备 — 长期差异化
-7. folder 入口扩展(asset 级单文件 link;FolderTree 节点 hover 加 link icon)— #129 enabled 之后的二期 UX
+1. **身份体系自建**(ADR-0007 已 accepted,可开工):P1 本地认证 → P2 管理后台 → P4 存量迁移+飞书下线 —— 生产局域网化的前置;保持最小可用,不再镀金权限
+2. **标签 + 盲搜 MVP**(手工标签 + 跨 folder 搜索 + 上传打标引导)—— 方向校正后的核心价值,让往期素材能被找到
+3. **生产部署清单**:内网 compose/env 改造(SESSION_COOKIE_SECURE / MINIO_ENDPOINT_PUBLIC 等)、**存储分层落地([ADR-0008](./decisions/0008-production-storage-layout-ssd.md):SSD=元数据+缩略图,HDD=原片)**、备份方案落地(无 egress 走本地异地 `mc mirror`)、泄露的飞书 app secret 轮换、#69 dev_bootstrap 修复
+4. B-4 iter2 收尾(#101/#104 视频缩略图)—— gatekeeper 传真 mp4 后 backfill
+5. 增强项:应用内通知中心 + SMTP(调研 §7 P3)、AI 自动标签(视 egress)
+6. B bucket 测试厚度 —— prod 化前硬要求,随 1/2 迭代搭着补
+7. 长期:视频转写入搜索、folder 入口扩展(asset 级单文件 link 等二期 UX)

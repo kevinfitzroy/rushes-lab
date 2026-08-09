@@ -1,6 +1,6 @@
 # ADR-0002: 采用飞书通讯录作 material-storage 身份源 (SoT)
 
-- **状态:** accepted
+- **状态:** superseded by [ADR-0007](0007-drop-feishu-self-built-identity.md)(2026-08-09:放弃飞书集成,身份体系自建;本文保留作历史决策记录)
 - **日期:** 2026-05-15
 - **决策者:** user + material-storage agent
 - **关联:**
@@ -129,3 +129,4 @@ GET /v1/users/by-open-id?open_id=ou_xxxx
 ## 变更日志
 
 - 2026-05-15:初版 accepted
+- 2026-08-09:superseded by ADR-0007(弃用飞书,身份自建)
