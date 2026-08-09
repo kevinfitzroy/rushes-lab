@@ -4,10 +4,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AutoComplete, Empty, Modal } from 'antd';
-import { Search as SearchIcon, Inbox } from 'lucide-react';
+import { AutoComplete, Empty, Modal, Tag } from 'antd';
+import { FileText, Search as SearchIcon, Inbox } from 'lucide-react';
 import { TaskCenterDrawer } from './TaskCenterDrawer';
-import { useMe, useProjects } from '../api/hooks';
+import { useMe, useProjects, useSearchAssets } from '../api/hooks';
 import { UserMenu } from './UserMenu';
 import type { Me } from '../api/types';
 
@@ -253,14 +253,59 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
   const { data: me } = useMe();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [q, setQ] = useState('');
+  const [debounced, setDebounced] = useState('');
 
   useEffect(() => {
     if (open) setQ('');
   }, [open]);
 
+  // #151: 300ms 防抖,⌘K 里做盲搜
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+  const { data: searchHits } = useSearchAssets(debounced || null);
+
   const options = useMemo(() => {
     const opts: { value: string; label: React.ReactNode; key: string; action: () => void }[] = [];
     const term = q.trim().toLowerCase();
+
+    // #151: 盲搜 — 输入即搜,命中文件直达所在 folder
+    if (debounced) {
+      opts.push({
+        key: 's-go',
+        value: `搜索文件 ${debounced}`,
+        label: (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0' }}>
+            <SearchIcon size={14} strokeWidth={1.8} style={{ color: 'var(--ms-accent)' }} />
+            <span style={{ color: 'var(--ms-accent)' }}>搜全部文件:「{debounced}」</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ms-ink-subtle)' }}>
+              {(searchHits?.length ?? 0) > 0 ? `${searchHits!.length} 条命中` : '进入搜索页'}
+            </span>
+          </div>
+        ),
+        action: () => navigate(`/search?q=${encodeURIComponent(debounced)}`),
+      });
+      (searchHits ?? []).slice(0, 6).forEach(r => {
+        opts.push({
+          key: `s-${r.id}`,
+          value: `文件 ${r.filename}`,
+          label: (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+              <FileText size={13} strokeWidth={1.6} style={{ color: 'var(--ms-ink-subtle)' }} />
+              <span style={{ flex: 1, color: 'var(--ms-ink)', overflow: 'hidden',
+                             textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.filename}</span>
+              <span style={{ fontSize: 11, color: 'var(--ms-ink-subtle)' }}>{r.folder_name}</span>
+              {r.user_labels.slice(0, 2).map(l => (
+                <Tag key={l} style={{ fontSize: 10, marginInlineEnd: 0, lineHeight: '16px' }}>{l}</Tag>
+              ))}
+            </div>
+          ),
+          action: () => navigate(`/folders/${r.folder_id}`),
+        });
+      });
+    }
+
 
     (projects || []).forEach(p => {
       if (!term || p.name.toLowerCase().includes(term) || p.code.toLowerCase().includes(term)) {
@@ -303,7 +348,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
     });
 
     return opts;
-  }, [projects, q, navigate]);
+  }, [projects, q, navigate, debounced, searchHits]);
 
   return (
     <Modal

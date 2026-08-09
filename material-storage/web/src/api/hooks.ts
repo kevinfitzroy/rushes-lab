@@ -14,6 +14,7 @@ import type {
   Folder,
   Me,
   Project,
+  SearchResult,
   ShareCreateOut,
   ShareResolve,
 } from './types';
@@ -181,6 +182,31 @@ export const useDeleteAsset = () => {
       await http.delete(`/api/v1/assets/${assetId}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['assets'] }),
+  });
+};
+
+// #151: 跨 folder 盲搜(文件名 / 标签 / 备注;后端已按 can_view 过滤)
+export const useSearchAssets = (q: string | null) =>
+  useQuery({
+    queryKey: ['asset-search', q],
+    queryFn: async () =>
+      (await http.get<SearchResult[]>('/api/v1/assets/search', { params: { q } })).data,
+    enabled: !!q && q.trim().length > 0,
+  });
+
+// #151: 写 user_labels / notes(user_labels 显式传空数组 = 清空)
+export const useUpdateAssetMeta = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { asset_id: string; user_labels?: string[]; notes?: string }) =>
+      (await http.patch<Asset>(`/api/v1/assets/${args.asset_id}/meta`, {
+        user_labels: args.user_labels,
+        notes: args.notes,
+      })).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['assets'] });
+      qc.invalidateQueries({ queryKey: ['asset-search'] });
+    },
   });
 };
 

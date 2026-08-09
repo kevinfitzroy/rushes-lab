@@ -3,6 +3,7 @@
  * 关闭只 hide UI,uppy 实例仍在 store,上传后台继续。
  */
 import { Drawer } from 'antd';
+import { Tags } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
 import { useUpload } from '../lib/upload-store';
 
@@ -62,6 +63,26 @@ export function PersistentUploadDrawer() {
       destroyOnClose={false}
     >
       {activeFolderId && <div ref={mountCb} style={{ minHeight: 460, width: '100%' }} />}
+
+      {/* #151: 打标引导 — 上传完成后在列表选中文件打标,之后可跨文件夹盲搜 */}
+      {activeFolderId && (
+        <div style={{
+          marginTop: 12,
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          padding: '10px 12px',
+          background: 'var(--ms-canvas)',
+          border: '1px solid var(--ms-hairline)',
+          borderRadius: 'var(--ms-radius-sm)',
+          fontSize: 12, color: 'var(--ms-ink-muted)', lineHeight: 1.6,
+        }}>
+          <Tags size={13} strokeWidth={1.8}
+                style={{ color: 'var(--ms-accent)', flexShrink: 0, marginTop: 2 }} />
+          <span>
+            上传完成后,选中文件点「打标」加标签/备注(如<em>棚拍</em>、<em>VIP</em>),
+            之后就能用 ⌘K 跨所有文件夹搜到它。
+          </span>
+        </div>
+      )}
     </Drawer>
   );
 }

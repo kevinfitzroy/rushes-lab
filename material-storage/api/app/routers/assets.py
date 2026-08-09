@@ -5,16 +5,17 @@ Phase B-2 iter4:每 endpoint 加 OpenFGA check + audit 落库。
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, exists, func, literal, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.tables import Asset, Folder, Project
 from app.deps import (
-    get_audit,
     CurrentUser,
+    get_audit,
     get_current_user,
     get_is_system_admin,
     get_permissions,
@@ -22,8 +23,10 @@ from app.deps import (
     get_request_context,
 )
 from app.models import (
+    AssetMetaUpdateIn,
     AssetOut,
     DownloadLinkOut,
+    SearchResultOut,
     UploadCompleteIn,
     UploadMultipartCreateOut,
     UploadPartUrlOut,
@@ -237,6 +240,149 @@ async def list_assets(
     return [AssetOut.model_validate(r) for r in res.scalars().all()]
 
 
+# ─── 盲搜(标签 + 跨 folder,#151)────────────────────────────────────────────
+@router.get("/search", response_model=list[SearchResultOut])
+async def search_assets(
+    q: str = Query(..., min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> list[SearchResultOut]:
+    """跨 folder 盲搜:匹配文件名 / user_labels / notes。
+
+    权限边界(本 endpoint 的硬约束):
+    - 普通 user:先 `list_objects(can_view)` 取可达 folder(folder + sensitive_folder 两型),
+      SQL 只查这些 folder 内的 asset —— sensitive 素材的存在性(名称/计数)零泄露。
+    - 系统 admin 直通(SQL 全量,不查 OpenFGA)。
+    - 注:asset 级 explicit_downloader(单文件临时 grant)不在此 folder 集合内,这类
+      资产不会出现在搜索结果 —— 方向是保守(宁漏勿泄),可接受。
+
+    搜索实现:PG ILIKE + pg_trgm 起步(百万行量级够用):
+    - filename / notes 走 GIN trgm 索引(模糊子串)。
+    - user_labels:精确元素 `q = ANY(...)`(GIN 可加速)+ 模糊 unnest ILIKE(逐行扫,
+      量级大时可换全文检索,决策记录见 ROADMAP"标签 + 盲搜")。
+    """
+    q = q.strip()
+    if not q:
+        raise HTTPException(400, "q 不能为空")
+    pattern = f"%{_escape_like(q)}%"
+
+    # ColumnElement[bool]:系统 admin 直通 = 恒 true;否则 folder_id IN 可达集合
+    folder_filter: ColumnElement[bool] = true()
+    if not is_system_admin:
+        folder_ids: list[uuid.UUID] = []
+        for obj_type in ("folder", "sensitive_folder"):
+            ids_str = await permissions.list_objects(
+                user_subject=user.subject, relation="can_view", object_type=obj_type,
+            )
+            folder_ids.extend(uuid.UUID(s) for s in ids_str)
+        if not folder_ids:
+            return []  # 无可达 folder → 结果必为空,不跑 SQL
+        folder_filter = Asset.folder_id.in_(folder_ids)
+
+    # user_labels 精确元素匹配(q = ANY(array),GIN 可加速)
+    label_exact = Asset.user_labels.any(literal(q))
+    # user_labels 模糊匹配(unnest 逐元素 ILIKE)
+    lbl = func.unnest(Asset.user_labels).alias("lbl")
+    label_fuzzy = exists(
+        select(1).select_from(lbl).where(next(iter(lbl.c)).ilike(pattern, escape="\\"))
+    )
+
+    stmt = (
+        select(Asset, Folder.name, Project.id, Project.name)
+        .join(Folder, Asset.folder_id == Folder.id)
+        .join(Project, Folder.project_id == Project.id)
+        .where(
+            Asset.deleted_at.is_(None),
+            folder_filter,
+            or_(
+                Asset.filename.ilike(pattern, escape="\\"),
+                Asset.notes.ilike(pattern, escape="\\"),
+                label_exact,
+                label_fuzzy,
+            ),
+        )
+        .order_by(Asset.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    res = await db.execute(stmt)
+    out: list[SearchResultOut] = []
+    for asset, folder_name, project_id, project_name in res.all():
+        data = AssetOut.model_validate(asset).model_dump()
+        data.update(
+            folder_name=folder_name,
+            project_id=project_id,
+            project_name=project_name,
+        )
+        out.append(SearchResultOut(**data))
+    return out
+
+
+# ─── 打标 / 改标(#151)────────────────────────────────────────────────────────
+@router.patch("/{asset_id}/meta", response_model=AssetOut)
+async def update_asset_meta(
+    asset_id: uuid.UUID,
+    payload: AssetMetaUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    permissions: PermissionsService = Depends(get_permissions),
+    audit: AuditService = Depends(get_audit),
+    user: CurrentUser = Depends(get_current_user),
+    is_system_admin: bool = Depends(get_is_system_admin),
+    ctx: dict[str, Any] = Depends(get_request_context),
+) -> AssetOut:
+    """写 user_labels / notes(audit `asset.tag_updated`)。
+
+    权限:can_upload 于父 folder(uploader 隐含编辑),或系统 admin 直通。
+    """
+    user_id = user.id
+    asset = await db.get(Asset, asset_id)
+    if not asset or asset.deleted_at is not None:
+        raise HTTPException(404, "asset not found")
+    folder = await db.get(Folder, asset.folder_id)
+    if not folder:
+        raise HTTPException(500, "asset folder lookup race")
+
+    allowed = is_system_admin or await permissions.check(
+        user_subject=user.subject,
+        relation="can_upload",
+        object_type="sensitive_folder" if folder.is_sensitive else "folder",
+        object_id=str(folder.id),
+    )
+    if not allowed:
+        await audit.write(
+            event_type="access_denied",
+            actor_user_id=user_id,
+            target_asset_id=asset_id,
+            target_project_id=folder.project_id,
+            target_minio_key=asset.minio_key,
+            details={"action": "update_asset_meta", "reason": "openfga can_upload false"},
+            **ctx,
+        )
+        raise HTTPException(403, "no permission to edit this asset")
+
+    if payload.user_labels is not None:
+        asset.user_labels = _normalize_labels(payload.user_labels)
+    if payload.notes is not None:
+        asset.notes = payload.notes[:2000] if payload.notes else ""
+    await db.commit()
+    await db.refresh(asset)
+
+    await audit.write(
+        event_type="asset.tag_updated",
+        actor_user_id=user_id,
+        target_asset_id=asset_id,
+        target_project_id=folder.project_id,
+        target_minio_key=asset.minio_key,
+        details={"user_labels": asset.user_labels, "notes": asset.notes},
+        **ctx,
+    )
+    return AssetOut.model_validate(asset)
+
+
 # ─── download link ────────────────────────────────────────────────────────────
 @router.post("/{asset_id}/download-link", response_model=DownloadLinkOut)
 async def get_download_link(
@@ -364,6 +510,34 @@ async def delete_asset(
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
+_MAX_LABELS = 50
+_MAX_LABEL_LEN = 64  # 与 tables.assets.user_labels ARRAY(String(64)) 对齐
+
+
+def _escape_like(q: str) -> str:
+    """转义 ILIKE 通配符(%, _, 反斜杠),让 q 按字面匹配。"""
+    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _normalize_labels(labels: list[str]) -> list[str]:
+    """trim + 去空 + 截断超长 + 去重,上限 _MAX_LABELS 个(防止滥用撑爆 token 预算)。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in labels:
+        label = raw.strip()
+        if not label:
+            continue
+        if len(label) > _MAX_LABEL_LEN:
+            label = label[:_MAX_LABEL_LEN]
+        if label in seen:
+            continue
+        seen.add(label)
+        out.append(label)
+        if len(out) >= _MAX_LABELS:
+            break
+    return out
+
+
 async def _project_bucket(db: AsyncSession, project_id: uuid.UUID) -> str:
     project = await db.get(Project, project_id)
     if not project:

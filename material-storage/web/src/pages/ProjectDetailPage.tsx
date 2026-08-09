@@ -2,22 +2,23 @@
  * 三栏 workspace:左 FolderTree / 中 AssetTable / 右 AssetSummaryPanel,顶 ActionsBar。
  */
 import {
-  App, Button, Checkbox, Grid, Layout, Modal, Popconfirm, Skeleton,
+  App, Button, Checkbox, Grid, Layout, Modal, Popconfirm, Select, Skeleton,
   Space, Table, Tooltip,
 } from 'antd';
 import {
   Download, FileText, Folder as FolderIcon, FolderPlus, Key,
-  Link2, Lock, RotateCw, Trash2, Upload, Users as UsersIcon,
+  Link2, Lock, RotateCw, Tags, Trash2, Upload, Users as UsersIcon,
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import {
   useAssets, useDeleteAsset, useDownloadLink,
-  useFolder, useFolders, useMe, useProject,
+  useFolder, useFolders, useMe, useProject, useUpdateAssetMeta,
 } from '../api/hooks';
 import { AppBreadcrumb } from '../components/AppBreadcrumb';
 import { FolderTree } from '../components/FolderTree';
 import { AssetSummaryPanel } from '../components/AssetSummaryPanel';
+import { AssetTagEditor } from '../components/AssetTagEditor';
 import { AssetThumbnail } from '../components/AssetThumbnail';
 import { ProjectMembersDrawer } from '../components/ProjectMembersDrawer';
 import { RequestAccessModal } from '../components/RequestAccessModal';
@@ -76,6 +77,8 @@ export default function ProjectDetailPage() {
   const [applySensitive, setApplySensitive] = useState(false);
   const [newFolderMode, setNewFolderMode] = useState<'root' | 'child' | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
+  // #151: 批量打标 — 选中多个文件时统一加标签
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
   // #129: folder admin 才显"申请链接"按钮 — folder 级精细化授权入口
   const [linkOpen, setLinkOpen] = useState(false);
 
@@ -197,6 +200,12 @@ export default function ProjectDetailPage() {
         </span>
       ),
       sorter: (a: Asset, b: Asset) => a.size_bytes - b.size_bytes,
+    },
+    {
+      // #151: 行内打标 — 点击 chips 展开编辑;命中即盲搜可达
+      title: '标签', dataIndex: 'user_labels', width: 220,
+      render: (_: unknown, a: Asset) => <AssetTagEditor asset={a} />,
+      responsive: ['lg' as const],
     },
     {
       title: '创建', dataIndex: 'created_at', width: 160,
@@ -340,6 +349,11 @@ export default function ProjectDetailPage() {
             <Button type="primary" size="small"
                     icon={<Upload size={13} strokeWidth={2} />}
                     onClick={() => activeFolderId && upload.open(activeFolderId)}>上传</Button>
+            {/* #151: 批量打标 — 命中标签后可盲搜 */}
+            <Button size="small" icon={<Tags size={13} strokeWidth={2} />}
+                    disabled={!hasSelection} onClick={() => setBulkTagOpen(true)}>
+              打标{hasSelection ? ` ${selectedIds.length}` : ''}
+            </Button>
             <Button size="small" icon={<RotateCw size={13} strokeWidth={2} />}
                     onClick={() => refetch()}>刷新</Button>
             <Button size="small" icon={<Download size={13} strokeWidth={2} />}
@@ -463,7 +477,68 @@ export default function ProjectDetailPage() {
           targetName={folder.name}
         />
       )}
+
+      {/* #151: 批量打标 modal */}
+      <BulkTagModal
+        open={bulkTagOpen}
+        onClose={() => setBulkTagOpen(false)}
+        assets={selectedAssets}
+      />
     </Layout>
+  );
+}
+
+// ─── 批量打标(#151)─────────────────────────────────────────────────────────
+function BulkTagModal({ open, onClose, assets }: {
+  open: boolean; onClose: () => void; assets: Asset[];
+}) {
+  const { message } = App.useApp();
+  const meta = useUpdateAssetMeta();
+  // Modal destroyOnClose → 每次打开重新挂载,labels 天然归零
+  const [labels, setLabels] = useState<string[]>([]);
+
+  const apply = async () => {
+    const next = [...new Set(labels.map(s => s.trim()).filter(Boolean))];
+    if (next.length === 0) { message.warning('先输入至少一个标签'); return; }
+    let ok = 0, fail = 0;
+    for (const a of assets) {
+      // 合并:新标签 + 已有标签(不覆盖已打的)
+      try {
+        await meta.mutateAsync({
+          asset_id: a.id,
+          user_labels: [...new Set([...(a.user_labels ?? []), ...next])],
+        });
+        ok++;
+      } catch (e) { fail++; message.error(`${a.filename}: ${errorMessage(e)}`); }
+    }
+    if (ok > 0) message.success(`已为 ${ok} 个文件打标${fail > 0 ? ` · 失败 ${fail}` : ''}`);
+    onClose();
+  };
+
+  return (
+    <Modal
+      title={`批量打标 — ${assets.length} 个文件`}
+      open={open}
+      onCancel={onClose}
+      okText="打标"
+      okButtonProps={{ disabled: labels.length === 0, loading: meta.isPending }}
+      onOk={apply}
+      destroyOnClose
+    >
+      <div style={{ fontSize: 12.5, color: 'var(--ms-ink-muted)', marginBottom: 10 }}>
+        给选中的文件统一加标签(与已有标签合并)。输入后回车确认,支持多个。
+      </div>
+      <Select
+        mode="tags"
+        value={labels}
+        onChange={setLabels}
+        placeholder="例:棚拍 / 现场 / VIP / 修图…"
+        style={{ width: '100%' }}
+        tokenSeparators={[',', '，']}
+        open
+        autoFocus
+      />
+    </Modal>
   );
 }
 

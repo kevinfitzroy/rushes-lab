@@ -21,6 +21,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -142,6 +143,8 @@ class Asset(Base, TimestampMixin):
     user_labels: Mapped[list[str]] = mapped_column(
         ARRAY(String(64)), default=list, server_default="{}", nullable=False
     )
+    # 素材备注(盲搜匹配范围:文件名 + user_labels + 备注,#151;trgm 索引见 __table_args__)
+    notes: Mapped[str | None] = mapped_column(Text)
 
     uploader_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
@@ -158,6 +161,8 @@ class Asset(Base, TimestampMixin):
         Index("ix_asset_user_labels", "user_labels", postgresql_using="gin"),
         Index("ix_asset_filename_trgm", "filename", postgresql_using="gin",
               postgresql_ops={"filename": "gin_trgm_ops"}),
+        Index("ix_asset_notes_trgm", "notes", postgresql_using="gin",
+              postgresql_ops={"notes": "gin_trgm_ops"}),
     )
 
 

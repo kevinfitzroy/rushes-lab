@@ -59,6 +59,27 @@ class AssetOut(ORMModel):
     created_at: datetime
     # B-4:worker 生成的缩略图 / 标签等 metadata;前端按需读
     tags: dict = {}
+    # 标签 + 盲搜(#151):用户自由标签 + 备注
+    user_labels: list[str] = []
+    notes: str | None = None
+
+
+class SearchResultOut(AssetOut):
+    """跨 folder 盲搜结果 — AssetOut + 归属信息(前端导航 / 展示用)。"""
+
+    folder_name: str
+    project_id: uuid.UUID
+    project_name: str
+
+
+class AssetMetaUpdateIn(BaseModel):
+    """打标 / 改标(#151)。
+
+    user_labels / notes 缺省 = 不改该项;显式传空数组 / 空串 = 清空。
+    """
+
+    user_labels: list[str] | None = None
+    notes: str | None = None
 
 
 # ─── upload presigned ─────────────────────────────────────────────────────────

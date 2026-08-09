@@ -91,6 +91,9 @@ export interface Asset {
   size_bytes: number;
   content_type: string | null;
   created_at: string;
+  // #151: 手工标签 + 备注(盲搜素材)
+  user_labels: string[];
+  notes: string | null;
   tags?: {
     thumbnail_key?: string;
     thumbnail_width?: number;
@@ -98,6 +101,13 @@ export interface Asset {
     thumbnail_failed?: string;
     [k: string]: unknown;
   };
+}
+
+/** #151 盲搜结果 = Asset + 所在 folder / project 上下文(跨 folder 展示用)。*/
+export interface SearchResult extends Asset {
+  folder_name: string;
+  project_id: string;
+  project_name: string;
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'revoked' | 'expired';

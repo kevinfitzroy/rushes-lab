@@ -2,20 +2,21 @@
  * 右栏 — 选中文件 summary + 快速操作。
  * 0:Empty 自绘 / 1:meta + 快速操作 / N:类型分布 + 批量统计。
  */
-import { App, Tag } from 'antd';
+import { App, Button, Input, Tag } from 'antd';
 import {
   Copy, Download as DownloadIcon, Eye, FileText, Files,
-  Hash, Share2,
+  Hash, Save, Share2,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { Asset, Folder, Me } from '../api/types';
-import { useDownloadLink } from '../api/hooks';
+import { useDownloadLink, useUpdateAssetMeta } from '../api/hooks';
 import { useDownloads } from '../lib/download-store';
 import { errorMessage } from '../api/client';
 import { ShareModal } from './ShareModal';
 import { FolderInvitePanel } from './FolderInvitePanel';
 import { FolderGrantsPanel } from './FolderGrantsPanel';
 import { AssetPreviewModal, isPreviewable } from './AssetPreviewModal';
+import { AssetTagEditor } from './AssetTagEditor';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -160,6 +161,13 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
                        }} />
         </div>
 
+        {/* #151: 标签 + 备注 — 盲搜的入参,行内编辑 */}
+        <div style={{ padding: '14px 20px' }}>
+          <SectionLabel>标签 / 备注(可被盲搜命中)</SectionLabel>
+          <AssetTagEditor asset={a} stopPropagation={false} />
+          <NotesEditor asset={a} />
+        </div>
+
         {/* Meta list */}
         <div style={{ padding: '14px 20px' }}>
           <SectionLabel>详情</SectionLabel>
@@ -246,6 +254,63 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── 备注编辑器(#151)──────────────────────────────────────────────────────
+function NotesEditor({ asset }: { asset: Asset }) {
+  const { message } = App.useApp();
+  const meta = useUpdateAssetMeta();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(asset.notes ?? '');
+
+  const save = async () => {
+    setEditing(false);
+    const next = (draft ?? '').trim();
+    if (next === (asset.notes ?? '').trim()) return;
+    try {
+      await meta.mutateAsync({ asset_id: asset.id, notes: next });
+    } catch (e) {
+      message.error(errorMessage(e, '备注保存失败'));
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div
+        onClick={() => {
+          setDraft(asset.notes ?? '');
+          setEditing(true);
+        }}
+        title="编辑备注"
+        style={{
+          marginTop: 8,
+          padding: '8px 10px',
+          background: 'var(--ms-hairline-soft)',
+          borderRadius: 'var(--ms-radius-sm)',
+          fontSize: 12.5, color: asset.notes ? 'var(--ms-ink)' : 'var(--ms-ink-subtle)',
+          cursor: 'pointer',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        }}
+      >
+        {asset.notes?.trim() || '加个备注,搜索时也能命中…'}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+      <Input.TextArea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="例:2026 夏季 VIP 客户棚拍原片,已交付修图…"
+        autoSize={{ minRows: 2, maxRows: 6 }}
+        autoFocus
+        maxLength={2000}
+      />
+      <Button size="small" icon={<Save size={13} strokeWidth={1.8} />}
+              onClick={() => void save()}>保存</Button>
     </div>
   );
 }
