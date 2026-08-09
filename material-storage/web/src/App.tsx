@@ -28,6 +28,7 @@ const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdminGroupsPage = lazy(() => import('./pages/AdminGroupsPage'));
 const MyPermissionsPage = lazy(() => import('./pages/MyPermissionsPage'));
 const SearchPage = lazy(() => import('./pages/SearchPage'));
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: false } },
@@ -59,6 +60,7 @@ const RouterRoutes = () => (
       <Route path="/projects/:projectId/folders/:folderId" element={<ProjectDetailPage />} />
       <Route path="/folders/:folderId" element={<FolderDetailPage />} />
       <Route path="/approvals" element={<ApprovalsPage />} />
+      <Route path="/notifications" element={<NotificationsPage />} />
       <Route path="/my-permissions" element={<MyPermissionsPage />} />
       <Route path="/admin/audit" element={<AdminAuditPage />} />
       <Route path="/admin/users" element={<AdminUsersPage />} />

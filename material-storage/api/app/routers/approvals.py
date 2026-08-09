@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +38,10 @@ from app.services.approval_service import (
     ApprovalDecisionError,
     DecisionContext,
     decide,
+)
+from app.services.notifications import (
+    run_notify_approval_decided_bg,
+    run_notify_approval_pending_bg,
 )
 from app.services.audit import AuditService
 from app.services.permissions import PermissionsService
@@ -61,6 +65,7 @@ async def _enrich_out(db: AsyncSession, approval: ApprovalRequest) -> ApprovalOu
 @router.post("", response_model=ApprovalOut, status_code=201)
 async def create_approval(
     payload: ApprovalCreateIn,
+    background: BackgroundTasks,  # #153:应用内"待审"通知用(#162 下线 IM 后原任务移除,参数重新引入)
     via_link: str | None = Query(
         None, description="若来自 request-link 落地页,带 token 让 backend enforce "
                           "(target 必须匹配,receiver_user_id 限定时必须匹配当前 user)",
@@ -126,6 +131,13 @@ async def create_approval(
     )
     log.info("approval submitted id=%s applicant=%s target=%s:%s",
              approval.id, user_id, payload.target_type, payload.target_id)
+
+    # #153:应用内"待审"通知 — 自开 session 的 bg 入口(#162 已下线 IM 卡片)
+    background.add_task(
+        run_notify_approval_pending_bg,
+        approval_id=approval.id,
+        permissions=permissions,
+    )
     return await _enrich_out(db, approval)
 
 
@@ -170,6 +182,7 @@ async def get_approval(
 async def approve(
     approval_id: uuid.UUID,
     payload: ApprovalDecisionIn,
+    background: BackgroundTasks,  # #153:应用内"审批结果"通知用(#162 下线 IM 后原任务移除,参数重新引入)
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
@@ -192,6 +205,12 @@ async def approve(
         )
     except ApprovalDecisionError as e:
         raise HTTPException(e.status_code, e.message) from e
+
+    # #153:应用内"审批结果"通知 — 自开 session 的 bg 入口(#162 已下线 IM 卡片)
+    background.add_task(
+        run_notify_approval_decided_bg,
+        approval_id=approval.id,
+    )
     return await _enrich_out(db, approval)
 
 
@@ -199,6 +218,7 @@ async def approve(
 async def reject(
     approval_id: uuid.UUID,
     payload: ApprovalDecisionIn,
+    background: BackgroundTasks,  # #153:应用内"审批结果"通知用(#162 下线 IM 后原任务移除,参数重新引入)
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
@@ -221,4 +241,10 @@ async def reject(
         )
     except ApprovalDecisionError as e:
         raise HTTPException(e.status_code, e.message) from e
+
+    # #153:应用内"审批结果"通知 — 自开 session 的 bg 入口(#162 已下线 IM 卡片)
+    background.add_task(
+        run_notify_approval_decided_bg,
+        approval_id=approval.id,
+    )
     return await _enrich_out(db, approval)

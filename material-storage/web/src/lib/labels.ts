@@ -26,6 +26,7 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   invite_notified: '邀请通知已发送',
   local_login_failed: '本地账号登录失败',
   local_login_success: '本地账号登录',
+  notification_sent: '通知已发送',
   password_changed: '修改密码',
   project_created: '项目创建',
   project_member_added: '项目成员添加',
@@ -59,6 +60,14 @@ export const TARGET_TYPE_LABEL: Record<string, string> = {
   folder: '文件夹',
   sensitive_folder: '敏感目录',
   project: '项目',
+};
+
+// #153 应用内通知的 kind → 中文标签(通知列表页 chip 用;与后端 KIND_* 同步)
+export const NOTIFICATION_KIND_LABEL: Record<string, string> = {
+  approval_pending: '审批待办',
+  approval_decided: '审批结果',
+  folder_invite: '目录邀请',
+  share: '资源分享',
 };
 
 /** raw token 缺 mapping 时直接回退 token 本身,避免渲染 undefined */

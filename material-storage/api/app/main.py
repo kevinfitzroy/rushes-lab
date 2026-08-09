@@ -24,6 +24,7 @@ from app.routers import (
     folders,
     groups,
     maintenance,
+    notifications,
     projects,
     request_links,
     share,
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(directory.router, prefix="/api/v1/admin/directory", tags=["directory"])
     app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["maintenance"])
     app.include_router(request_links.router, prefix="/api/v1/request-links", tags=["request-links"])
+    app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["notifications"])
 
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:

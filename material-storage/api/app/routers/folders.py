@@ -17,7 +17,7 @@ import logging
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +34,7 @@ from app.deps import (
 )
 from app.models import FolderCreateIn, FolderInviteIn, FolderOut
 from app.services.audit import AuditService
+from app.services.notifications import run_notify_folder_invite_bg
 from app.services.permissions import PermissionsService
 
 log = logging.getLogger(__name__)
@@ -251,6 +252,7 @@ async def get_folder(
 async def invite(
     folder_id: uuid.UUID,
     payload: FolderInviteIn,
+    background: BackgroundTasks,  # #153:应用内邀请通知用(#162 下线 IM 后原任务移除,参数重新引入)
     db: AsyncSession = Depends(get_db),
     permissions: PermissionsService = Depends(get_permissions),
     audit: AuditService = Depends(get_audit),
@@ -317,6 +319,21 @@ async def invite(
         **ctx,
     )
 
+
+    # #153:应用内"目录邀请"通知 — 仅 user 类型推送(group/department 无对应用户);
+    # #162 已下线 IM 卡片,此为唯一通知渠道
+    if subject_kind == "user":
+        # #148:subject_id 已是 users.id UUID,直接主键查
+        from app.db.tables import User as _User
+        invitee = await db.get(_User, uuid.UUID(str(subject_id)))
+        if invitee is not None:
+            background.add_task(
+                run_notify_folder_invite_bg,
+                folder_id=folder_id,
+                invitee_user_id=invitee.id,
+                inviter_user_id=user_id,
+                duration_seconds=payload.duration_seconds,
+            )
 
 @router.get("/{folder_id}/members")
 async def list_members(

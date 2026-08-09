@@ -13,6 +13,7 @@ import type {
   DownloadLink,
   Folder,
   Me,
+  NotificationsList,
   Project,
   SearchResult,
   ShareCreateOut,
@@ -450,6 +451,40 @@ export const useRemoveGroupMember = () => {
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ['directory-group-members', vars.groupId] });
       qc.invalidateQueries({ queryKey: ['directory-groups'] });
+    },
+  });
+};
+
+// ─── notifications(#153)— 轮询即可,不做 WebSocket ─────────────────────────
+/** 未读计数 — Bell badge 轮询用(30s;页面聚焦时由 refetchOnWindowFocus 兜底)。 */
+export const useNotificationsUnread = () =>
+  useQuery({
+    queryKey: ['notifications', 'unread'],
+    queryFn: async () =>
+      (await http.get<NotificationsList>('/api/v1/notifications', { params: { limit: 1 } })).data
+        .unread_count,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
+/** 通知列表页(分页)。 */
+export const useNotifications = (limit: number, offset: number) =>
+  useQuery({
+    queryKey: ['notifications', 'list', limit, offset],
+    queryFn: async () =>
+      (await http.get<NotificationsList>('/api/v1/notifications', { params: { limit, offset } }))
+        .data,
+    retry: false,
+  });
+
+/** 标记已读(ids 或 all);成功后失效 unread + list。 */
+export const useMarkNotificationsRead = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { ids?: string[]; all?: boolean }) =>
+      (await http.post<{ updated: number }>('/api/v1/notifications/mark-read', body)).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] });
     },
   });
 };

@@ -101,6 +101,23 @@ class Settings(BaseSettings):
     default_organization_id: str | None = Field(
         None, description="UUID;留空则 user.organization_id 必须显式设置")
 
+    # ─── SMTP(可选邮件通知 — #153;host/from 留空 = 关闭,no-op 零报错)────────
+    # 企业邮箱就绪后填上即可启用:通知投递时同步发一封邮件到收件人 email
+    smtp_host: str | None = Field(
+        None, description="SMTP 服务器地址;留空 = 邮件通知关闭(仅应用内通知)")
+    smtp_port: int = Field(587, description="SMTP 端口;465 隐式 SSL 用 smtp_use_ssl=true")
+    smtp_username: str | None = Field(None, description="SMTP 登录用户名(可选)")
+    smtp_password: str | None = Field(None, description="SMTP 登录密码(可选;仅存 .env,不进 git)")
+    smtp_from_email: str | None = Field(
+        None, description="发件人地址;与 smtp_host 同时非空才启用邮件通知")
+    smtp_use_tls: bool = Field(True, description="587 端口 starttls(默认)")
+    smtp_use_ssl: bool = Field(False, description="465 端口隐式 SSL;与 smtp_use_tls 互斥")
+
+    @property
+    def smtp_enabled(self) -> bool:
+        """host + from_email 齐备才算启用;其余字段缺省不影响发送(匿名中继场景)。"""
+        return bool(self.smtp_host and self.smtp_from_email)
+
 
 # 单例(import 时 lazy 创建)
 _settings: Settings | None = None

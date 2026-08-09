@@ -157,3 +157,26 @@ export interface ShareResolve {
   download_expires_in?: number;
   folder?: { id: string; project_id: string; name: string; is_sensitive: boolean };
 }
+
+// ─── notifications(#153)─────────────────────────────────────────────────────
+export type NotificationKind =
+  | 'approval_pending'
+  | 'approval_decided'
+  | 'folder_invite'
+  | 'share';
+
+export interface NotificationItem {
+  id: string;
+  kind: NotificationKind | string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationsList {
+  items: NotificationItem[];
+  total: number;
+  unread_count: number;
+}

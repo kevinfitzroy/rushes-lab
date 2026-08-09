@@ -4,10 +4,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AutoComplete, Empty, Modal, Tag } from 'antd';
-import { FileText, Search as SearchIcon, Inbox } from 'lucide-react';
+import { AutoComplete, Badge, Empty, Modal, Tag } from 'antd';
+import { Bell, FileText, Search as SearchIcon, Inbox } from 'lucide-react';
 import { TaskCenterDrawer } from './TaskCenterDrawer';
-import { useMe, useProjects, useSearchAssets } from '../api/hooks';
+import { useMe, useNotificationsUnread, useProjects, useSearchAssets } from '../api/hooks';
 import { UserMenu } from './UserMenu';
 import type { Me } from '../api/types';
 
@@ -17,6 +17,8 @@ export function AppHeader({ me }: Props) {
   const navigate = useNavigate();
   const [cmdOpen, setCmdOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
+  // #153:通知未读 badge — 30s 轮询(useNotificationsUnread 内置 refetchInterval)
+  const { data: unread } = useNotificationsUnread();
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac/.test(navigator.platform),
     [],
@@ -106,7 +108,14 @@ export function AppHeader({ me }: Props) {
         <IconButton title="任务收件箱" onClick={() => setTaskOpen(true)}>
           <Inbox size={16} strokeWidth={1.8} />
         </IconButton>
-        {/* #121 修:Bell(通知)是占位无业务,直接移除 — 飞书 IM 卡片体系已承担系统级通知 */}
+        {/* #153 通知中心:Bell 真实化 — 未读 badge 轮询 + 跳通知列表页
+            (#121 曾移除占位 Bell;当时无业务,现在接上应用内通知中心) */}
+        <Badge count={unread ?? 0} size="small" offset={[-2, 2]}
+               color="#C2410C" overflowCount={99}>
+          <IconButton title="通知中心" onClick={() => navigate('/notifications')}>
+            <Bell size={16} strokeWidth={1.8} />
+          </IconButton>
+        </Badge>
 
         <UserMenu me={me} />
       </header>
