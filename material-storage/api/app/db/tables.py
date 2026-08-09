@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    literal_column,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -165,6 +166,14 @@ class Asset(Base, TimestampMixin):
               postgresql_ops={"filename": "gin_trgm_ops"}),
         Index("ix_asset_notes_trgm", "notes", postgresql_using="gin",
               postgresql_ops={"notes": "gin_trgm_ops"}),
+        # #151 review F8:盲搜 user_labels 模糊匹配走 array_to_string 表达式索引
+        # (对应 migration 0011;ORM Index 仅声明,schema 以 migration 为准)
+        Index(
+            "ix_asset_user_labels_str_trgm",
+            literal_column("array_to_string(user_labels, ' ')"),
+            postgresql_using="gin",
+            postgresql_ops={"array_to_string(user_labels, ' ')": "gin_trgm_ops"},
+        ),
     )
 
 

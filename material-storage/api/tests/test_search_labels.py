@@ -9,6 +9,10 @@
   - 硬验收:搜索结果按 can_view 过滤 —— sensitive 素材存在性零泄露(outsider 搜不到)
   - 打标 → 搜索 → 命中 e2e(user_labels / notes / filename 三路都验)
   - 打标权限:非 uploader 403;系统 admin 直通
+
+review fix(#157 review,F1/F8):user_labels 模糊分支改为
+`array_to_string(user_labels,' ') ILIKE`(不再 unnest → `lbl.unnest_1`
+列名 PG 不认导致 500);本文件 e2e 用例即该路径的回归测试。
 """
 from __future__ import annotations
 

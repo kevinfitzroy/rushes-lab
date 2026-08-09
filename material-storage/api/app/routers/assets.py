@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import ColumnElement, exists, func, literal, or_, select, true
+from sqlalchemy import ColumnElement, func, literal, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -262,8 +262,10 @@ async def search_assets(
 
     搜索实现:PG ILIKE + pg_trgm 起步(百万行量级够用):
     - filename / notes 走 GIN trgm 索引(模糊子串)。
-    - user_labels:精确元素 `q = ANY(...)`(GIN 可加速)+ 模糊 unnest ILIKE(逐行扫,
-      量级大时可换全文检索,决策记录见 ROADMAP"标签 + 盲搜")。
+    - user_labels:精确元素 `q = ANY(...)`;模糊匹配走
+      `array_to_string(user_labels, ' ') ILIKE` + GIN trgm 表达式索引
+      (migration 0011)—— 单表达式索引即可命中,取代原先 unnest EXISTS(不可索引,
+      且 SQLAlchemy 渲染出的列名 PG 不认,review F1/F8)。
     """
     q = q.strip()
     if not q:
@@ -283,13 +285,10 @@ async def search_assets(
             return []  # 无可达 folder → 结果必为空,不跑 SQL
         folder_filter = Asset.folder_id.in_(folder_ids)
 
-    # user_labels 精确元素匹配(q = ANY(array),GIN 可加速)
+    # user_labels 精确元素匹配(q = ANY(array))
     label_exact = Asset.user_labels.any(literal(q))
-    # user_labels 模糊匹配(unnest 逐元素 ILIKE)
-    lbl = func.unnest(Asset.user_labels).alias("lbl")
-    label_fuzzy = exists(
-        select(1).select_from(lbl).where(next(iter(lbl.c)).ilike(pattern, escape="\\"))
-    )
+    # user_labels 模糊匹配:整数组拼串后 ILIKE,命中 GIN trgm 表达式索引
+    label_fuzzy = func.array_to_string(Asset.user_labels, " ").ilike(pattern, escape="\\")
 
     stmt = (
         select(Asset, Folder.name, Project.id, Project.name)
