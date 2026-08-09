@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import ColumnElement, func, literal, or_, select, true
+from sqlalchemy import ColumnElement, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -262,10 +262,14 @@ async def search_assets(
 
     搜索实现:PG ILIKE + pg_trgm 起步(百万行量级够用):
     - filename / notes 走 GIN trgm 索引(模糊子串)。
-    - user_labels:精确元素 `q = ANY(...)`;模糊匹配走
-      `array_to_string(user_labels, ' ') ILIKE` + GIN trgm 表达式索引
-      (migration 0011)—— 单表达式索引即可命中,取代原先 unnest EXISTS(不可索引,
-      且 SQLAlchemy 渲染出的列名 PG 不认,review F1/F8)。
+    - user_labels:整数组拼串后 ILIKE,走 `ms_labels_text()` 的 GIN trgm 表达式索引
+      (migration 0011 建函数 + 索引)。取代原先 unnest EXISTS(不可索引,且
+      SQLAlchemy 渲染出的列名 PG 不认 → 每次 500,review F1/F8)。
+      ⚠️ 这里必须用 `func.ms_labels_text(...)` 而不是裸 `array_to_string(...)`:
+      后者是 STABLE 函数进不了索引表达式,两边表达式不一致索引也不会命中。
+      拼串匹配是精确元素匹配的超集(标签是拼串的子串),所以不再单独留
+      `q = ANY(user_labels)` 分支 —— 它既冗余又不走 GIN array_ops,留着只会
+      让 planner 对整个 OR 放弃索引。
     """
     q = q.strip()
     if not q:
@@ -285,10 +289,9 @@ async def search_assets(
             return []  # 无可达 folder → 结果必为空,不跑 SQL
         folder_filter = Asset.folder_id.in_(folder_ids)
 
-    # user_labels 精确元素匹配(q = ANY(array))
-    label_exact = Asset.user_labels.any(literal(q))
-    # user_labels 模糊匹配:整数组拼串后 ILIKE,命中 GIN trgm 表达式索引
-    label_fuzzy = func.array_to_string(Asset.user_labels, " ").ilike(pattern, escape="\\")
+    # user_labels 匹配:整数组拼串后 ILIKE,命中 ix_asset_user_labels_str_trgm
+    # (ms_labels_text 是 migration 0011 建的 IMMUTABLE 包装,见 docstring)
+    label_match = func.ms_labels_text(Asset.user_labels).ilike(pattern, escape="\\")
 
     stmt = (
         select(Asset, Folder.name, Project.id, Project.name)
@@ -300,8 +303,7 @@ async def search_assets(
             or_(
                 Asset.filename.ilike(pattern, escape="\\"),
                 Asset.notes.ilike(pattern, escape="\\"),
-                label_exact,
-                label_fuzzy,
+                label_match,
             ),
         )
         .order_by(Asset.created_at.desc())

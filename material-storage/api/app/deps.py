@@ -71,21 +71,30 @@ _FORCED_CHANGE_OK_ROUTES = frozenset({"me", "change_password", "logout"})
 
 
 # ─── current user(cookie session 优先 + dev header fallback)─────────────────
-async def _load_active_user(uid: uuid.UUID) -> CurrentUser:
-    """按 users.id 查库并校验 is_active(F5:禁用必须立即下线,不能等 JWT 7 天过期)。
+async def _load_active_user(uid: uuid.UUID) -> tuple[CurrentUser, bool]:
+    """按 users.id 查库,一次拿齐 F5(is_active)+ F15(强制改密)判定所需的列。
 
-    每次认证一次 PK 查询 + 一行判断(users 百人级,可忽略);dev 通道与 JWT 路径共用,
-    保证两边语义一致。被禁用的用户:所有需要登录的端点(含缩略图 URL / 改密 / 通知)
-    一律 401。
+    F5:禁用必须立即下线,不能等 JWT 7 天过期 —— 被禁用的用户在所有需要登录的
+    端点(含缩略图 URL / 改密 / 通知)一律 401。
+    返回 `(CurrentUser, forced_change)`;forced_change 口径与 /me 一致:
+    必须已设本地密码才算强制改密(存量飞书用户不误伤)。
+
+    每次认证**一次** PK 查询(users 百人级,可忽略)。注意别拆成两次开 session ——
+    缩略图这类高频端点会被每请求两次 round-trip 放大。dev 通道与 JWT 路径共用同一
+    实现,保证两边语义一致。
     """
     async with get_sessionmaker()() as db:
-        stmt = select(User.id, User.name, User.is_active).where(User.id == uid)
+        stmt = select(
+            User.id, User.name, User.is_active,
+            User.must_change_password, User.password_hash,
+        ).where(User.id == uid)
         row = (await db.execute(stmt)).first()
         if row is None:
             raise HTTPException(401, "用户不存在或已删除")
         if not row.is_active:
             raise HTTPException(401, "账号已停用,请联系管理员")
-        return CurrentUser(id=row.id, name=row.name)
+        forced_change = bool(row.must_change_password and row.password_hash is not None)
+        return CurrentUser(id=row.id, name=row.name), forced_change
 
 
 async def get_current_user(
@@ -112,18 +121,13 @@ async def get_current_user(
             raise HTTPException(401, "会话已过期或无效,请重新登录") from e
         # F5:is_active 校验放最前 —— 禁用账号任何端点一律 401(含改密/me),
         # 优先于 F15 的 403(禁用状态下的改密诉求无意义)
-        user = await _load_active_user(uid)
+        user, forced_change = await _load_active_user(uid)
         # F15:强制改密拦截(must_change_password=true 只放行改密/me/logout)
         route_name = getattr(request.scope.get("route"), "name", "")
-        if route_name not in _FORCED_CHANGE_OK_ROUTES:
-            async with get_sessionmaker()() as db:
-                db_user = await db.get(User, uid)
-                if db_user is None:
-                    raise HTTPException(401, "账号不存在或已被删除,请重新登录")
-                if db_user.must_change_password and db_user.password_hash is not None:
-                    raise HTTPException(
-                        403, "首次登录请先设置新密码:请先完成修改密码再继续操作"
-                    )
+        if forced_change and route_name not in _FORCED_CHANGE_OK_ROUTES:
+            raise HTTPException(
+                403, "首次登录请先设置新密码:请先完成修改密码再继续操作"
+            )
         return user
 
     if settings.env == "dev" and x_user_id:
@@ -131,8 +135,9 @@ async def get_current_user(
             uid = uuid.UUID(x_user_id)
         except ValueError as e:
             raise HTTPException(400, "X-User-Id 必须是 UUID 格式") from e
-        # dev fallback 反查 db(与 JWT 路径同一校验)
-        return await _load_active_user(uid)
+        # dev fallback 反查 db(与 JWT 路径同一校验;dev 不做强制改密拦截)
+        user, _ = await _load_active_user(uid)
+        return user
 
     raise HTTPException(401, "not authenticated — call /api/v1/auth/login")
 
