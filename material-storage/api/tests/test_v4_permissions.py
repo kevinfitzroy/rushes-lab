@@ -37,19 +37,13 @@ PROJECT_EVENT = "11111111-1111-1111-1111-111111111103"     # public
 
 # ─── 单元测试 ─────────────────────────────────────────────────────────────────
 class TestFmtSubject:
-    """fmt_subject:user / organization 不加 #member;group / department 加。"""
+    """fmt_subject:user 不加 #member;group 加(#154:department / organization 下线)。"""
 
     def test_user(self) -> None:
         assert fmt_subject("user", "ou_xxx") == "user:ou_xxx"
 
-    def test_organization(self) -> None:
-        assert fmt_subject("organization", "t1") == "organization:t1"
-
     def test_group(self) -> None:
         assert fmt_subject("group", "g1") == "group:g1#member"
-
-    def test_department(self) -> None:
-        assert fmt_subject("department", "d1") == "department:d1#member"
 
 
 # ─── HTTP 集成 fixture(session 级:asyncpg 不能跨 loop;同时减少 lifespan 反复) ─
