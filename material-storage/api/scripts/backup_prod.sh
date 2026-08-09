@@ -17,7 +17,10 @@
 #   MINIO_MIRROR_TARGET  mc mirror 目标(容器内路径;默认 /backup-mirror/ms-dev —
 #                        host 侧由 poc/minio compose 的 MINIO_BACKUP_DIR bind 挂载,
 #                        生产指外部盘/异地挂载点,如 /mnt/backup → 容器 /backup-mirror)
-#   MINIO_MIRROR_BUCKET  原片 bucket(默认 ms-dev;含历史缩略图一并备份)
+#   MINIO_MIRROR_BUCKET  原片 bucket(默认 ms-dev)
+#   ⚠️ ADR-0008 分层后缩略图在独立实例(poc-minio-thumbs)的独立 bucket(ms-thumbs),
+#      不在本备份路径内 —— 缩略图可从原片重生成,不算数据丢失,靠 backfill 重建
+#      (见 ops-manual §10.4 / §10.5;切 ms-thumbs 后用 backfill_thumbnails --force)
 set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-/root/material-storage-api}"
@@ -28,6 +31,7 @@ MINIO_MIRROR_BUCKET="${MINIO_MIRROR_BUCKET:-ms-dev}"
 
 MODE="${1:-pg}"
 [[ "$MODE" == "--all" ]] && MODE="all"
+[[ "$MODE" == "--mirror" ]] && MODE="mirror"
 if [[ "$MODE" != "pg" && "$MODE" != "mirror" && "$MODE" != "all" ]]; then
   echo "usage: $0 [--all|--mirror]  (默认只 pg_dump)" >&2
   exit 1
@@ -62,9 +66,12 @@ fi
 # ─── mc mirror(HDD 原片 → 本地异地,低频)──────────────────────────────────
 if [[ "$MODE" == "mirror" || "$MODE" == "all" ]]; then
   echo "── mc mirror: $MINIO_MIRROR_BUCKET → $MINIO_MIRROR_TARGET(容器内路径)"
-  docker exec poc-pigsty-minio mc alias set backup-src http://127.0.0.1:9000 \
-    "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
-  docker exec poc-pigsty-minio mc mirror --overwrite \
+  # 凭据走 env 注入(MC_HOST_<alias>),不进进程参数(host 上 ps 不可见)
+  MC_URL=$(python3 -c 'import urllib.parse, sys
+k, s = sys.argv[1], sys.argv[2]
+print("http://%s:%s@127.0.0.1:9000" % (urllib.parse.quote(k, safe=""), urllib.parse.quote(s, safe="")))' \
+    "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY")
+  docker exec -e "MC_HOST_backup-src=$MC_URL" poc-pigsty-minio mc mirror --overwrite \
     "backup-src/${MINIO_MIRROR_BUCKET}" "$MINIO_MIRROR_TARGET"
   echo "✓ mc mirror done(host 侧挂载点见 MINIO_BACKUP_DIR compose 变量)"
 fi

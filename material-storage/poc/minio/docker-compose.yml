@@ -37,8 +37,10 @@ services:
       - poc-net
 
   # ─── 缩略图 MinIO(ADR-0008 P1:SSD 卷,专放缩略图 bucket)────────────────
-  # 生产 .env:MINIO_THUMBS_DATA_DIR=/ssd/minio-thumbs;root 凭据与主实例保持一致
-  # (api/.env 的 MINIO_ACCESS_KEY/MINIO_SECRET_KEY 同时存在于两个实例)
+  # 生产 .env:MINIO_THUMBS_DATA_DIR=/ssd/minio-thumbs;root 凭据必须与主实例一致
+  # (api/.env 的 MINIO_ACCESS_KEY/MINIO_SECRET_KEY 同时存在于两个实例;否则缩略图全 403)
+  # ⚠️ 默认值与主实例同一值(minioadmin-poc-2026)—— 谁按默认起 thumbs 实例又配了
+  #    MINIO_THUMBNAIL_ENDPOINT_*,凭据也必须一致;生产务必 .env 覆盖(rotate before prod)
   poc-minio-thumbs:
     image: pgsty/minio:latest
     container_name: poc-minio-thumbs
@@ -46,7 +48,7 @@ services:
     command: server /data
     environment:
       MINIO_ROOT_USER: ${MINIO_THUMBS_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_THUMBS_ROOT_PASSWORD:-minioadmin-thumbs-poc-2026}
+      MINIO_ROOT_PASSWORD: ${MINIO_THUMBS_ROOT_PASSWORD:-minioadmin-poc-2026}
       MINIO_SERVER_URL: ${MINIO_THUMBS_SERVER_URL:-https://rusheslab.taoxiplan.com}
     volumes:
       - ${MINIO_THUMBS_DATA_DIR:-./data-thumbs}:/data

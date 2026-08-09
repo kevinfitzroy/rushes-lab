@@ -102,9 +102,9 @@ IM 卡片已就绪 + approval_service.decide 抽好;只缺接飞书"工作台 �
 ### B-4 iter2 收尾 — 视频缩略图 backfill + 真测试(issue #101 / #104)
 
 vertical slice 已 ship(PR #102 + #103 deploy 修)。剩:
-- `scripts/backfill_video_thumbnails.py` 对历史已上传 video asset 补缩略图(类比 `backfill_thumbnails.py`)
+- ✅ 视频 backfill 已并入 `scripts/backfill_thumbnails.py`(review fix PR:扫描 image/* + video/*,`--force` 全量重生成)— #101 checklist 剩条已清
 - 真 mp4 e2e 测试 — issue #104 给 gatekeeper 的 7-case 矩阵(小/中/大/mov/短/h265/损坏);跑过 + 评论后 close #101 #104
-- 现在 demo-onboarding 没视频不阻塞,等 gatekeeper 上传几个 mp4 后再 backfill
+- 现在 demo-onboarding 没视频不阻塞,等 gatekeeper 上传几个 mp4 后再 `backfill_thumbnails --force`
 
 ### 标签 + 盲搜(原 B-4 iter3 升格为核心迭代 — 2026-08-09 方向校正)
 
@@ -206,7 +206,7 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 - **PR #127-#128 request-link 全功能**(独立表 request_link_tokens,不污染 share token)— admin 生成 `/r/{token}` 落地链接;接收者必须登录;backend 二次防护:`/approvals` 接 `?via_link=...` query enforce target 匹配 + action ⊂ allowed + receiver_open_id 限定
 - **PR #130 起 OpenFGA model folder.explicit_* 都有 non_expired_grant condition**(跟 project / asset 一致)— 永久 grant = 100 年 grant_duration;新 deploy 用 `scripts/openfga_write_model.sh` 一键 push yaml model 段;.env 不固定 `OPENFGA_MODEL_ID` 则自动 latest
 - **OpenFGA store 实际 tuple ≠ audit_events**(2026-05-18 verify):folder grant 在 audit 有 6 条 added / 4 removed 但 store 0 条 — 可能历史 dev_bootstrap 清过;**判存量影响一律看 store 不看 audit**
-- **PR #152 起缩略图走独立 bucket `ms-thumbs`(ADR-0008 P1)** — 存量部署(缩略图在 `ms-dev/thumbnails/`)过渡期 `.env` 设 `MINIO_THUMBNAIL_BUCKET=ms-dev` 保持旧图可见;切新 bucket 前先 `backfill_thumbnails`。缩略图 endpoint 留空 = 回落主 MinIO(降级开关,ops-manual §10.6)
+- **PR #152 起缩略图走独立 bucket `ms-thumbs`(ADR-0008 P1)** — 存量部署(缩略图在 `ms-dev/thumbnails/`)过渡期 `.env` 设 `MINIO_THUMBNAIL_BUCKET=ms-dev` 保持旧图可见;切新 bucket 前跑 **`backfill_thumbnails --force`**(必须 `--force`:存量已有 thumbnail_key,普通 backfill 会全 skip 成 no-op;review fix PR)。缩略图 endpoint 留空 = 回落主 MinIO(降级开关,ops-manual §10.6)
 - **PR #152 起 deploy_server2.sh INIT_ENV heredoc 飞书凭据是占位符** — 泄露过的旧 app secret 已清换;bootstrap 后必须人工把 server.md 真值 sed 进 .env + force-recreate(老规则,heredoc 不再有任何真值)
 - **PR #152 起备份脚本 `api/scripts/backup_prod.sh`** — 生产服务器上跑:pg_dump(高频,SSD)+ mc mirror(低频,HDD 原片 → 外部盘/异地);cron 与恢复演练见 ops-manual §10.5
 

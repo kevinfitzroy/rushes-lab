@@ -291,15 +291,19 @@ docker exec ms-api python -m scripts.sync_feishu_contacts
 
 **视频缩略图 50MB cap pilot**:size > 50MB → `status=skip_too_large` 不进 ffmpeg(ROADMAP §63 风险段)。fail-soft:ffmpeg 超时 30s / 抽帧失败 → `asset.tags.thumbnail_failed='...'`,asset 仍可用。
 
-### 4.2 backfill 老 image asset
+### 4.2 backfill 老 asset 缩略图(image + video)
 
 ```bash
+# 默认:只补缺缩略图的(image/video;video → generate_video_thumbnail)
 docker exec ms-api python -m scripts.backfill_thumbnails
+# --force:忽略已有 thumbnail_key 全部重生成(切 ms-thumbs 新 bucket 后存量图重生成,见 §10.4)
+docker exec ms-api python -m scripts.backfill_thumbnails --force
 ```
 
-行为:扫所有 `content_type=image/*` 且 `tags` 无 `thumbnail_key` 的 asset → enqueue。
+行为:扫所有 `content_type=image/*` 或 `video/*` 且 `tags` 无 `thumbnail_key` 的 asset → enqueue;
+`--force` 时无视已有 thumbnail_key 全部重新 enqueue。失败 / 缺 worker 时 log + 不阻塞。
 
-> 视频 backfill 脚本 `scripts/backfill_video_thumbnails.py` 仍 pending(issue #101 checklist 剩条);需要时按图片版本 clone。
+> 视频 backfill 与图片合并进同一脚本(issue #101 checklist 剩条已并入,见 review fix PR)。
 
 ### 4.3 worker 日志
 
@@ -655,8 +659,10 @@ du -sh /ssd/minio-thumbs /data/minio-originals
 ```
 
 > 存量升级(老部署的缩略图在 `ms-dev/thumbnails/`):过渡期在 `.env` 设
-> `MINIO_THUMBNAIL_BUCKET=ms-dev` 保持旧图可见;切换前跑
-> `docker compose exec ms-api python -m scripts.backfill_thumbnails` 重新生成到新 bucket。
+> `MINIO_THUMBNAIL_BUCKET=ms-dev` 保持旧图可见;正式切 `ms-thumbs` 前必须跑
+> `docker compose exec ms-api python -m scripts.backfill_thumbnails --force` 重新生成到新 bucket
+> (**必须 `--force`** —— 存量 asset 已有 `thumbnail_key`,普通 backfill 会全部 skip 成 no-op;
+> `--force` 同时覆盖 image 与 video 缩略图)。
 
 ### 10.5 备份(脚本 + cron)
 
@@ -665,6 +671,9 @@ du -sh /ssd/minio-thumbs /data/minio-originals
   保留 7 天自动清理。
 - **mc mirror(HDD 原片,低频,建议每周)**:`mc mirror local/ms-dev → 容器内 /backup-mirror/ms-dev`
   (= host 外部盘/异地挂载点 `MINIO_BACKUP_DIR`,见 §10.1)。
+- **⚠️ 缩略图(ms-thumbs bucket)不在备份路径内**(ADR-0008 分层后它在独立实例/独立 bucket):
+  缩略图可从原片重生成,不算数据丢失 —— 丢了/坏了靠 §10.4 的 `backfill_thumbnails --force` 重建,
+  不要为它加 mirror。凭据经 `MC_HOST_*` env 注入(脚本内),host 上 ps 不可见。
 
 cron 示例(root):
 ```cron
