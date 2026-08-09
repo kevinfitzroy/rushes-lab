@@ -129,15 +129,6 @@ MINIO_THUMBNAIL_BUCKET=ms-dev
 OPENFGA_API_URL=http://poc-openfga:8080
 OPENFGA_STORE_ID=__WILL_FILL__
 
-# ⚠️ 占位符 — 真实飞书凭据只维护在本地 server.md,严禁进 git history。
-# 老 PoC app(cli_aa8c58fae5391be7)的 secret/token 曾泄露于旧 heredoc,已清换占位符;
-# 该 app 已不用于线上(线上是 cli_aa8dbee01fb99bb3),请在飞书后台注销/轮换它。
-# bootstrap 后必须人工把 server.md 里"新的 feishu app"凭据 sed 进 .env + force-recreate。
-FEISHU_APP_ID=cli_REPLACE_WITH_REAL_APP_ID
-FEISHU_APP_SECRET=REPLACE_WITH_REAL_SECRET_FROM_SERVER_MD
-FEISHU_REDIRECT_URI=https://rusheslab.taoxiplan.com/api/v1/auth/callback
-FEISHU_VERIFICATION_TOKEN=REPLACE_WITH_REAL_TOKEN_FROM_SERVER_MD
-
 WEB_APP_BASE_URL=https://rusheslab.taoxiplan.com/ms-static/web/
 DEFAULT_ORGANIZATION_ID=00000000-0000-0000-0000-0000000000a1
 
@@ -150,7 +141,7 @@ else
   if ssh_run "test -f $REMOTE_DIR/.env"; then
     ok "已存在 server2 .env,保留不动(如需重置:INIT_ENV=1)"
   else
-    echo "❌ server2 $REMOTE_DIR/.env 不存在;首次部署请用 INIT_ENV=1 跑一次,然后人工核对飞书凭据等再正式 deploy"
+    echo "❌ server2 $REMOTE_DIR/.env 不存在;首次部署请用 INIT_ENV=1 跑一次,然后人工核对凭据等再正式 deploy"
     exit 1
   fi
 fi

@@ -13,7 +13,7 @@
 - Redis 7(arq queue + cache)
 - MinIO via boto3 / aioboto3
 - OpenFGA(ReBAC 权限)via openfga-sdk
-- 飞书 SDK lark-oapi + OIDC
+- 本地账号密码登录 + 可选 OIDC provider(#154:飞书下线,ADR-0007)
 - 包管理 uv;lint ruff;type mypy;test pytest async
 
 ## 项目结构
@@ -23,23 +23,20 @@ api/
 ├── app/
 │   ├── main.py             FastAPI app + lifespan + router wiring + StaticFiles for /static/web
 │   ├── settings.py         Pydantic Settings(env-driven)
-│   ├── deps.py             DI:db / openfga / feishu / s3 / get_current_user / get_is_system_admin
+│   ├── deps.py             DI:db / openfga / s3 / get_current_user / get_is_system_admin
 │   ├── routers/            REST endpoints(按业务域分包)
-│   │   ├── auth.py           飞书 OIDC login / callback / session
+│   │   ├── auth.py           本地登录 + 可选 OIDC provider login / callback / session
 │   │   ├── projects.py       project CRUD + 成员管理
 │   │   ├── folders.py        folder 树 / sensitive 申请
 │   │   ├── assets.py         asset 上传(presigned)/ 下载 / 列表
 │   │   ├── approvals.py      sensitive folder 审批
 │   │   ├── share.py          分享链接生成 / 落地
-│   │   ├── webhooks.py       MinIO 事件 / 飞书事件
-│   │   ├── admin.py          系统 admin 管理
-│   │   └── contacts.py       飞书通讯录同步入口
+│   │   ├── admin.py          系统 admin 管理 + audit 查询
+│   │   └── users.py          本地用户 / 组管理(#150)
 │   ├── services/           业务逻辑
 │   │   ├── permissions.py    openfga-sdk wrapper(grant / check / list_objects / is_org_admin)
 │   │   ├── presign.py        boto3 presigned URL
 │   │   ├── audit.py          audit-schema 落库
-│   │   ├── feishu.py         飞书 OpenAPI client
-│   │   ├── contact_sync.py   通讯录 → DB + OpenFGA tuples
 │   │   └── ...
 │   ├── db/
 │   │   ├── tables.py         SQLAlchemy 2.x models
@@ -49,7 +46,7 @@ api/
 │   └── static/web/         前端 build 产物(StaticFiles mount,/static/web → ./app/static/web)
 ├── scripts/
 │   ├── deploy_server2.sh     rsync + ssh 部署到 server2
-│   ├── seed_admin_projects.py 通讯录批量建项目(每人 1 个 admin 项目)
+│   ├── seed_admin_projects.py 批量建项目(每人 1 个 admin 项目)
 │   ├── grant_org_admin.py    系统 admin 增删改查
 │   └── ...
 ├── tests/
@@ -66,11 +63,11 @@ api/
 ### Prereq
 - 起 dep 服务:`../poc/minio/docker-compose up -d`(MinIO + OpenFGA + nginx)
 - 安装 [uv](https://github.com/astral-sh/uv)
-- 飞书 app 凭据(本地 dev 通常 mock,不需要真凭据;走 `X-User-Id` header dev 模式)
+- OIDC provider 凭据(可选,默认纯本地登录;本地 dev 通常走 `X-User-Id` header dev 模式)
 
 ### 启动
 ```bash
-cp .env.example .env       # 编辑填 OPENFGA_URL / DB_URL / S3_* / 飞书 secret 等
+cp .env.example .env       # 编辑填 OPENFGA_URL / DB_URL / S3_* / SESSION_JWT_SECRET 等
 uv sync                    # 装依赖
 uv run uvicorn app.main:app --reload    # 启动 :8000
 curl http://localhost:8000/api/v1/healthz
@@ -103,7 +100,7 @@ ssh root@8.156.34.238 'cd /opt/material-storage && docker compose restart ms-api
 ssh root@8.156.34.238 'cd /opt/material-storage && docker compose up -d --force-recreate ms-api'
 ```
 
-`ops-manual.md` 有完整 cheat sheet 包括 admin 管理、通讯录同步、审计排查等。
+`ops-manual.md` 有完整 cheat sheet 包括 admin 管理、审计排查等。
 
 ## 关键文档
 
@@ -113,5 +110,4 @@ ssh root@8.156.34.238 'cd /opt/material-storage && docker compose up -d --force-
 | 运维 / 部署 / 排查 | [`../../rushes-spec/material-storage/ops-manual.md`](../../rushes-spec/material-storage/ops-manual.md) |
 | 权限模型 v4(改 permission 代码前必读) | [`../../rushes-spec/material-storage/permissions-model-v4.md`](../../rushes-spec/material-storage/permissions-model-v4.md) |
 | OpenFGA model | [`../poc/openfga/store.fga.yaml`](../poc/openfga/store.fga.yaml) |
-| 飞书契约 | [`../../rushes-spec/feishu/contracts/`](../../rushes-spec/feishu/contracts) |
 | 测试反馈协作 | [`../../rushes-spec/material-storage/COLLABORATION.md`](../../rushes-spec/material-storage/COLLABORATION.md) |

@@ -1,7 +1,7 @@
 [project]
 name = "material-storage-api"
 version = "0.1.0"
-description = "Material Storage 业务后端 — FastAPI + OpenFGA + MinIO + 飞书集成(ADR-0006 Phase B-1)"
+description = "Material Storage 业务后端 — FastAPI + OpenFGA + MinIO(ADR-0006 Phase B-1;#154 飞书下线)"
 requires-python = ">=3.12"
 readme = "README.md"
 dependencies = [
@@ -27,11 +27,7 @@ dependencies = [
     # permissions
     "openfga-sdk>=0.7",
 
-    # 飞书
-    "lark-oapi>=1.4",       # larksuite/oapi-sdk-python 主包
-
-    # auth / OIDC
-    "authlib>=1.3",
+    # auth / OIDC(#154:OIDC 为 hand-rolled httpx + provider 配置,无 authlib)
     "python-jose[cryptography]>=3.3",
     # 本地账号密码登录(#149):argon2id 哈希(不用 passlib,停维护)
     "argon2-cffi>=23.1",
