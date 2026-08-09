@@ -16,7 +16,9 @@ services:
       POSTGRES_USER: msuser
       POSTGRES_PASSWORD: mspass
     volumes:
-      - ms-db-data:/var/lib/postgresql/data
+      # ADR-0008 P0:PG 元数据落 SSD — 生产 .env 设 MS_PG_DATA_DIR=/ssd/pg(bind mount);
+      # 留空 = 本地 dev named volume 行为不变
+      - ${MS_PG_DATA_DIR:-ms-db-data}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U msuser"]
       interval: 5s
@@ -29,7 +31,8 @@ services:
     container_name: ms-redis
     restart: unless-stopped
     volumes:
-      - ms-redis-data:/data
+      # ADR-0008 P0:Redis 落 SSD — 生产 .env 设 MS_REDIS_DATA_DIR=/ssd/redis;留空 = dev named volume
+      - ${MS_REDIS_DATA_DIR:-ms-redis-data}:/data
     networks:
       - poc-net
 

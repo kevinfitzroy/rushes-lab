@@ -140,13 +140,12 @@ vertical slice 已 ship(PR #102 + #103 deploy 修)。剩:
 - 产品上"开一级 folder 来解决"已覆盖大部分需求;若实际用了发现痛再做
 - `PATCH /api/v1/folders/{id}` rename / move + DELETE 软删
 
-### dev_bootstrap v3→v4 stale(issue #69,P2)
+### ~~dev_bootstrap v3→v4 stale~~ — ✅ 已修(issue #69,PR #152)
 
-- `scripts/dev_bootstrap.py` 仍调 `assign_user_to_organization`(已重命名 `add_user_to_organization`)+ 写 v3 才有的 `editor` project 关系
-- 不挂线上业务,但 dev 数据 reset 后 alice org admin tuple 没建,deploy step 6 一直 ⚠(PR #95 把假 ✓ 修成真 ⚠ 后噪音可控)
-- e2e step 7 `S2 project not in list` 红色 ✗ 也是它 cascading
-- `seed_onboarding_project.py`(PR #97)已经做了 minimal alice upsert + project admin tuple,所以 demo-onboarding 不依赖 dev_bootstrap
-- 下次需要 reset 数据时一并修;顺手也查 `scripts/seed_demo_data.py` 同类腐烂
+- 根因:`assign_user_to_organization`(#148 改名 `add_user_to_organization`,签名也变)+ v3 `editor` project 关系(模型已移除)
+- **#152 修复**:改用 #148 签名(org admin tuple + `add_user_to_organization` + `bootstrap_project(organization_tenant_key, creator_user_id)` + bob 三轴 viewer/downloader/uploader);org `feishu_tenant_key` 对齐 `dev_tenant_001`(与 seed_demo_data 一致)
+- 顺手查过 `seed_demo_data.py` / `seed_onboarding_project.py` / `sync_feishu_contacts.py`:均为 #148 新签名,**无同类腐烂**
+- deploy step 6 从 ⚠ 转 ✓、e2e step 7 `S2 project not in list` 消失
 
 ### B bucket — 测试厚度(retro #91,P2)
 
@@ -207,6 +206,9 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 - **PR #127-#128 request-link 全功能**(独立表 request_link_tokens,不污染 share token)— admin 生成 `/r/{token}` 落地链接;接收者必须登录;backend 二次防护:`/approvals` 接 `?via_link=...` query enforce target 匹配 + action ⊂ allowed + receiver_open_id 限定
 - **PR #130 起 OpenFGA model folder.explicit_* 都有 non_expired_grant condition**(跟 project / asset 一致)— 永久 grant = 100 年 grant_duration;新 deploy 用 `scripts/openfga_write_model.sh` 一键 push yaml model 段;.env 不固定 `OPENFGA_MODEL_ID` 则自动 latest
 - **OpenFGA store 实际 tuple ≠ audit_events**(2026-05-18 verify):folder grant 在 audit 有 6 条 added / 4 removed 但 store 0 条 — 可能历史 dev_bootstrap 清过;**判存量影响一律看 store 不看 audit**
+- **PR #152 起缩略图走独立 bucket `ms-thumbs`(ADR-0008 P1)** — 存量部署(缩略图在 `ms-dev/thumbnails/`)过渡期 `.env` 设 `MINIO_THUMBNAIL_BUCKET=ms-dev` 保持旧图可见;切新 bucket 前先 `backfill_thumbnails`。缩略图 endpoint 留空 = 回落主 MinIO(降级开关,ops-manual §10.6)
+- **PR #152 起 deploy_server2.sh INIT_ENV heredoc 飞书凭据是占位符** — 泄露过的旧 app secret 已清换;bootstrap 后必须人工把 server.md 真值 sed 进 .env + force-recreate(老规则,heredoc 不再有任何真值)
+- **PR #152 起备份脚本 `api/scripts/backup_prod.sh`** — 生产服务器上跑:pg_dump(高频,SSD)+ mc mirror(低频,HDD 原片 → 外部盘/异地);cron 与恢复演练见 ops-manual §10.5
 
 ## 关键 server / 配置(本地 `server.md` 已记)
 

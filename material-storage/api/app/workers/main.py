@@ -34,6 +34,31 @@ _THUMBNAIL_MAX_PX = 1024
 _THUMBNAIL_QUALITY = 80
 
 
+def _thumb_s3_client(settings: Any) -> Any:
+    """缩略图上传用 S3 client(ADR-0008 P1:内部 endpoint 指 SSD 缩略图 MinIO;
+    留空回落主 MinIO = 降级模式)。worker 在 docker 内,走内部 endpoint。"""
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.minio_thumbnail_endpoint_internal or settings.minio_endpoint_internal,
+        aws_access_key_id=settings.minio_access_key,
+        aws_secret_access_key=settings.minio_secret_key,
+        config=Config(signature_version="s3v4", region_name="us-east-1"),
+    )
+
+
+def _ensure_thumbnail_bucket(s3: Any, settings: Any) -> None:
+    """确保缩略图 bucket 存在(新 MinIO 实例无 bucket;head/create 幂等)。"""
+    from botocore.exceptions import ClientError  # type: ignore[import-untyped]
+    try:
+        s3.head_bucket(Bucket=settings.minio_thumbnail_bucket)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("404", "NoSuchBucket"):
+            s3.create_bucket(Bucket=settings.minio_thumbnail_bucket)
+            log.info("thumbnail bucket %s created", settings.minio_thumbnail_bucket)
+        else:
+            raise
+
+
 async def generate_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
     """图片缩略图生成。
 
@@ -70,6 +95,10 @@ async def generate_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
         aws_secret_access_key=settings.minio_secret_key,
         config=Config(signature_version="s3v4", region_name="us-east-1"),
     )
+    # ADR-0008 P1:缩略图上传目标 = 缩略图 MinIO(SSD)+ 独立 bucket(回落 = 主实例)
+    thumb_s3 = _thumb_s3_client(settings)
+    _ensure_thumbnail_bucket(thumb_s3, settings)
+    thumb_bucket = settings.minio_thumbnail_bucket
 
     try:
         # 1) 拉原图(内存)
@@ -96,15 +125,15 @@ async def generate_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
         out.seek(0)
         thumbnail_size = out.getbuffer().nbytes
 
-        # 4) 上传
+        # 4) 上传(ADR-0008 P1:走缩略图 MinIO + 独立 bucket)
         thumbnail_key = f"thumbnails/{asset_id}.jpg"
-        s3.put_object(
-            Bucket=bucket, Key=thumbnail_key, Body=out,
+        thumb_s3.put_object(
+            Bucket=thumb_bucket, Key=thumbnail_key, Body=out,
             ContentType="image/jpeg",
             Metadata={"source_asset": asset_id, "max_px": str(_THUMBNAIL_MAX_PX)},
         )
-        log.info("thumbnail generated asset=%s key=%s size=%d w=%d h=%d",
-                 asset_id, thumbnail_key, thumbnail_size, img.width, img.height)
+        log.info("thumbnail generated asset=%s bucket=%s key=%s size=%d w=%d h=%d",
+                 asset_id, thumb_bucket, thumbnail_key, thumbnail_size, img.width, img.height)
     except Exception as e:
         log.exception("thumbnail fail asset=%s err=%s", asset_id, e)
         async with sm() as db:
@@ -207,6 +236,10 @@ async def generate_video_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
         aws_secret_access_key=settings.minio_secret_key,
         config=Config(signature_version="s3v4", region_name="us-east-1"),
     )
+    # ADR-0008 P1:缩略图上传目标 = 缩略图 MinIO(SSD)+ 独立 bucket(回落 = 主实例)
+    thumb_s3 = _thumb_s3_client(settings)
+    _ensure_thumbnail_bucket(thumb_s3, settings)
+    thumb_bucket = settings.minio_thumbnail_bucket
 
     tmpdir = pathlib.Path(tempfile.mkdtemp(prefix=f"vthumb-{asset_id}-"))
     in_path = tmpdir / "in.bin"
@@ -238,15 +271,16 @@ async def generate_video_thumbnail(ctx: dict, asset_id: str) -> dict[str, Any]:
 
         thumbnail_size = out_path.stat().st_size
 
-        # 3) 上传
+        # 3) 上传(ADR-0008 P1:走缩略图 MinIO + 独立 bucket)
         thumbnail_key = f"thumbnails/{asset_id}.jpg"
         with open(out_path, "rb") as f:
-            s3.put_object(
-                Bucket=bucket, Key=thumbnail_key, Body=f,
+            thumb_s3.put_object(
+                Bucket=thumb_bucket, Key=thumbnail_key, Body=f,
                 ContentType="image/jpeg",
                 Metadata={"source_asset": asset_id, "kind": "video_frame"},
             )
-        log.info("video thumbnail asset=%s key=%s size=%d", asset_id, thumbnail_key, thumbnail_size)
+        log.info("video thumbnail asset=%s bucket=%s key=%s size=%d",
+                 asset_id, thumb_bucket, thumbnail_key, thumbnail_size)
     except subprocess.TimeoutExpired:
         log.warning("ffmpeg timeout asset=%s", asset_id)
         async with sm() as db:

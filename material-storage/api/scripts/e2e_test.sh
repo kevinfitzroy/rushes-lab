@@ -68,7 +68,7 @@ echo "$(extract_json "$r")" | grep -q "$PROJECT" && ok "project found in list" |
 step "S3 bob (member) 列出 projects"
 r=$(as "$MEMBER" GET /api/v1/projects)
 assert_status "$r" 200 "bob list projects"
-echo "$(extract_json "$r")" | grep -q "$PROJECT" && ok "bob can see project (via editor relation)" || fail "bob can't see project"
+echo "$(extract_json "$r")" | grep -q "$PROJECT" && ok "bob can see project (via viewer/uploader relation)" || fail "bob can't see project"
 
 step "S4 bob 列出 folders — 应该只看到 normal,看不到 sensitive(未邀请)"
 r=$(as "$MEMBER" GET "/api/v1/folders?project_id=$PROJECT")

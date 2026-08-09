@@ -13,8 +13,8 @@
 # ⚠️ .env 处理(踩过坑,2026-05-17):
 #   默认 *不会* 覆盖 server2 已有的 .env(怕 clobber 手工调过的飞书 app 凭据等)
 #   首次 bootstrap 或确实想重置时:`INIT_ENV=1 bash scripts/deploy_server2.sh`
-#   heredoc 里的默认值是"老 PoC app 一份示例" — 真实生产凭据请在本机
-#   server.md 维护,或通过 env 注入(FEISHU_APP_ID/FEISHU_APP_SECRET 等)。
+#   heredoc 里飞书凭据全是占位符(#152 起 — 泄露过的旧 app 值已清换)— 真实凭据
+#   只在本机 server.md 维护,或通过 env 注入(FEISHU_APP_ID/FEISHU_APP_SECRET 等)。
 set -euo pipefail
 
 HOST="${HOST:-8.156.34.238}"
@@ -108,7 +108,7 @@ ok "代码已同步"
 
 step "2) .env 处理"
 if [[ "${INIT_ENV:-0}" == "1" ]]; then
-  echo "INIT_ENV=1 — 用脚本默认值覆盖 server2 上的 .env(老 PoC app,务必校对!)"
+  echo "INIT_ENV=1 — 用脚本默认值覆盖 server2 上的 .env(placeholder 值,务必人工校对!)"
   ssh_run "cat > $REMOTE_DIR/.env" <<'EOF'
 ENV=dev
 LOG_LEVEL=INFO
@@ -122,17 +122,24 @@ MINIO_ENDPOINT_PUBLIC=https://rusheslab.taoxiplan.com
 MINIO_ACCESS_KEY=alice
 MINIO_SECRET_KEY=alicesecret-poc-2026-32chars-pad
 MINIO_DEFAULT_BUCKET=ms-dev
+# 缩略图暂留原片 bucket:server2 存量缩略图在 ms-dev/thumbnails/;
+# 切独立 ms-thumbs 前先跑 backfill(见 ops-manual「内网生产部署」)
+MINIO_THUMBNAIL_BUCKET=ms-dev
 
 OPENFGA_API_URL=http://poc-openfga:8080
 OPENFGA_STORE_ID=__WILL_FILL__
 
-# ⚠️ 仅老 PoC app 示例 — 生产请用 server.md 里"新的 feishu app"覆盖
-FEISHU_APP_ID=cli_aa8c58fae5391be7
-FEISHU_APP_SECRET=2T1QWnYdm2ayq0t4ByANNcIXEUFHwFMw
+# ⚠️ 占位符 — 真实飞书凭据只维护在本地 server.md,严禁进 git history。
+# 老 PoC app(cli_aa8c58fae5391be7)的 secret/token 曾泄露于旧 heredoc,已清换占位符;
+# 该 app 已不用于线上(线上是 cli_aa8dbee01fb99bb3),请在飞书后台注销/轮换它。
+# bootstrap 后必须人工把 server.md 里"新的 feishu app"凭据 sed 进 .env + force-recreate。
+FEISHU_APP_ID=cli_REPLACE_WITH_REAL_APP_ID
+FEISHU_APP_SECRET=REPLACE_WITH_REAL_SECRET_FROM_SERVER_MD
 FEISHU_REDIRECT_URI=https://rusheslab.taoxiplan.com/api/v1/auth/callback
-FEISHU_VERIFICATION_TOKEN=03HkZIjvHJyRmaV922Rkac0wJ7zedQuE
+FEISHU_VERIFICATION_TOKEN=REPLACE_WITH_REAL_TOKEN_FROM_SERVER_MD
 
 WEB_APP_BASE_URL=https://rusheslab.taoxiplan.com/ms-static/web/
+DEFAULT_ORGANIZATION_ID=00000000-0000-0000-0000-0000000000a1
 
 SESSION_JWT_SECRET=dev-secret-do-not-use-in-prod-replace-with-openssl-rand-hex-32
 SESSION_COOKIE_SECURE=false

@@ -4,6 +4,10 @@
   - s3_internal:容器内访问 MinIO,admin API(create_multipart / complete / abort / list)
   - s3_signer:签 presigned URL 用浏览器视角 host(MINIO_ENDPOINT_PUBLIC)
 
+缩略图分层(ADR-0008 P1):
+  - s3_thumb_signer:签缩略图 presigned URL,host = MINIO_THUMBNAIL_ENDPOINT_PUBLIC
+    (留空回落 MINIO_ENDPOINT_PUBLIC);bucket = MINIO_THUMBNAIL_BUCKET(SSD)
+
 封装:
   - sign_get_url / sign_put_url
   - 5-endpoint multipart(uppy)
@@ -40,6 +44,14 @@ class PresignService:
             aws_secret_access_key=settings.minio_secret_key,
             config=Config(signature_version="s3v4", region_name="us-east-1"),
         )
+        # ADR-0008 P1:缩略图走独立 MinIO(SSD)。endpoint 留空 → 回落主 MinIO(降级)
+        self._s3_thumb_signer = boto3.client(
+            "s3",
+            endpoint_url=settings.minio_thumbnail_endpoint_public or settings.minio_endpoint_public,
+            aws_access_key_id=settings.minio_access_key,
+            aws_secret_access_key=settings.minio_secret_key,
+            config=Config(signature_version="s3v4", region_name="us-east-1"),
+        )
         self._sts = boto3.client(
             "sts",
             endpoint_url=settings.minio_endpoint_internal,
@@ -60,6 +72,22 @@ class PresignService:
         return self._s3_signer.generate_presigned_url(
             "put_object",
             Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_seconds,
+        )
+
+    def sign_thumbnail_url(self, key: str, expires_seconds: int) -> str:
+        """缩略图 presigned URL(ADR-0008 P1)。
+
+        走缩略图 MinIO(SSD)的公开 endpoint + 独立 bucket;不走 OpenFGA enforce
+        (既有决策:1024px 模糊化)。host 绑定:P-10 坑 — endpoint 必须等于
+        浏览器实际访问缩略图的 host(nginx 按 /ms-thumbs/ 路由)。
+        """
+        return self._s3_thumb_signer.generate_presigned_url(  # type: ignore[no-any-return]
+            "get_object",
+            Params={
+                "Bucket": self._settings.minio_thumbnail_bucket,
+                "Key": key,
+            },
             ExpiresIn=expires_seconds,
         )
 

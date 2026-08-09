@@ -24,6 +24,21 @@ class Settings(BaseSettings):
     minio_secret_key: str
     minio_default_bucket: str = "incoming"
 
+    # ─── 缩略图分层(ADR-0008 P1:SSD 第二个 MinIO 专放缩略图)───────────────
+    # 生产 LAN:内部端点指 poc-minio-thumbs(SSD 卷),公开端点与主 MinIO 同 host
+    # (nginx 按 bucket 名 /ms-thumbs/ 路由到缩略图实例);留空 = 回落主 MinIO
+    # (降级开关:配合 MINIO_THUMBNAIL_BUCKET 指回原片 bucket 即回滚,无需数据迁移)
+    minio_thumbnail_endpoint_internal: str | None = Field(
+        None, description="缩略图 MinIO 容器内 endpoint;None = 回落 minio_endpoint_internal(降级)"
+    )
+    minio_thumbnail_endpoint_public: str | None = Field(
+        None, description="浏览器访问缩略图的 endpoint;None = 回落 minio_endpoint_public;"
+                          "签名 host 必须与浏览器实际访问一致(P-10 类坑,见 poc/minio docker-compose 注释)"
+    )
+    minio_thumbnail_bucket: str = Field(
+        "ms-thumbs", description="缩略图 bucket(SSD);降级 = 指回原片 bucket(如 ms-dev)"
+    )
+
     # ─── OpenFGA ──────────────────────────────────────────────────────────────
     openfga_api_url: str = Field(..., description="e.g. http://poc-openfga:8080")
     openfga_store_id: str = Field(..., description="启动时通过 list stores + name=material-storage-poc 找;或固化")

@@ -310,7 +310,8 @@ async def get_thumbnail_url(
         raise HTTPException(404, "no thumbnail yet(可能还在生成 / 非图片)")
 
     ttl = 1800   # 30 min — 缩略图比原图 ttl 长(让浏览器缓存有效)
-    url = presign.sign_get_url(asset.minio_bucket, thumbnail_key, ttl)
+    # ADR-0008 P1:缩略图走独立 bucket + 缩略图 MinIO(SSD);endpoint/bucket 由 env 控制
+    url = presign.sign_thumbnail_url(thumbnail_key, ttl)
     return {"url": url, "expires_in": ttl}
 
 

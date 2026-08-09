@@ -14,9 +14,9 @@
 
 行为:
   - org / project / folders / users 用固定 UUID(idempotent re-runs OK)
-  - OpenFGA tuples:
+  - OpenFGA tuples(v4 三轴 + #148 UUID subject):
       alice → organization admin (→ project admin → 所有 folder admin)
-      bob   → project member (→ 普通 folder can_view/can_edit/can_download)
+      bob   → project viewer/downloader/uploader(→ 普通 folder 可看/可下/可传)
               bob NOT invited to sensitive folder(测试用)
   - MinIO bucket 创建(boto3 head_bucket → create_bucket)
 """
@@ -50,6 +50,10 @@ SENSITIVE_FOLDER_ID = uuid.UUID("00000000-0000-0000-0000-0000000000c2")
 
 BUCKET = "ms-dev"
 
+# OpenFGA organization subject 的 tenant_key(#148 起 org tuple 用它拼;
+# 与 seed_demo_data.py 对齐;get_default_organization 取 feishu_tenant_key or str(org_id))
+TENANT_KEY = "dev_tenant_001"
+
 
 async def main() -> None:
     settings = get_settings()
@@ -57,11 +61,14 @@ async def main() -> None:
 
     # ─── 1) DB upsert ─────────────────────────────────────────────────────
     async with sm() as session:
-        # organization
+        # organization(tenant_key 与 seed_demo_data 一致,OpenFGA org subject 用它)
         await session.execute(
             insert(Organization)
-            .values(id=ORG_ID, name="dev-clinic", feishu_tenant_key=None)
-            .on_conflict_do_nothing(index_elements=["id"])
+            .values(id=ORG_ID, name="dev-clinic", feishu_tenant_key=TENANT_KEY)
+            .on_conflict_do_update(
+                index_elements=["id"],
+                set_={"feishu_tenant_key": TENANT_KEY, "name": "dev-clinic"},
+            )
         )
         # users
         await session.execute(
@@ -131,46 +138,76 @@ async def main() -> None:
 
     log.info("DB rows inserted (or already exist)")
 
-    # ─── 2) OpenFGA tuples ────────────────────────────────────────────────
+    # ─── 2) OpenFGA tuples(#148 起 subject = user:<users.id UUID>)──────────
     permissions = await create_permissions_service(settings)
 
-    # alice → org admin
-    await permissions.assign_user_to_organization(
-        user_id=str(ADMIN_USER_ID), organization_id=str(ORG_ID), role="admin"
-    )
-
-    # project → organization
-    await permissions.bootstrap_project(
-        project_id=str(PROJECT_ID), organization_id=str(ORG_ID)
-    )
-
-    # bob → project member (直接 user grant,不走 group)
+    # alice → org admin(#148 起 org subject = organization:<tenant_key>)
     from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
-    await permissions._client.write(  # type: ignore[attr-defined]
-        ClientWriteRequest(
-            writes=[
-                ClientTuple(
-                    user=f"user:{MEMBER_USER_ID}",
-                    relation="editor",
-                    object=f"project:{PROJECT_ID}",
-                )
-            ]
+    # 每个 write 独立 try/except — 重复 bootstrap 时 tuple 已存在(OpenFGA write
+    # 非幂等,400 already exists),与 seed_onboarding_project.py 同款约定:log 后继续
+    try:
+        await permissions._client.write(
+            ClientWriteRequest(
+                writes=[
+                    ClientTuple(
+                        user=f"user:{ADMIN_USER_ID}",
+                        relation="admin",
+                        object=f"organization:{TENANT_KEY}",
+                    )
+                ]
+            )
         )
-    )
+    except Exception as e:
+        log.info("org admin tuple already exists: %s", e)
 
-    # folders bootstrap
-    await permissions.bootstrap_folder(
-        folder_id=str(NORMAL_FOLDER_ID),
-        parent_type="project",
-        parent_id=str(PROJECT_ID),
-        is_sensitive=False,
-    )
-    await permissions.bootstrap_folder(
-        folder_id=str(SENSITIVE_FOLDER_ID),
-        parent_type="project",
-        parent_id=str(PROJECT_ID),
-        is_sensitive=True,
-    )
+    try:
+        await permissions.add_user_to_organization(
+            organization_tenant_key=TENANT_KEY, user_id=str(ADMIN_USER_ID)
+        )
+    except Exception as e:
+        log.info("org member tuple already exists: %s", e)
+
+    # project → organization + alice project admin(#148 签名:
+    # organization_tenant_key + creator_user_id)
+    try:
+        await permissions.bootstrap_project(
+            project_id=str(PROJECT_ID),
+            organization_tenant_key=TENANT_KEY,
+            creator_user_id=str(ADMIN_USER_ID),
+        )
+    except Exception as e:
+        log.info("project bootstrap tuples already exists: %s", e)
+
+    # bob → project 三轴并列(viewer/downloader/uploader;v3 的 editor 关系
+    # 已从 model 移除,#69 stale 根因之一;S7 上传 / S9 下载分别要 uploader/downloader)
+    for role in ("viewer", "downloader", "uploader"):
+        try:
+            await permissions.add_project_subject(
+                project_id=str(PROJECT_ID),
+                subject=f"user:{MEMBER_USER_ID}",
+                role=role,
+            )
+        except Exception as e:
+            log.info("bob project %s tuple already exists: %s", role, e)
+
+    # folders bootstrap(#148 起:普通 folder 用 bootstrap_folder;sensitive 用
+    # bootstrap_sensitive_folder — 旧 is_sensitive 参数已移除,是 #69 深层 stale 之一)
+    try:
+        await permissions.bootstrap_folder(
+            folder_id=str(NORMAL_FOLDER_ID),
+            parent_type="project",
+            parent_id=str(PROJECT_ID),
+        )
+    except Exception as e:
+        log.info("normal folder parent tuple already exists: %s", e)
+
+    try:
+        await permissions.bootstrap_sensitive_folder(
+            folder_id=str(SENSITIVE_FOLDER_ID),
+            project_id=str(PROJECT_ID),
+        )
+    except Exception as e:
+        log.info("sensitive folder parent tuple already exists: %s", e)
     # NOTE: bob NOT invited to sensitive folder — 测试时 alice 用 /folders/{id}/invite 邀请
 
     await permissions.close()

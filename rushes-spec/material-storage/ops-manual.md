@@ -1,8 +1,8 @@
 # material-storage 运维手册
 
-> 适用范围:PoC server2 部署(8.156.34.238)+ 反代 server1。
+> 适用范围:PoC server2 部署(8.156.34.238)+ 反代 server1;生产内网单机部署见 §10。
 > 适用对象:系统管理员 / 维护工程师。
-> 最后更新:2026-05-17
+> 最后更新:2026-08-09(issue #152:新增 §10 内网生产部署 + 备份/恢复/secret 轮换)
 
 ---
 
@@ -564,3 +564,164 @@ DEFAULT_ORGANIZATION_ID=00000000-0000-0000-0000-0000000000a1
 4. **删错 user / 误撤销**
    - 飞书 user 撤销 tuple 是可逆的 — 重新建项目/邀请即恢复
    - DB `users.is_active=false` 是逻辑删,飞书重新发事件(任意操作)会重 upsert
+
+---
+
+## 10. 内网生产部署(2026-08-09 / issue #152 / ADR-0008)
+
+> 生产形态:局域网单机部署,**可完全离线运行**(egress 有无待定,不依赖公网服务)。
+> 依赖 repo 内文件:`api/.env.production.example`(env 模板)、`api/scripts/backup_prod.sh`(备份)、
+> 本手册 §10 各小节。
+
+### 10.1 拓扑与存储分层(P0:卷放置)
+
+```
+内网用户浏览器 → nginx(80,host 端口)→ 业务容器(docker 网络 poc-pigsty-minio_poc-net)
+                                        ├─ ms-api(8000)    ├─ ms-worker
+                                        ├─ ms-db(PG16)     ├─ ms-redis
+                                        ├─ poc-pigsty-minio(原片 + 缩略图历史)→ /data(HDD)
+                                        ├─ poc-minio-thumbs(缩略图)→ /ssd(SSD)
+                                        ├─ poc-openfga(+ 其 PG)→ /ssd
+                                        └─ poc-nginx(80 对外入口)
+```
+
+卷布局(ADR-0008 P0,compose 插值变量,写在各 compose 同目录 `.env`):
+
+| 数据 | 介质 | 变量(compose 插值) | 说明 |
+| --- | --- | --- | --- |
+| OS / docker root / 镜像 / 日志 | SSD `/ssd` | — | 系统盘本身就在 SSD |
+| PG 元数据(ms-db-data) | SSD | `MS_PG_DATA_DIR=/ssd/pg` | api/docker-compose.yml |
+| Redis | SSD | `MS_REDIS_DATA_DIR=/ssd/redis` | api/docker-compose.yml |
+| 缩略图(ms-thumbs bucket) | SSD | `MINIO_THUMBS_DATA_DIR=/ssd/minio-thumbs` | poc/minio/docker-compose.yml |
+| 原片(ms-dev bucket) | HDD | `MINIO_DATA_DIR=/data/minio-originals` | poc/minio/docker-compose.yml |
+| 备份镜像挂载点 | 外部盘/异地 | `MINIO_BACKUP_DIR=/mnt/backup` | poc/minio/docker-compose.yml,见 §10.4 |
+
+compose 默认值均保留本地 dev 行为(named volume / `./data`),**只设了上面的变量才会变 bind mount**。
+注意:两个 compose 各自读自己目录的 `.env` —— `api/.env` 和 `poc/minio/.env` 都要维护。
+
+### 10.2 内网访问方案(nginx / hosts)
+
+- 生产无域名/证书 → **全站 http**,`SESSION_COOKIE_SECURE=false`(见模板)。
+- 浏览器访问统一走**一个内网地址**(IP 或 hosts 名),例如 `http://192.168.1.10/ms-static/web/`。
+- **P-10 坑(关键)**:S3v4 签名 host 必须与浏览器实际访问 host 一致 ——
+  `MINIO_ENDPOINT_PUBLIC` / `MINIO_THUMBNAIL_ENDPOINT_PUBLIC` / `WEB_APP_BASE_URL`
+  全部填**同一个内网地址**(`http://<LAN-HOST>`,不带路径)。内外双入口单值配置不支持。
+- 用户机器的 hosts 建议统一加一行(免记 IP):
+  `192.168.1.10  ms.local` → 浏览器访问 `http://ms.local/ms-static/web/`;所有 URL 模板跟着填 `http://ms.local`。
+- nginx 路由(`poc/minio/nginx/default.conf`)已内置:
+  - `/api/v1/*`、`/ms-static/*` → ms-api
+  - `/ms-dev/*` → 原片 MinIO(HDD)
+  - `/ms-thumbs/*` → 缩略图 MinIO(SSD)
+- 安全组/防火墙只开 22 + 80 即可。
+
+### 10.3 env 清单与 bootstrap
+
+1. 全新机器 bootstrap 顺序:
+   ```bash
+   # 0) 准备磁盘
+   mkfs.ext4 /dev/<ssd> && mount /dev/<ssd> /ssd && mkdir -p /ssd/pg /ssd/redis /ssd/minio-thumbs
+   mkfs.ext4 /dev/<hdd> && mount /dev/<hdd> /data && mkdir -p /data/minio-originals
+   # 1) 部署代码(机器有 egress 时直接 git clone;无 egress 用 U 盘/内网 git 导入)
+   git clone git@kevinfitzroy.github.com:kevinfitzroy/rushes-lab.git   # 实际走 SSH alias
+   cd rushes-lab/material-storage
+   # 2) 配 env:api 与 poc/minio 各一份(模板见 api/.env.production.example)
+   cp api/.env.production.example api/.env && vim api/.env
+   cp api/.env.production.example poc/minio/.env   # 只保留 MINIO_* 那组插值变量
+   # 3) 起栈
+   cd poc/minio && docker compose up -d
+   cd ../api  && docker compose up -d
+   docker compose exec api alembic upgrade head
+   # 4) 数据初始化(视部署阶段):dev_bootstrap / seed_demo_data / 飞书通讯录同步(过渡期)
+   docker compose exec api python -m scripts.dev_bootstrap
+   # 5) 验证(§10.4)
+   ```
+2. 环境变量三处一致性自检(§10.2 P-10):
+   `MINIO_ENDPOINT_PUBLIC == MINIO_THUMBNAIL_ENDPOINT_PUBLIC == WEB_APP_BASE_URL 的 host`。
+3. MinIO root 凭据(两个实例)与 `MINIO_ACCESS_KEY / MINIO_SECRET_KEY` **必须一致**:
+   `MINIO_ROOT_USER == MINIO_THUMBS_ROOT_USER == MINIO_ACCESS_KEY`(secret 同理)。
+
+### 10.4 存储分层验证(P1 验收)
+
+```bash
+# 1. 上传一张图片,等 worker 生成缩略图(ms-worker 日志见 §4)
+docker compose -f /root/material-storage-api/docker-compose.yml logs --tail=20 ms-worker
+# 2. 验证缩略图落 SSD bucket(ms-thumbs),原片落 HDD bucket(ms-dev)
+docker exec poc-minio-thumbs mc find local --path thumbnails/ | head -3      # SSD 实例
+docker exec poc-pigsty-minio mc find local --path thumbnails/ | head -3      # 应为空或只剩历史
+docker exec poc-pigsty-minio mc find local --path ./ | head -5               # 原片在 HDD 实例
+# 3. 磁盘落点复核
+du -sh /ssd/minio-thumbs /data/minio-originals
+# 4. 前端 AssetThumbnail 正常出图(缩略图 URL 走 /ms-thumbs/ 路径)
+```
+
+> 存量升级(老部署的缩略图在 `ms-dev/thumbnails/`):过渡期在 `.env` 设
+> `MINIO_THUMBNAIL_BUCKET=ms-dev` 保持旧图可见;切换前跑
+> `docker compose exec ms-api python -m scripts.backfill_thumbnails` 重新生成到新 bucket。
+
+### 10.5 备份(脚本 + cron)
+
+`api/scripts/backup_prod.sh` 在**生产服务器**上跑(docker 访问):
+- **pg_dump(SSD 侧,高频,建议每日)**:PG 全量 `--no-owner` → gzip → `${COMPOSE_DIR}/backups/pg/`,
+  保留 7 天自动清理。
+- **mc mirror(HDD 原片,低频,建议每周)**:`mc mirror local/ms-dev → 容器内 /backup-mirror/ms-dev`
+  (= host 外部盘/异地挂载点 `MINIO_BACKUP_DIR`,见 §10.1)。
+
+cron 示例(root):
+```cron
+# 每日 03:00 pg_dump;每周日 03:30 原片 mirror
+0 3 * * *   cd /root/material-storage-api && bash scripts/backup_prod.sh        >> /var/log/ms-backup.log 2>&1
+30 3 * * 0  cd /root/material-storage-api && bash scripts/backup_prod.sh --mirror >> /var/log/ms-backup.log 2>&1
+```
+
+**恢复演练(建议每季度做一次,记录到本手册/issue)**:
+```bash
+# a) PG 恢复(空库演练)
+docker compose exec -T ms-db psql -U msuser -d postgres -c 'CREATE DATABASE material_storage_restore'
+gunzip -c backups/pg/material-storage-<TS>.sql.gz | \
+  docker compose exec -T ms-db psql -U msuser -d material_storage_restore
+#    验证行数:psql -c 'SELECT count(*) FROM assets' 与原库对比
+# b) 原片恢复(mc mirror 反向)
+docker exec poc-pigsty-minio mc alias set restore-src http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+docker exec poc-pigsty-minio mc mirror /backup-mirror/ms-dev restore-src/ms-dev
+```
+> 演练注意:先在独立 db 名演练;**不要覆盖生产库**;mc mirror 反向目标用临时 bucket 验证。
+
+### 10.6 降级开关(缩略图故障 / bucket 溢出)
+
+ADR-0008 决策:缩略图 MinIO 故障或 `ms-thumbs` 溢出时,**指回原片 bucket 即回滚,无需数据迁移**:
+
+```bash
+# api/.env 改成:
+MINIO_THUMBNAIL_BUCKET=ms-dev
+# MINIO_THUMBNAIL_ENDPOINT_INTERNAL=   ← 清掉(回落主实例)
+# MINIO_THUMBNAIL_ENDPOINT_PUBLIC=     ← 清掉(回落主实例)
+cd /root/material-storage-api && docker compose up -d --force-recreate ms-api ms-worker
+```
+> 注意:`docker restart` 不重读 env_file;改 .env 必须 `--force-recreate`。
+> 降级后新缩略图落 HDD 原片 bucket;恢复后重新 backfill 回 SSD 即可。
+
+### 10.7 secret 卫生与轮换
+
+**MinIO root 密码(rotate before prod)**:仓库 compose 默认值是 PoC/dev 专用,生产必须换。
+```bash
+# 1. 生成新值(SSD 机器上)
+NEW=$(openssl rand -hex 16)
+# 2. 同时改三处:api/.env(MINIO_ACCESS_KEY/MINIO_SECRET_KEY)、
+#    poc/minio/.env(MINIO_ROOT_USER/PASSWORD + MINIO_THUMBS_ROOT_USER/PASSWORD)
+# 3. force-recreate:两个 MinIO + ms-api + ms-worker
+cd poc/minio && docker compose up -d --force-recreate
+cd ../api    && docker compose up -d --force-recreate ms-api ms-worker
+# 4. 验证:s3 直连用新凭据 head bucket 成功
+```
+
+**飞书 app(过渡期仍用飞书登录)**:老 PoC app(`cli_aa8c58fae5391be7`)的 secret 曾
+**泄露在 git history**(旧 deploy heredoc,#152 已清换占位符)→ 到飞书后台**注销该 app**
+(线上用的是 `cli_aa8dbee01fb99bb3`,secret 只在本地 server.md,未泄露)。
+`#154 cutover` 后整个飞书应用直接注销,本节不再需要。
+
+### 10.8 监控(最低配)
+
+- SSD 水位:`df -h /ssd`—— 缩略图桶接近 2TB SSD 的 80% 时报警(ADR-0008)。
+- PG 备份产物大小/时间:`ls -lt backups/pg/ | head`,cron 日志 `/var/log/ms-backup.log`。
+- 健康检查:`curl http://127.0.0.1/api/v1/healthz`(经 poc-nginx)。
+
