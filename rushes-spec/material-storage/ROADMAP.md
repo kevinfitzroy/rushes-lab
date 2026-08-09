@@ -218,6 +218,8 @@ dogfood retro 发现 api test 极薄(3 file:schema/healthz/v4_perms),web 0 个 u
 
 ## 推荐顺序(2026-08-09 按方向校正重排)
 
+> **工程并行安排见 tracking issue #155**(2026-08-09 开):Wave 0 地基 #148(DB schema + subject 切换,单 agent 先行)→ Wave 1 四路并行 #149-#152 → Wave 2 收尾 #153/#154。下列为业务优先级,并行拆解以 #155 为准。
+
 1. **身份体系自建**(ADR-0007 已 accepted,可开工):P1 本地认证 → P2 管理后台 → P4 存量迁移+飞书下线 —— 生产局域网化的前置;保持最小可用,不再镀金权限
 2. **标签 + 盲搜 MVP**(手工标签 + 跨 folder 搜索 + 上传打标引导)—— 方向校正后的核心价值,让往期素材能被找到
 3. **生产部署清单**:内网 compose/env 改造(SESSION_COOKIE_SECURE / MINIO_ENDPOINT_PUBLIC 等)、**存储分层落地([ADR-0008](./decisions/0008-production-storage-layout-ssd.md):SSD=元数据+缩略图,HDD=原片)**、备份方案落地(无 egress 走本地异地 `mc mirror`)、泄露的飞书 app secret 轮换、#69 dev_bootstrap 修复
