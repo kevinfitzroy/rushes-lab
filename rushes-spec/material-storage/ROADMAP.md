@@ -9,6 +9,7 @@
 > - [`COLLABORATION.md`](./COLLABORATION.md) — tester / gatekeeper / dev 协作契约(2026-05-17 起)
 > - [`research/identity-source-alternatives.md`](./research/identity-source-alternatives.md) — 身份体系选型调研(v0.3)
 > - [`decisions/0007-drop-feishu-self-built-identity.md`](./decisions/0007-drop-feishu-self-built-identity.md) — 弃用飞书 ADR(accepted)
+> - [`handoff-2026-08-identity-implementation.md`](./handoff-2026-08-identity-implementation.md) — **新 agent 开工必读**(2026-08 实施阶段 handoff,配合 tracking issue #155)
 
 ## 2026-08-09 方向校正(产品优先级 + 部署形态 + 身份体系)
 
