@@ -200,8 +200,7 @@ function AddGrantModal({
       try {
         const body: Record<string, string> = { level };
         if (s.kind === 'user') body.user_id = s.id;   // users.id UUID(#148 起)
-        else if (s.kind === 'group') body.group_id = s.id;
-        else body.department_id = s.id;
+        else body.group_id = s.id;
         await http.post(`/api/v1/folders/${folder.id}/grants`, body);
         ok++;
       } catch (e) {
@@ -224,7 +223,7 @@ function AddGrantModal({
            okText="添加" confirmLoading={loading} destroyOnClose>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
         <div>
-          <FieldLabel>主体(用户 / 用户组 / 部门)</FieldLabel>
+          <FieldLabel>主体(用户 / 用户组;#154:部门轴下线)</FieldLabel>
           <SubjectPicker value={subjects} onChange={setSubjects} me={me} />
         </div>
         <div>

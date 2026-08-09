@@ -122,7 +122,6 @@ export const useInviteFolder = () => {
       folder_id: string;
       user_id?: string;      // users.id UUID(#148 起)
       group_id?: string;
-      department_id?: string;
       level: 'viewer' | 'downloader';
       duration_seconds?: number;
     }) => {
@@ -301,13 +300,11 @@ export const useRejectApproval = () => {
   });
 };
 
-// ─── share(iter3)──────────────────────────────────────────────────────────
+// ─── share(iter3;#154:飞书 IM 推送下线,纯链接分享)──────────────────────────
 export const useShareAsset = () =>
   useMutation({
     mutationFn: async (args: {
       asset_id: string;
-      receive_open_ids: string[];
-      message?: string;
       expires_in_seconds: number;
       requires_login?: boolean;
     }) => {
@@ -320,8 +317,6 @@ export const useShareFolder = () =>
   useMutation({
     mutationFn: async (args: {
       folder_id: string;
-      receive_open_ids: string[];
-      message?: string;
       expires_in_seconds: number;
       requires_login?: boolean;
     }) => {

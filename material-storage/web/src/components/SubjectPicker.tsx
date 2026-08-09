@@ -1,28 +1,26 @@
 /**
- * SubjectPicker — 统一选择"权限主体"。
- * 三类:
+ * SubjectPicker — 统一选择"权限主体"。#154:飞书 department 轴写入下线(ADR-0007),
+ * 仅剩两类:
  *   user        — 复用 UserPicker(多选)
- *   group       — GroupPicker(多选,实时调飞书)
- *   department  — free-text input(飞书 OpenAPI 无全局 dept name fuzzy 搜)
+ *   group       — GroupPicker(多选)
  *
- * value:  Subject[] — 每个 {kind: 'user'|'group'|'department', id: '<id>'}
+ * value:  Subject[] — 每个 {kind: 'user'|'group', id: '<id>'}
  * 给上层 InviteModal:遍历 subjects 各自走对应 POST body
  *   user → {user_id, ...}   (users.id UUID,#148 起)
  *   group → {group_id, ...}
- *   department → {department_id, ...}
  */
-import { Avatar, Input, Select, Spin, Tabs, Tag } from 'antd';
-import { Building2, Plus, Users as UsersIcon } from 'lucide-react';
+import { Avatar, Select, Spin, Tabs, Tag } from 'antd';
+import { Users as UsersIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { http } from '../api/client';
 import { UserPicker } from './UserPicker';
 import type { Me } from '../api/types';
 
-export type SubjectKind = 'user' | 'group' | 'department';
+export type SubjectKind = 'user' | 'group';
 
 export interface Subject {
   kind: SubjectKind;
-  id: string;       // user.id (users.id UUID,#150 起) / group.id / dept.open_department_id
+  id: string;       // user.id (users.id UUID,#150 起) / group.id
   name?: string;    // 缓存显示用
 }
 
@@ -30,18 +28,18 @@ interface Props {
   value: Subject[];
   onChange: (v: Subject[]) => void;
   me: Me;
-  // 限制只允许某些 kind(例如 project admin 只允许 user/group,不允许 dept)
+  // 限制只允许某些 kind(例如 project admin 只允许 user/group)
   allowedKinds?: SubjectKind[];
 }
 
-const DEFAULT_KINDS: SubjectKind[] = ['user', 'group', 'department'];
+const DEFAULT_KINDS: SubjectKind[] = ['user', 'group'];
 
 export function SubjectPicker({
   value, onChange, me, allowedKinds = DEFAULT_KINDS,
 }: Props) {
   const [tab, setTab] = useState<SubjectKind>(allowedKinds[0]);
 
-  // 拆分 value(只 user 需 id 数组传给 UserPicker;group/dept 在子组件内自取)
+  // 拆分 value(只 user 需 id 数组传给 UserPicker;group 在子组件内自取)
   const userIds = value.filter(s => s.kind === 'user').map(s => s.id);
 
   const setUsers = (ids: string[]) => {
@@ -52,10 +50,6 @@ export function SubjectPicker({
     const rest = value.filter(s => s.kind !== 'group');
     onChange([...rest, ...newSubs]);
   };
-  const setDepts = (newSubs: Subject[]) => {
-    const rest = value.filter(s => s.kind !== 'department');
-    onChange([...rest, ...newSubs]);
-  };
 
   const tabs = allowedKinds.map(k => ({
     key: k,
@@ -63,7 +57,6 @@ export function SubjectPicker({
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         {k === 'user' && <span>用户</span>}
         {k === 'group' && <><UsersIcon size={12} strokeWidth={1.8} /><span>用户组</span></>}
-        {k === 'department' && <><Building2 size={12} strokeWidth={1.8} /><span>部门</span></>}
       </span>
     ),
     children: (
@@ -80,10 +73,6 @@ export function SubjectPicker({
         {k === 'group' && (
           <GroupPicker value={value.filter(s => s.kind === 'group') as Subject[]}
                        onChange={setGroups} />
-        )}
-        {k === 'department' && (
-          <DeptInput value={value.filter(s => s.kind === 'department') as Subject[]}
-                     onChange={setDepts} />
         )}
       </div>
     ),
@@ -109,7 +98,6 @@ export function SubjectPicker({
                  style={{ margin: 0 }}>
               {s.kind === 'user' && '👤'}
               {s.kind === 'group' && '🏷'}
-              {s.kind === 'department' && '🏢'}
               {' '}{s.name || s.id.slice(0, 12) + '…'}
             </Tag>
           ))}
@@ -201,38 +189,5 @@ function GroupPicker({
       }))}
       style={{ width: '100%' }}
     />
-  );
-}
-
-// ─── 部门 free-text ──────────────────────────────────────────────────────────
-function DeptInput({
-  value, onChange,
-}: { value: Subject[]; onChange: (v: Subject[]) => void }) {
-  const [input, setInput] = useState('');
-
-  const add = () => {
-    const id = input.trim();
-    if (!id) return;
-    if (value.some(s => s.id === id)) { setInput(''); return; }
-    onChange([...value, { kind: 'department', id, name: id }]);
-    setInput('');
-  };
-
-  return (
-    <div>
-      <Input.Search
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onSearch={add}
-        enterButton={<><Plus size={12} strokeWidth={2} /> 添加</>}
-        placeholder="粘贴飞书 open_department_id(以 od_ 开头)"
-      />
-      <div style={{
-        marginTop: 6, fontSize: 11, color: 'var(--ms-ink-subtle)', lineHeight: 1.6,
-      }}>
-        飞书 OpenAPI 无 dept 全局搜索 — 请在飞书后台 → 通讯录拷贝 open_department_id 粘贴。<br/>
-        子部门 member 因 OpenFGA 自递归会自动包含。
-      </div>
-    </div>
   );
 }

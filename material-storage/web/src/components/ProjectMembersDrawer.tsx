@@ -461,11 +461,6 @@ function InviteModal({
   const [loading, setLoading] = useState(false);
   const { message } = App.useApp();
 
-  // admin 角色 model 不接 department#member,SubjectPicker 隐藏 dept tab
-  const allowedKinds = role === 'admin'
-    ? (['user', 'group'] as const)
-    : (['user', 'group', 'department'] as const);
-
   const submit = async () => {
     if (subjects.length === 0) {
       message.warning('请选至少一个主体');
@@ -477,8 +472,7 @@ function InviteModal({
       try {
         const body: Record<string, string> = { role };
         if (s.kind === 'user') body.user_id = s.id;   // users.id UUID(#148 起)
-        else if (s.kind === 'group') body.group_id = s.id;
-        else body.department_id = s.id;
+        else body.group_id = s.id;
         await http.post(`/api/v1/projects/${project.id}/members`, body);
         ok++;
       } catch (e) {
@@ -507,18 +501,12 @@ function InviteModal({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
         <div>
-          <FieldLabel>添加主体(用户 / 用户组 / 部门)</FieldLabel>
+          <FieldLabel>添加主体(用户 / 用户组;#154:部门轴下线)</FieldLabel>
           <SubjectPicker
             value={subjects}
             onChange={setSubjects}
             me={me}
-            allowedKinds={[...allowedKinds]}
           />
-          {role === 'admin' && (
-            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ms-ink-subtle)' }}>
-              admin 角色仅允许用户 / 用户组(部门不能直接作为 admin)
-            </div>
-          )}
         </div>
         <div>
           <FieldLabel>角色</FieldLabel>

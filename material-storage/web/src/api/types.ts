@@ -140,12 +140,11 @@ export interface DownloadLink {
   is_sensitive: boolean;
 }
 
-// ─── share(iter3)──────────────────────────────────────────────────────────
+// ─── share(iter3;#154:飞书 IM 推送下线,纯链接分享)──────────────────────────
 export interface ShareCreateOut {
   token: string;
   landing_url: string;
   expires_at: string;
-  sent: { open_id: string; message_id?: string; error?: string }[];
 }
 
 export interface ShareResolve {

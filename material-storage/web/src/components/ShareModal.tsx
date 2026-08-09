@@ -1,24 +1,19 @@
 /**
- * 分享 Modal — iter3 最小版。
+ * 分享 Modal — iter3 最小版;#154:飞书 IM 推送下线(ADR-0007),纯链接分享。
  *
- * 简化:UserPicker 留到 D iter4 做(/users 接口未上);现在用 textarea 手输飞书 open_id,
- * 每行一个;支持"只发给我自己"快捷按钮。
- *
- * 提交成功后展示 landing_url(可复制)+ 每个 open_id 的推送结果(成功 / 失败)。
+ * 提交后展示 landing_url(可复制)+ 有效期;接收人 / 留言 / IM 推送全部移除。
  */
 import { App, Button, Form, Input, Modal, Select, Space, Tag, Typography } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 import { useEffect, useState } from 'react';
 import { useShareAsset, useShareFolder } from '../api/hooks';
 import { errorMessage } from '../api/client';
-import type { Me, ShareCreateOut } from '../api/types';
-import { UserPicker } from './UserPicker';
+import type { ShareCreateOut } from '../api/types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   target: { kind: 'asset' | 'folder'; id: string; label: string };
-  me: Me;
 }
 
 const TTL_OPTIONS = [
@@ -28,7 +23,7 @@ const TTL_OPTIONS = [
   { label: '30 天', value: 30 * 86400 },
 ];
 
-export function ShareModal({ open, onClose, target, me }: Props) {
+export function ShareModal({ open, onClose, target }: Props) {
   const [form] = Form.useForm();
   const { message } = App.useApp();
   const shareAsset = useShareAsset();
@@ -47,10 +42,7 @@ export function ShareModal({ open, onClose, target, me }: Props) {
   const submit = async () => {
     try {
       const v = await form.validateFields();
-      const open_ids = (v.open_ids as string[] | undefined) ?? [];
       const body = {
-        receive_open_ids: open_ids,
-        message: v.message?.trim() || undefined,
         expires_in_seconds: v.ttl as number,
         requires_login: true,
       };
@@ -58,7 +50,7 @@ export function ShareModal({ open, onClose, target, me }: Props) {
         ? await shareAsset.mutateAsync({ asset_id: target.id, ...body })
         : await shareFolder.mutateAsync({ folder_id: target.id, ...body });
       setResult(data);
-      message.success(open_ids.length > 0 ? `分享链接已生成,推送 ${open_ids.length} 人` : '分享链接已生成');
+      message.success('分享链接已生成');
     } catch (e) {
       if ((e as { errorFields?: unknown }).errorFields) return;
       message.error(errorMessage(e, '分享失败'));
@@ -85,7 +77,7 @@ export function ShareModal({ open, onClose, target, me }: Props) {
       ) : [
         <Button key="cancel" onClick={onClose}>取消</Button>,
         <Button key="ok" type="primary" loading={loading} onClick={submit}>
-          生成分享 + 推送
+          生成分享链接
         </Button>,
       ]}
     >
@@ -98,45 +90,17 @@ export function ShareModal({ open, onClose, target, me }: Props) {
               <Button icon={<CopyOutlined />} onClick={() => copyLink(result.landing_url)}>复制</Button>
             </Input.Group>
           </div>
-          {result.sent.length > 0 && (
-            <div>
-              <Typography.Text type="secondary">飞书 IM 推送结果</Typography.Text>
-              <div style={{ marginTop: 8 }}>
-                {result.sent.map((s, i) => (
-                  <div key={i} style={{ marginBottom: 4, fontSize: 12 }}>
-                    <code>{s.open_id.slice(0, 18)}…</code>{' '}
-                    {s.error ? <Tag color="error">失败:{s.error.slice(0, 60)}</Tag>
-                              : <Tag color="success">已送达</Tag>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div>
+            <Tag color="blue">访问需登录</Tag>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              收件人打开链接后用本地账号登录即可访问(未配置 OIDC 时同)
+            </Typography.Text>
+          </div>
         </Space>
       ) : (
         <Form form={form} layout="vertical" initialValues={{ ttl: 86400 }}>
           <Form.Item label="资源">
             <Typography.Text code>{target.label}</Typography.Text>
-          </Form.Item>
-          <Form.Item
-            name="open_ids"
-            label="接收人(飞书账号)"
-            extra="搜姓名 / 邮箱选;留空 = 只生成链接不推 IM"
-          >
-            <UserPicker
-              valueKey="open_id"   // share 走飞书 IM 发卡,仍用 open_id 语义(#150 保留)
-              preset={[{ id: me.id, username: null, open_id: me.open_id, union_id: me.union_id,
-                         name: me.name + '(自己)', email: me.email }]}
-              placeholder="选一个或多个接收人…"
-            />
-          </Form.Item>
-          <Form.Item>
-            <Button size="small" onClick={() => form.setFieldValue('open_ids', [me.open_id])}>
-              只发给我自己
-            </Button>
-          </Form.Item>
-          <Form.Item name="message" label="留言(可选)">
-            <Input.TextArea rows={2} maxLength={500} showCount placeholder="可以留几句话" />
           </Form.Item>
           <Form.Item name="ttl" label="有效期" rules={[{ required: true }]}>
             <Select options={TTL_OPTIONS} />

@@ -185,7 +185,6 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
             open={shareOpen}
             onClose={() => setShareOpen(false)}
             target={{ kind: 'asset', id: a.id, label: a.filename }}
-            me={me}
           />
         )}
         {isPreviewable(a) && (

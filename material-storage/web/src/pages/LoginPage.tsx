@@ -1,14 +1,13 @@
 /**
- * 本地账号密码登录页(#149)。
+ * 本地账号密码登录页(#149;#154:飞书 OIDC 入口下线,ADR-0007)。
  *
  * 未登录用户统一被 AppShell / client.ts 401 拦截器带 `?next=` 引导到这里;
  * 登录成功回 next(首登强制改密 → /change-password)。
- * 飞书 OIDC 入口保留在页面底部(原有能力不删,兼容存量用户)。
  */
-import { App, Alert, Button, Card, Form, Input, Space, Typography } from 'antd';
+import { App, Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { KeyRound, User as UserIcon } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { apiBase, errorMessage } from '../api/client';
+import { errorMessage } from '../api/client';
 import { useLocalLogin } from '../api/hooks';
 
 const BASENAME = '/ms-static/web';
@@ -42,11 +41,6 @@ export default function LoginPage() {
       message.error(errorMessage(err, '登录失败'));
     }
   };
-
-  // 飞书 OIDC 入口(next 带回 SPA 完整路径)
-  const feishuUrl = `${apiBase}/api/v1/auth/login?next=${encodeURIComponent(
-    BASENAME + (next === '/' ? '/' : next),
-  )}`;
 
   return (
     <div style={{ maxWidth: 520, margin: '64px auto', padding: 16 }}>
@@ -111,12 +105,6 @@ export default function LoginPage() {
             </Button>
           </Form.Item>
         </Form>
-
-        <Space direction="vertical" style={{ width: '100%', marginTop: 16 }}>
-          <Button block onClick={() => { window.location.href = feishuUrl; }}>
-            使用飞书账号登录
-          </Button>
-        </Space>
       </Card>
       <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: 'var(--ms-ink-subtle)' }}>
         连续 5 次登录失败将锁定 15 分钟

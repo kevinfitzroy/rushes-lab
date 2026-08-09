@@ -253,8 +253,7 @@ function InviteModal({
           duration_seconds: duration > 0 ? duration : undefined,
         };
         if (s.kind === 'user') args.user_id = s.id;   // users.id UUID(#148 起)
-        else if (s.kind === 'group') args.group_id = s.id;
-        else args.department_id = s.id;
+        else args.group_id = s.id;
         await invite.mutateAsync(args);
         ok++;
       } catch (e) {
@@ -280,7 +279,7 @@ function InviteModal({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
         <div>
-          <FieldLabel>邀请主体(用户 / 用户组 / 部门)</FieldLabel>
+          <FieldLabel>邀请主体(用户 / 用户组;#154:部门轴下线)</FieldLabel>
           <SubjectPicker value={subjects} onChange={setSubjects} me={me} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
