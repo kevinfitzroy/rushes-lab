@@ -163,21 +163,10 @@ PoC 自动 + D iter3 UI 配置:
 
 ---
 
-## 8. 飞书事件同步(a2 iter 落地)
+## 8. 飞书事件同步
 
-> **(随 #154 / P4 飞书代码下线删除,ADR-0007)** — 本节描述的飞书事件流同步将随飞书集
-> 成整体下线;#148 起 OpenFGA 写入已全部改用 `user:<users.id UUID>` subject。
-
-| 飞书 event | OpenFGA 动作 |
-|---|---|
-| `contact.user.created_v3` | `add_user_to_organization` + `add_user_to_department`(若 user.department_ids 非空) |
-| `contact.user.updated_v3`(换部门) | diff `department_ids` → 增/删 `department#member` tuples |
-| `contact.user.deleted_v3`(离职) | `revoke_user_completely(open_id)` 删 user 所有 tuple + DB `is_active=false` |
-| `contact.department.created_v3` | (nothing OpenFGA;department member 由 user event 拉) |
-| `contact.department.updated_v3`(改父部门) | diff parent → 重写 `department#member` nesting tuple |
-| `contact.group.member_changed`(group 变成员) | `add/remove_user_to_group` |
-
-冷启动同步脚本(a2 iter):一次性拉飞书全量 user / dept / group,写 tuples。事件流增量。
+> **(#154 / ADR-0007 已删除)** — 本节描述的飞书事件流同步已随飞书集成整体下线;
+> 存量 department tuples 原样保留(不迁),但无任何代码再写入。
 
 ## 9. 典型场景 e2e(对照 fga test)
 

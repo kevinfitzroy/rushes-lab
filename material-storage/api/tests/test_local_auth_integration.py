@@ -40,9 +40,6 @@ def make_settings(**overrides: Any) -> Settings:
         minio_secret_key="sk",
         openfga_api_url="http://localhost:8080",
         openfga_store_id="store",
-        feishu_app_id="cli_x",
-        feishu_app_secret="sec",
-        feishu_redirect_uri="http://localhost/cb",
         web_app_base_url="http://localhost/ms-static/web/",
         session_jwt_secret="x" * 32,
     )

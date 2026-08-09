@@ -42,10 +42,18 @@ def test_audit_event_indices() -> None:
 
 
 def test_user_open_id_unique() -> None:
-    """飞书 open_id 唯一但可空(#150:本地新用户无飞书身份,ADR-0007)。"""
+    """飞书 open_id 唯一但可空(#150:本地新用户无飞书身份;ADR-0007 后保留只读历史对照)。"""
     col = User.__table__.c.feishu_open_id
     assert col.unique is True
     assert col.nullable is True
+
+
+def test_user_oidc_sub_column() -> None:
+    """通用 OIDC 登录身份键(#154:nullable + unique + index,未配置 provider 时全 NULL)。"""
+    col = User.__table__.c.oidc_sub
+    assert col.nullable is True
+    assert col.unique is True
+    assert {i.name for i in User.__table__.indexes} >= {"ix_users_oidc_sub"}
 
 
 def test_user_username_column() -> None:

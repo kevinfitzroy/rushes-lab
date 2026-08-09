@@ -371,18 +371,4 @@ async def test_folder_grants_sensitive_rejected(client: AsyncClient) -> None:
     assert r2.status_code == 400
 
 
-# ─── admin endpoint:feishu health(polish 2 起需 admin)──────────────────────
-@pytest.mark.asyncio
-async def test_admin_feishu_health_no_auth_401(client: AsyncClient) -> None:
-    r = await client.get("/api/v1/admin/feishu/health")
-    assert r.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_admin_feishu_health_denied_for_non_admin(client: AsyncClient) -> None:
-    """outsider 既不是 org admin 也不应是任何 project admin。
-    若测试数据污染(被 grant 过 admin)则跳过本断言。
-    """
-    r = await client.get("/api/v1/admin/feishu/health", headers=_h(OUTSIDER_ID))
-    # 接受 403(干净状态)或 200(测试数据污染:outsider 被 grant 了 project admin)
-    assert r.status_code in (200, 403)
+# #154:admin feishu health / test-card 测试随飞书下线删除(ADR-0007)
