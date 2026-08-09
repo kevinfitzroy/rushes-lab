@@ -1,4 +1,6 @@
 """Pydantic Settings — env-driven config(12-factor)。"""
+from typing import Any
+
 from pydantic import Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -44,27 +46,19 @@ class Settings(BaseSettings):
     openfga_store_id: str = Field(..., description="启动时通过 list stores + name=material-storage-poc 找;或固化")
     openfga_model_id: str | None = Field(None, description="可选;None = 用 store latest model")
 
-    # ─── 飞书 OIDC(passport.feishu.cn,iter5)───────────────────────────────
-    feishu_app_id: str
-    feishu_app_secret: str
-    feishu_authorize_endpoint: str = "https://passport.feishu.cn/suite/passport/oauth/authorize"
-    feishu_token_endpoint: str = "https://passport.feishu.cn/suite/passport/oauth/token"
-    feishu_userinfo_endpoint: str = "https://passport.feishu.cn/suite/passport/oauth/userinfo"
-    feishu_oidc_scope: str = "contact:user.base:readonly"
-    feishu_redirect_uri: str = Field(..., description="OIDC callback,绝对 URL,需在飞书后台注册;e.g. https://rusheslab.taoxiplan.com/api/v1/auth/callback")
-    feishu_bridge_url: str | None = Field(None, description="可选;iter6 webhook handler 在 ms-api 内,不再依赖 bridge")
-    feishu_verification_token: str | None = Field(None, description="飞书事件订阅 Verification Token,prod 必填(env!=dev 时强制 verify)")
+    # ─── OIDC provider 留口(ADR-0007:#154 起飞书 OIDC 抽象为通用配置)─────
+    # 默认空 dict = 纯本地登录。配置一个 provider 时走标准 authorization_code
+    # + userinfo 流程(services/auth.py OIDCService)。
+    # 形状:{"authorize_endpoint", "token_endpoint", "userinfo_endpoint",
+    #        "client_id", "client_secret", "redirect_uri",
+    #        "scope"(可选), "claims"(可选,{"sub","name","email"} claim 名映射)}
+    # env 注入:OIDC_PROVIDER='{"authorize_endpoint": "...", ...}'(JSON 字符串)
+    oidc_provider: dict[str, Any] = Field(
+        default_factory=dict,
+        description="可选 OIDC provider 配置;默认空 = 纯本地账号密码登录",
+    )
 
-    # ─── 飞书 OpenAPI(IM 卡片推送 — iter7 卡片基础设施)─────────────────────
-    feishu_open_api_base: str = Field(
-        "https://open.feishu.cn",
-        description="飞书 OpenAPI base URL;海外租户用 https://open.larksuite.com",
-    )
-    feishu_im_enabled: bool = Field(
-        True,
-        description="false 时所有 IM 推送变 no-op(本地开发/无 app_secret 时关掉)",
-    )
-    # web 前端 base URL — 卡片中按钮 deeplink 用(打开项目 / 文件夹 / 短链页)
+    # web 前端 base URL — 分享短链 / 前端回跳等用
     web_app_base_url: str = Field(
         ...,
         description="e.g. https://rusheslab.taoxiplan.com/ms-static/web/ — 末尾带斜杠",

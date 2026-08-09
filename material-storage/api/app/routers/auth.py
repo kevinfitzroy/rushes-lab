@@ -1,14 +1,12 @@
-"""auth router — 飞书 OIDC RP(Phase B-2 iter5)+ 本地账号密码登录(#149)。
+"""auth router — 通用 OIDC RP(#154:provider 配置留口)+ 本地账号密码登录(#149)。
 
 endpoints:
-  GET  /api/v1/auth/login           → 302 → 飞书 authorize(飞书 OIDC,P4 才下线)
+  GET  /api/v1/auth/login           → 302 → OIDC provider authorize(未配置 = 400 提示纯本地登录)
   GET  /api/v1/auth/callback        → exchange code + set session cookie + redirect next
   GET  /api/v1/auth/me              → 返当前 session user(JSON)
   POST /api/v1/auth/logout          → 清 session cookie
   POST /api/v1/auth/local/login     → 账号密码登录(限流 + audit;session JWT 复用 #149)
   POST /api/v1/auth/change-password → 修改密码(首登 must_change_password 强制流程 #149)
-
-#149 约定:本文件只加不删(飞书 OIDC 下线归 #154)。
 """
 from __future__ import annotations
 
@@ -30,7 +28,7 @@ from app.deps import (
 )
 from app.models import ChangePasswordIn, LocalLoginIn
 from app.services.audit import AuditService
-from app.services.auth import FeishuOIDCService
+from app.services.auth import OIDCService
 from app.services.local_auth import LocalAuthService
 from app.settings import get_settings
 
@@ -39,7 +37,7 @@ router = APIRouter()
 
 
 # 复用 lifespan-wired single service instance
-def get_auth_service(request: Request) -> FeishuOIDCService:
+def get_auth_service(request: Request) -> OIDCService:
     return request.app.state.auth
 
 
@@ -52,9 +50,13 @@ _DEFAULT_AFTER_LOGIN = "/ms-static/web/"
 @router.get("/login")
 async def login(
     next: str = Query(default=_DEFAULT_AFTER_LOGIN, description="登录后回跳地址(相对路径)"),
-    auth: FeishuOIDCService = Depends(get_auth_service),
+    auth: OIDCService = Depends(get_auth_service),
 ) -> RedirectResponse:
-    nonce, _ = FeishuOIDCService.generate_state()
+    if not auth.enabled:
+        # 纯本地登录模式:前端走 /auth/local/login;直接访问此入口给明确提示
+        raise HTTPException(400, "OIDC provider 未配置 — 当前为纯本地登录,请使用账号密码登录")
+
+    nonce, _ = OIDCService.generate_state()
     url = auth.build_authorize_url(state=nonce)
 
     resp = RedirectResponse(url=url, status_code=302)
@@ -79,8 +81,10 @@ async def callback(
     expected_state: str | None = Cookie(default=None, alias=_OIDC_STATE_COOKIE),
     next_url: str = Cookie(default=_DEFAULT_AFTER_LOGIN, alias=_OIDC_NEXT_COOKIE),
     db: AsyncSession = Depends(get_db),
-    auth: FeishuOIDCService = Depends(get_auth_service),
+    auth: OIDCService = Depends(get_auth_service),
 ) -> RedirectResponse:
+    if not auth.enabled:
+        raise HTTPException(400, "OIDC provider 未配置 — 当前为纯本地登录")
     if expected_state is None or state != expected_state:
         raise HTTPException(400, "state mismatch(可能 CSRF 或 cookie 过期,请重新 /login)")
 
@@ -88,7 +92,7 @@ async def callback(
     token = await auth.exchange_code_for_token(code)
     # 2) access_token → userinfo
     userinfo = await auth.fetch_userinfo(token["access_token"])
-    # 3) upsert
+    # 3) upsert(按 oidc_sub 匹配)
     user = await auth.upsert_user_from_userinfo(db, userinfo)
     if not user.is_active:
         raise HTTPException(403, "用户已离职 / 被禁用,请联系管理员")
@@ -109,7 +113,7 @@ async def callback(
     # 清 OIDC 中间 cookie
     resp.delete_cookie(_OIDC_STATE_COOKIE, path="/api/v1/auth")
     resp.delete_cookie(_OIDC_NEXT_COOKIE, path="/api/v1/auth")
-    log.info("login success user_id=%s open_id=%s", user.id, user.feishu_open_id)
+    log.info("login success user_id=%s", user.id)
     return resp
 
 
@@ -125,7 +129,7 @@ async def me(
 
     # 查 is_system_admin(organization#admin)给前端判 NewProjectModal 是否可用
     is_system_admin = False
-    from app.services.contact_sync import get_default_organization
+    from app.services.org import get_default_organization
     org = await get_default_organization(db)
     if org:
         _, tenant_key = org
@@ -139,6 +143,7 @@ async def me(
 
     return {
         "id": str(user.id),
+        # #154:open_id/union_id 保留只读(历史对照),不再参与登录与权限
         "open_id": user.feishu_open_id,
         "union_id": user.feishu_union_id,
         "name": user.name,
@@ -162,14 +167,14 @@ async def logout() -> JSONResponse:
     return resp
 
 
-# ─── 本地账号密码登录(#149,ADR-0007)— 只加不删,飞书 OIDC 保留到 P4 ──────
+# ─── 本地账号密码登录(#149)— #154 后为纯本地主路径 ──────────────────────────
 
 
 @router.post("/local/login")
 async def local_login(
     body: LocalLoginIn,
     db: AsyncSession = Depends(get_db),  # noqa: B008  # FastAPI DI,repo 全量同款
-    auth: FeishuOIDCService = Depends(get_auth_service),  # noqa: B008
+    auth: OIDCService = Depends(get_auth_service),  # noqa: B008  # 只用 encode_session
     local_auth: LocalAuthService = Depends(get_local_auth),  # noqa: B008
     audit: AuditService = Depends(get_audit),  # noqa: B008
     ctx: dict[str, str | None] = Depends(get_request_context),  # noqa: B008

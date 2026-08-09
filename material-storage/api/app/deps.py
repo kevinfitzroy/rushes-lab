@@ -1,4 +1,4 @@
-"""FastAPI Dependency Injection — CurrentUser(SQL UUID 作 FK + OpenFGA subject;open_id 仅飞书遗留)。"""
+"""FastAPI Dependency Injection — CurrentUser(SQL UUID 作 FK + OpenFGA subject)。"""
 from __future__ import annotations
 
 import logging
@@ -11,8 +11,7 @@ from sqlalchemy import select
 from app.db.session import get_sessionmaker
 from app.db.tables import User
 from app.services.audit import AuditService
-from app.services.auth import FeishuOIDCService
-from app.services.feishu_client import FeishuClient
+from app.services.auth import OIDCService
 from app.services.local_auth import LocalAuthService
 from app.services.permissions import PermissionsService
 from app.services.presign import PresignService
@@ -25,10 +24,10 @@ log = logging.getLogger(__name__)
 class CurrentUser:
     """authn 结果 — id 是 SQL UUID,同时做 FK 和 OpenFGA subject(#148 起)。
 
-    open_id 仅为飞书遗留(OIDC 登录 / IM 发卡寻址)保留,不再用作权限 subject。
+    #154:飞书 open_id 不再进 session / CurrentUser(登录与权限都不再使用;
+    users.feishu_open_id 列保留只读作历史对照)。
     """
     id: uuid.UUID
-    open_id: str
     name: str
 
     @property
@@ -49,16 +48,12 @@ def get_presign(request: Request) -> PresignService:
     return request.app.state.presign
 
 
-def get_auth(request: Request) -> FeishuOIDCService:
+def get_auth(request: Request) -> OIDCService:
     return request.app.state.auth
 
 
 def get_local_auth(request: Request) -> LocalAuthService:
     return request.app.state.local_auth  # type: ignore[no-any-return]  # app.state 是 Any
-
-
-def get_feishu_client(request: Request) -> FeishuClient:
-    return request.app.state.feishu_client
 
 
 async def get_audit(request: Request):
@@ -74,12 +69,12 @@ async def get_current_user(
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ) -> CurrentUser:
     """认证优先级:
-      1. cookie 'ms_session'(JWT)— 生产路径,飞书 OIDC 登录获得
-         JWT payload 已包 sub(UUID)+ open_id + name → 直接构 CurrentUser,不查 db
-      2. X-User-Id header(dev fallback)— 反查 db 拿 open_id;生产 env != 'dev' 拒绝
+      1. cookie 'ms_session'(JWT)— 生产路径,本地账号密码登录(#149)或 OIDC 获得
+         JWT payload 已包 sub(UUID)+ name → 直接构 CurrentUser,不查 db
+      2. X-User-Id header(dev fallback)— 反查 db;生产 env != 'dev' 拒绝
     """
     settings = get_settings()
-    auth: FeishuOIDCService = request.app.state.auth
+    auth: OIDCService = request.app.state.auth
 
     token = request.cookies.get(settings.session_cookie_name)
     if token:
@@ -87,7 +82,6 @@ async def get_current_user(
             payload = auth.decode_session(token)
             return CurrentUser(
                 id=uuid.UUID(payload["sub"]),
-                open_id=payload["open_id"],
                 name=payload.get("name", ""),
             )
         except (ValueError, KeyError) as e:
@@ -106,8 +100,7 @@ async def get_current_user(
             user = res.scalar_one_or_none()
             if user is None:
                 raise HTTPException(401, f"X-User-Id user {uid} not found")
-            # 本地账号(#150)无 feishu_open_id → 空串占位;open_id 不再作权限 subject
-            return CurrentUser(id=user.id, open_id=user.feishu_open_id or "", name=user.name)
+            return CurrentUser(id=user.id, name=user.name)
 
     raise HTTPException(401, "not authenticated — call /api/v1/auth/login")
 
@@ -134,7 +127,7 @@ async def require_admin(
     判定:org admin(organization#admin)或任意 project can_admin。
     """
     perms: PermissionsService = request.app.state.permissions
-    from app.services.contact_sync import get_default_organization
+    from app.services.org import get_default_organization
     async with get_sessionmaker()() as db:
         org = await get_default_organization(db)
     if org:
@@ -157,7 +150,7 @@ async def require_system_admin(
     用于:POST /projects(只有系统 admin 能建项目)。
     """
     perms: PermissionsService = request.app.state.permissions
-    from app.services.contact_sync import get_default_organization
+    from app.services.org import get_default_organization
     async with get_sessionmaker()() as db:
         org = await get_default_organization(db)
     if not org:
@@ -181,7 +174,7 @@ async def get_is_system_admin(
     避免在每个 router 里复制一份 default-org → is_org_admin → try/except 逻辑。
     """
     perms: PermissionsService = request.app.state.permissions
-    from app.services.contact_sync import get_default_organization
+    from app.services.org import get_default_organization
     async with get_sessionmaker()() as db:
         org = await get_default_organization(db)
     if not org:

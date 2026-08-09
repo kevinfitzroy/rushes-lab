@@ -56,9 +56,11 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    # #150:本地用户没有飞书身份 → 列改 nullable;飞书老用户保留历史对照(只读)
+    # #150:本地用户没有飞书身份 → 列改 nullable;飞书老用户保留历史对照(只读,不再参与登录/权限)
     feishu_open_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     feishu_union_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # #154:通用 OIDC provider 留口的身份匹配键(sub claim);NULL = 非 OIDC 用户
+    oidc_sub: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
     # 本地登录名(ADR-0007 / P1 #149):拼音/工号友好格式,不强制邮箱;老飞书用户 NULL
     username: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
