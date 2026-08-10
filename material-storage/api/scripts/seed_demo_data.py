@@ -5,7 +5,9 @@
 
 行为(idempotent;重复跑无副作用):
   1. upsert organization(含 feishu_tenant_key)+ 几个模拟 department / group
-  2. 升所有真飞书 user(open_id 不以 dev_ 开头)为 org admin
+  2. 升所有真飞书 user(open_id 不以 dev_ 开头)为 org admin;
+     无真飞书 user 时(本地/测试环境)upsert 固定 UUID 的契约账号 Evan + outsider
+     —— test_v4_permissions / test_directory / test_search_labels 依赖的 hardcode 契约
   3. 创建 demo projects + 一级 folder(普通 + sensitive)+ 二级普通 folder
   4. 写 OpenFGA tuples(bootstrap_project / bootstrap_folder / bootstrap_sensitive_folder)
   5. 配 demo 默认权限:
@@ -41,6 +43,11 @@ TENANT_KEY = "dev_tenant_001"
 DEPT_EDITING = "dep_editing"        # 部门:剪辑组
 DEPT_MOTION = "dep_motion_design"   # 子部门:动效设计(挂在 editing 下)
 GRP_EDITORS = "grp_editors"          # 用户组:剪辑师
+
+# 本地/测试模式契约账号(无真飞书 user 时 upsert;测试 hardcode 的固定 UUID):
+#   Evan = org admin + 各 project 创建者/admin;outsider = 无任何权限的普通用户
+LOCAL_ADMIN_ID = uuid.UUID("3f1b659e-9ef1-4e65-aa03-4407ad7bcfc4")
+LOCAL_OUTSIDER_ID = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
 
 # Folder tree builder
 def F(name: str, children: list[dict] | None = None, *, sensitive: bool = False) -> dict:
@@ -167,9 +174,40 @@ async def main() -> None:
         )
         real_users = list(res.scalars())
 
+        # 本地模式:无真飞书 user(本地/测试环境)时 upsert 契约账号 Evan + outsider。
+        # 幂等:on_conflict_do_update 按 id upsert;重跑时 Evan(ou_evan_local)会被
+        # 上面"真 user"查询捞到,走下方同一升级流程。
+        if not real_users:
+            await session.execute(
+                insert(User).values(
+                    id=LOCAL_ADMIN_ID, name="Evan", email="evan@dev.local",
+                    username="evan", feishu_open_id="ou_evan_local", is_active=True,
+                ).on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={"name": "Evan", "email": "evan@dev.local",
+                          "username": "evan", "feishu_open_id": "ou_evan_local",
+                          "is_active": True},
+                )
+            )
+            # outsider:只建用户行,不写任何 OpenFGA 权限 tuple(测试契约:无权限普通用户)
+            await session.execute(
+                insert(User).values(
+                    id=LOCAL_OUTSIDER_ID, name="Outsider",
+                    feishu_open_id="ou_fake_outsider", is_active=True,
+                ).on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={"name": "Outsider", "feishu_open_id": "ou_fake_outsider",
+                          "is_active": True},
+                )
+            )
+            await session.commit()
+            log.info("本地模式:upsert 契约账号 Evan(%s)+ outsider(%s)",
+                     LOCAL_ADMIN_ID, LOCAL_OUTSIDER_ID)
+            # 重读 Evan 行,走下方"真 user"升级流程(org admin + member + 部门/组)
+            res = await session.execute(select(User).where(User.id == LOCAL_ADMIN_ID))
+            real_users = list(res.scalars())
+
     # ─── 2) 升真 user 为 org admin + 加入 org member + 加入 editing 部门 + editors group ─
-    if not real_users:
-        log.warning("没有真飞书 user — 跳过 org admin 升级。先访问 web 用飞书 OIDC 登录一次")
     for u in real_users:
         try:
             # org admin(管整个企业 — PoC 简化,只第一个 user 设 admin)
@@ -182,18 +220,19 @@ async def main() -> None:
             )
         except Exception as e:
             log.debug("org admin tuple exists: %s", e)
-        # org member
-        await permissions.add_user_to_organization(
-            organization_tenant_key=TENANT_KEY, user_id=str(u.id)
-        )
-        # editing 部门(模拟,真飞书事件同步在 a2 iter 接)
-        await permissions.add_user_to_department(
-            department_id=DEPT_EDITING, user_id=str(u.id)
-        )
-        # editors group
-        await permissions.add_user_to_group(
-            group_id=GRP_EDITORS, user_id=str(u.id)
-        )
+        # org member / 部门 / 组:tuple 已存在时 OpenFGA 会 400(重复写),按"已存在"幂等吞掉
+        for label, fn in (
+            ("org member", lambda: permissions.add_user_to_organization(
+                organization_tenant_key=TENANT_KEY, user_id=str(u.id))),
+            ("editing 部门", lambda: permissions.add_user_to_department(
+                department_id=DEPT_EDITING, user_id=str(u.id))),
+            ("editors group", lambda: permissions.add_user_to_group(
+                group_id=GRP_EDITORS, user_id=str(u.id))),
+        ):
+            try:
+                await fn()
+            except Exception as e:
+                log.debug("%s tuple exists: %s", label, e)
         log.info("升 admin + 部门/组:%s (%s)", u.name, u.feishu_open_id[:12])
 
     # 模拟部门嵌套:motion_design 是 editing 子部门

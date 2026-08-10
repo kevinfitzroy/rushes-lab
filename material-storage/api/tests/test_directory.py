@@ -301,7 +301,8 @@ async def test_group_crud_and_membership_enforces_permission(
         f"/api/v1/projects/{PROJECT_WEDDING}/members",
         json={"group_id": gid, "role": "viewer"}, headers=_h(EVAN_ID),
     )
-    assert r4.status_code == 200, r4.text
+    # 契约:POST /projects/{id}/members 声明 status_code=204(FastAPI 无 body)
+    assert r4.status_code == 204, r4.text
     r5 = await client.get(f"/api/v1/projects/{PROJECT_WEDDING}", headers=_h(uid))
     assert r5.status_code == 200, f"组 viewer 应立即可见: {r5.text}"
 

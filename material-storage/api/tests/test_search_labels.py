@@ -134,8 +134,13 @@ async def test_search_hit_by_notes_and_filename(client: AsyncClient) -> None:
     assert r2.status_code == 200
     assert any(x["id"] == aid for x in r2.json())
 
-    # filename 命中(seed 文件名 demo-01.txt,搜 "demo-0" 应命中)
-    r3 = await client.get("/api/v1/assets/search", params={"q": "demo-0"}, headers=_h(EVAN_ID))
+    # filename 命中(seed 文件名 demo-01.txt,搜 "demo-0" 应命中)。
+    # 69 个 asset 文件名都匹配 "demo-0",默认 limit=50 按 created_at DESC 截断,
+    # aid(最早创建)排在第 69 名 → 必须显式 limit=200(端点上限)才能扫到
+    r3 = await client.get(
+        "/api/v1/assets/search",
+        params={"q": "demo-0", "limit": 200}, headers=_h(EVAN_ID),
+    )
     assert r3.status_code == 200
     assert any(x["id"] == aid for x in r3.json())
 

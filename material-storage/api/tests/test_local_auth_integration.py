@@ -166,7 +166,15 @@ async def make_user():
                 await db.execute(delete(User).where(User.id == u.id))
             await db.commit()
         redis = from_url(str(get_settings().redis_url), decode_responses=True)
-        keys = [_FAIL_IP_KEY.format(ip="testclient"), _LOCK_IP_KEY.format(ip="testclient")]
+        # ASGI client 的 request.client 实际是 127.0.0.1(httpx ASGITransport 默认),
+        # 旧 hardcode 'testclient' 删不到真实 IP 锁 → 15 分钟 IP 锁污染后续登录用例。
+        # 两个候选 IP 都删(不同 httpx 版本/配置可能不同),键不存在时 delete 是 no-op。
+        keys = []
+        for ip in ("testclient", "127.0.0.1"):
+            keys += [
+                _FAIL_IP_KEY.format(ip=ip),
+                _LOCK_IP_KEY.format(ip=ip),
+            ]
         for _, key in created:
             keys += [
                 _FAIL_USER_KEY.format(username=key.lower()),
@@ -205,18 +213,23 @@ class _FakePipeline:
         return [1, 1, 1, 1]
 
 
-async def _flush_auth_user_keys() -> None:
-    """SCAN 清 auth:fail:user:* / auth:lock:user:*(测试产生的 ghost key 兜底)。"""
+async def _flush_auth_rate_keys() -> None:
+    """SCAN 清 auth:fail:* / auth:lock:*(user + ip 维度) — 限流用例 teardown 兜底。
+
+    防 IP 维度锁污染同批其他登录用例:ASGI client 的 request.client 实际是
+    127.0.0.1(httpx ASGITransport 默认),make_user teardown 里 hardcode 的
+    'testclient' 删不到真实 IP 锁;SCAN 匹配与具体 IP 无关,一并清 ghost
+    username 的计数/锁 key。
+    """
     from redis.asyncio import from_url
 
     from app.settings import get_settings
 
     redis = from_url(str(get_settings().redis_url), decode_responses=True)
     try:
-        async for key in redis.scan_iter(match="auth:fail:user:*"):
-            await redis.delete(key)
-        async for key in redis.scan_iter(match="auth:lock:user:*"):
-            await redis.delete(key)
+        for pattern in ("auth:fail:*", "auth:lock:*"):
+            async for key in redis.scan_iter(match=pattern):
+                await redis.delete(key)
     finally:
         await redis.aclose()
 
@@ -320,33 +333,40 @@ async def test_login_ambiguous_name_rejected(client: AsyncClient, make_user) -> 
 async def test_rate_limit_username_locks_even_with_correct_password(
     client: AsyncClient, make_user,
 ) -> None:
-    _, uname = await make_user()
-    for _ in range(5):
+    try:
+        _, uname = await make_user()
+        for _ in range(5):
+            r = await client.post("/api/v1/auth/local/login",
+                                  json={"username": uname, "password": "wrong1x"})
+            assert r.status_code == 401
+        # 第 6 次即使密码正确也 429
         r = await client.post("/api/v1/auth/local/login",
-                              json={"username": uname, "password": "wrong1x"})
-        assert r.status_code == 401
-    # 第 6 次即使密码正确也 429
-    r = await client.post("/api/v1/auth/local/login",
-                          json={"username": uname, "password": PASS_OK})
-    assert r.status_code == 429
-    assert "锁定" in r.json()["detail"]
+                              json={"username": uname, "password": PASS_OK})
+        assert r.status_code == 429
+        assert "锁定" in r.json()["detail"]
+    finally:
+        # 清掉本用例制造的 user + ip 维度锁/计数,不污染同批其他登录用例
+        await _flush_auth_rate_keys()
 
 
 @pytest.mark.asyncio
 async def test_rate_limit_ip_dimension(client: AsyncClient, make_user) -> None:
     """同一 IP 5 个不同用户名连续失败 → IP 维度锁定。"""
-    for _ in range(5):
-        await make_user()
-    for i in range(5):
+    try:
+        for _ in range(5):
+            await make_user()
+        for i in range(5):
+            r = await client.post("/api/v1/auth/local/login",
+                                  json={"username": f"it_ghost_{i}_{uuid.uuid4().hex[:8]}",
+                                        "password": "wrong1x"})
+            assert r.status_code == 401
         r = await client.post("/api/v1/auth/local/login",
-                              json={"username": f"it_ghost_{i}_{uuid.uuid4().hex[:8]}",
-                                    "password": "wrong1x"})
-        assert r.status_code == 401
-    r = await client.post("/api/v1/auth/local/login",
-                          json={"username": _uname("locked"), "password": "whatever1"})
-    assert r.status_code == 429
-    # ghost username 的计数 key 不在 make_user 记录里,手动清掉
-    await _flush_auth_user_keys()
+                              json={"username": _uname("locked"), "password": "whatever1"})
+        assert r.status_code == 429
+    finally:
+        # ghost username 的计数 key 不在 make_user 记录里;IP 锁 key 的实际 IP
+        # 是 127.0.0.1(make_user teardown 的 'testclient' 删不到)—— 全清兜底
+        await _flush_auth_rate_keys()
 
 
 # ─── must_change_password 流转 + change-password ─────────────────────────────
