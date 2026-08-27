@@ -4,9 +4,9 @@
   申请 → admin 收到待审通知 → 审批 → 申请人收到结果通知
   + SMTP 留空时零报错(no-op)
 
-⚠️ 本机无 docker/容器运行时,**默认 skip**;在容器环境跑:
+在容器环境跑(需 seed 固定用户 + OpenFGA store 就绪,参照 test_v4_permissions.py):
     docker exec ms-api pytest tests/test_notifications_e2e.py -v
-(容器环境需:seed 固定用户 + OpenFGA store 就绪,参照 test_v4_permissions.py)
+本机 DB 不可达时自动 skip —— 门控与 test_local_auth_integration.py 同款。
 """
 from __future__ import annotations
 
@@ -18,16 +18,40 @@ from httpx import ASGITransport, AsyncClient
 from app.main import create_app
 from app.settings import get_settings
 
-pytestmark = pytest.mark.skipif(
-    True,
-    reason="容器集成测试:本机无 docker/容器运行时,待容器环境执行(docker exec ms-api)",
-)
 
-
-@pytest.fixture
+@pytest.fixture(scope="session")
 async def client():
+    """拉起 app(含 lifespan);DB 不可达时跳过。
+
+    **必须 session 级**:pyproject 里 asyncio loop scope 是 session,而 asyncpg
+    连接不能跨 loop。function 级 fixture 每个用例新建 engine 却共享同一 session
+    loop,查库会失败 —— 表现是 get_current_user 拿不到用户、接口一律 401。
+    与 test_v4_permissions / test_local_auth_integration 的做法保持一致。
+
+    原先这里是 `pytestmark = skipif(True, ...)` —— 硬编码常量,意味着**在任何环境
+    都不会执行**,连容器内也跳过,于是 #153 的全链路验收从未真正跑过。改为与
+    test_local_auth_integration.py 同款的 DB 可达性门控。
+
+    另外必须进 lifespan:通知写入口依赖 app.state 上的 permissions / arq_pool / redis,
+    不拉 lifespan 的话即使跑起来也会在 BackgroundTask 里炸。
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(str(get_settings().db_url))
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        await engine.dispose()
+    except Exception as exc:
+        await engine.dispose()
+        pytest.skip(f"no reachable DB — integration tests skipped: {exc}")
+
     app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with (
+        app.router.lifespan_context(app),  # type: ignore[attr-defined]
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac,
+    ):
         yield ac
 
 
@@ -42,9 +66,11 @@ async def test_full_chain_approval_notifications(client: AsyncClient) -> None:
     if settings.env != "dev":
         pytest.skip("e2e 需 dev env 的 X-User-Id 通道;生产环境请用真实登录")
 
-    # seed:一个申请人 + 一个 target admin(依赖既有 seed 数据,参照 test_v4_permissions)
-    admin_id = uuid.UUID("00000000-0000-0000-0000-0000000000a2")
-    applicant_id = uuid.UUID("00000000-0000-0000-0000-0000000000a3")
+    # 契约账号来自 scripts/dev_bootstrap.py(alice=org admin,bob=普通成员,
+    # project ...0b1 = dev-project)。原先写的 ...0a2 / ...0a3 在任何 seed 里都
+    # 不存在 —— 配合 skipif(True) 一直没暴露,一跑就是 401「用户不存在」。
+    admin_id = uuid.UUID("00000000-0000-0000-0000-000000000001")      # alice
+    applicant_id = uuid.UUID("00000000-0000-0000-0000-000000000002")  # bob
     target_project_id = uuid.UUID("00000000-0000-0000-0000-0000000000b1")
 
     # 0) 基线:两人都无通知
@@ -105,7 +131,7 @@ async def test_smtp_unconfigured_noop(client: AsyncClient) -> None:
     assert settings.smtp_enabled is False  # 本环境未配 SMTP
     if settings.env != "dev":
         pytest.skip("e2e 需 dev env 的 X-User-Id 通道;生产环境请用真实登录")
-    uid = uuid.UUID("00000000-0000-0000-0000-0000000000a2")
+    uid = uuid.UUID("00000000-0000-0000-0000-000000000001")  # alice(dev_bootstrap)
     r = await client.get("/api/v1/notifications", headers=_auth_headers(uid))
     assert r.status_code == 200
     assert "unread_count" in r.json()
