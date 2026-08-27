@@ -207,4 +207,7 @@ sudo systemctl start postgresql redis-server
 ## 8. 建议顺手做的两件事
 
 1. **`scripts/local_up.sh`** —— 把 §2 的步骤(建 store + 推 model + migrate + seed + 打印入口 URL)收成一条命令。现在每次重来都要手抄 OpenFGA store id,是最容易出错的一步。
-2. **`scripts/set_password.py`** —— 给指定 user 设密码 / 清 `must_change_password`。现在想让一个 seed 用户走真实登录流程,只能先用 dev 通道进管理后台建号;有这个脚本可以直接把 alice 变成可密码登录的账号,e2e 脚本也能用。
+2. ~~`scripts/set_password.py`~~ —— **已落地为 [`scripts/set_initial_admin.py`](../../material-storage/api/scripts/set_initial_admin.py)**:
+   给指定 user 设密码(可顺带 `--create` 建用户、`--grant-org-admin` 授予系统 admin),
+   省略 `--password` 时生成合规临时密码并打印。`ENV=production` 下 dev 通道失效、seed 又不设密码,
+   新机器就是靠它开出第一个能登录的账号。

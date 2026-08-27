@@ -169,8 +169,16 @@ async def main() -> None:
         await session.commit()
 
         # 真飞书 user 列表
+        # ⚠️ 必须显式排除契约账号 outsider:它的 open_id 是 ou_fake_outsider,同样不以
+        #    dev_ 开头,不排除的话**第二次**跑本脚本时它会被当成真飞书 user,跟着走下面
+        #    的「升 org admin + 加 org member」流程 —— "无权限用户" 这个测试契约当场作废,
+        #    test_v4_permissions / test_search_labels 里 outsider 的零泄露断言会假绿。
+        #    (2026-08-27 内网部署实测:重跑 seed 后 outsider 可见全部 project。)
         res = await session.execute(
-            select(User).where(~User.feishu_open_id.like("dev_%"))
+            select(User).where(
+                ~User.feishu_open_id.like("dev_%"),
+                User.id != LOCAL_OUTSIDER_ID,
+            )
         )
         real_users = list(res.scalars())
 

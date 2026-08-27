@@ -102,10 +102,25 @@ Ubuntu + docker,与内网生产同构,是**跑全量容器测试的地方**(开�
 且 arm64 上 `sqlalchemy` 不自动带 greenlet)。完整步骤见 `rushes-spec/material-storage/local-dev-runbook.md`,
 浏览器经 ssh 隧道访问(不开安全组)。
 
-### 部署 C:内网生产(尚未实施)
+### 部署 C:内网生产(2026-08-27 已首次落地)
 
-ADR-0008 的 compose / env 模板与备份脚本已就绪(`.env.production.example`、`scripts/backup_prod.sh`),
-但**从未在真机跑过**。cutover 前必须先做:① 物化 department 存量授权 → ② 跑 `scripts/migrate_subjects_to_uuid.py`
+ADR-0008 的分层已在内网机实跑通:NVMe 挂元数据/缩略图(`MS_PG_DATA_DIR` / `MS_REDIS_DATA_DIR` /
+`MINIO_THUMBS_DATA_DIR`),机械盘挂原片(`MINIO_DATA_DIR`),全部由 `.env` 插值决定,代码零感知。
+
+**开第一个能登录的账号**(新机器绕不过去的一步):`ENV=production` 下 `X-User-Id` 通道失效,
+而 seed 脚本只建用户不设密码 —— 用 `scripts/set_initial_admin.py`:
+
+```bash
+docker compose exec ms-api python -m scripts.set_initial_admin admin \
+    --create --name "系统管理员" --grant-org-admin      # 生成临时密码并打印
+```
+
+**同机跑多套环境**(如 dev + prod 并存)必须三层隔离,少一层就会互相接管容器:
+`COMPOSE_PROJECT_NAME` + `container_name` 后缀 + `ports` 的 **`!override`**
+(compose 对列表默认是合并而非替换,不加就端口冲突)。反代若非 80 端口,nginx 还需
+`absolute_redirect off`,否则 302 会丢掉端口把用户弹到另一套环境。
+
+**仍未做**:① 物化 department 存量授权 → ② 跑 `scripts/migrate_subjects_to_uuid.py`
 → ③ 实测 `backup_prod.sh --mirror` 的 HDD 路径。见 ops-manual §10。
 
 ## 架构要点(跨文件才看得出来的)
