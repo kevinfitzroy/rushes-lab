@@ -26,6 +26,9 @@ export default function FolderDetailPage() {
   const upload = useUpload();
   const downloads = useDownloads();
   const [applyAsset, setApplyAsset] = useState<Asset | null>(null);
+  // 后端 /assets/uploads 对每个上传都强制 can_upload;这里按 folder 权限禁用按钮,
+  // 避免无权限用户(select 完文件才被 403)白走流程
+  const canUpload = folder?.my_can_upload === true;
 
   const handleDownload = async (a: Asset) => {
     try {
@@ -55,19 +58,23 @@ export default function FolderDetailPage() {
       <Typography.Paragraph type="secondary" code style={{ fontSize: 12 }}>{folder?.minio_prefix}</Typography.Paragraph>
 
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" icon={<UploadOutlined />}
-                onClick={() => folderId && upload.open(folderId)}>
-          上传文件
-        </Button>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          后台上传:关掉抽屉/换页面不打断,右下浮窗可查进度
-        </Typography.Text>
+        <Tooltip title={canUpload ? '' : '无上传权限 — 请联系项目管理员授 uploader 角色'}>
+          <Button type="primary" icon={<UploadOutlined />} disabled={!canUpload}
+                  onClick={() => folderId && upload.open(folderId)}>
+            上传文件
+          </Button>
+        </Tooltip>
+        {canUpload && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            后台上传:关掉抽屉/换页面不打断,右下浮窗可查进度
+          </Typography.Text>
+        )}
       </Space>
 
       {isLoading ? (
         <Skeleton active />
       ) : (assets ?? []).length === 0 ? (
-        <Empty description="空文件夹 — 点上传文件添加内容" />
+        <Empty description={canUpload ? '空文件夹 — 点上传文件添加内容' : '空文件夹(无上传权限,如需上传请联系项目管理员)'} />
       ) : (
         <List
           bordered

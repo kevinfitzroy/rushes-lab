@@ -75,7 +75,8 @@ services:
       - poc-net
 
   poc-openfga-migrate:
-    image: openfga/openfga:latest
+    # digest 固定(当前运行位):报错文案随版本漂移会让按文案判重体的逻辑失效(PR #176 P1-1)
+    image: openfga/openfga@sha256:78d1fa601d42340ecb131305d80d3767d0f254f9b1bc3646f9a557e11b24c63a
     container_name: poc-openfga-migrate
     command: migrate
     environment:
@@ -89,7 +90,8 @@ services:
       - poc-net
 
   poc-openfga:
-    image: openfga/openfga:latest
+    # digest 固定(当前运行位):报错文案随版本漂移会让按文案判重体的逻辑失效(PR #176 P1-1)
+    image: openfga/openfga@sha256:78d1fa601d42340ecb131305d80d3767d0f254f9b1bc3646f9a557e11b24c63a
     container_name: poc-openfga
     restart: unless-stopped
     command: run

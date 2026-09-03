@@ -218,13 +218,20 @@ async def list_assets(
     if not folder:
         raise HTTPException(404, "folder not found")
 
-    # check can_view folder;系统 admin 直通
-    allowed = is_system_admin or await permissions.check(
-        user_subject=user.subject,
-        relation="can_view",
-        object_type="folder" if not folder.is_sensitive else "sensitive_folder",
-        object_id=str(folder.id),
-    )
+    # check can_view folder;系统 admin 直通;public 项目非敏感 folder 对组织内
+    # 可浏览(「公开」语义,与 thumbnail-url 的"信任组织内可见性"一致;
+    # 下载/上传/删除仍各自 enforce)
+    allowed = is_system_admin
+    if not allowed and not folder.is_sensitive:
+        project = await db.get(Project, folder.project_id)
+        allowed = project is not None and project.visibility == "public"
+    if not allowed:
+        allowed = await permissions.check(
+            user_subject=user.subject,
+            relation="can_view",
+            object_type="folder" if not folder.is_sensitive else "sensitive_folder",
+            object_id=str(folder.id),
+        )
     if not allowed:
         # 不暴露 folder 存在性,403 不写 audit(避免攻击者通过 audit 推断结构)
         raise HTTPException(403, "no permission")
@@ -285,6 +292,19 @@ async def search_assets(
                 user_subject=user.subject, relation="can_view", object_type=obj_type,
             )
             folder_ids.extend(uuid.UUID(s) for s in ids_str)
+        # public 项目非敏感 folder 对组织内可浏览(与 GET /assets、GET /folders/{id}
+        # 同语义,PR #176 review P1-2):否则公开项目内容「列表看得到、盲搜搜不到」。
+        # sensitive folder 不在此列 —— 仍只走 list_objects(can_view),零泄露语义不变。
+        public_rows = await db.execute(
+            select(Folder.id)
+            .join(Project, Folder.project_id == Project.id)
+            .where(
+                Project.visibility == "public",
+                Folder.is_sensitive.is_(False),
+            )
+        )
+        folder_ids.extend(public_rows.scalars().all())
+        folder_ids = list({*folder_ids})  # 去重
         if not folder_ids:
             return []  # 无可达 folder → 结果必为空,不跑 SQL
         folder_filter = Asset.folder_id.in_(folder_ids)

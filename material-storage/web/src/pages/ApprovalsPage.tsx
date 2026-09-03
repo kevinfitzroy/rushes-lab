@@ -43,6 +43,23 @@ const TARGET_ICON: Record<string,
   project: FolderIcon, sensitive_folder: FolderIcon, folder: FolderIcon, asset: FileText,
 };
 
+/** 审批行 → 资源跳转链接(完整路径含 basename);定位不了返回 null */
+function approvalHref(a: Approval): string | null {
+  const B = '/ms-static/web';
+  if (a.target_type === 'asset') {
+    if (a.parent_project_id && a.folder_id) {
+      return `${B}/projects/${a.parent_project_id}/folders/${a.folder_id}`;
+    }
+    return null;
+  }
+  if (a.target_type === 'folder' || a.target_type === 'sensitive_folder') {
+    if (a.parent_project_id) return `${B}/projects/${a.parent_project_id}/folders/${a.target_id}`;
+    return null;
+  }
+  if (a.target_type === 'project') return `${B}/projects/${a.target_id}`;
+  return null;
+}
+
 function ApprovalRow({
   a, scope, onApprove, onReject, approveLoading, rejectLoading,
 }: {
@@ -115,6 +132,15 @@ function ApprovalRow({
               <> · 永久</>
             )}
           </span>
+          {/* 申请人 — 审批人决策的关键信息 */}
+          {a.requester_name && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              fontSize: 11.5, color: 'var(--ms-ink-muted)',
+            }}>
+              申请人 <span style={{ color: 'var(--ms-ink)', fontWeight: 500 }}>{a.requester_name}</span>
+            </span>
+          )}
           <div style={{ flex: 1 }} />
           <span style={{
             fontSize: 11.5, color: 'var(--ms-ink-subtle)',
@@ -129,7 +155,7 @@ function ApprovalRow({
           overflow: 'hidden',
         }}>{a.reason}</div>
 
-        {/* target id + grant countdown */}
+        {/* target id + 跳转 + grant countdown */}
         <div style={{
           marginTop: 10,
           display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
@@ -140,6 +166,13 @@ function ApprovalRow({
               ? <>资源 <span style={{ color: 'var(--ms-ink)' }}>{a.target_name}</span></>
               : <>target <span className="ms-mono">{a.target_id.slice(0, 8)}…</span></>}
           </span>
+          {approvalHref(a) && (
+            <a href={approvalHref(a)!}
+               style={{ display: 'inline-flex', alignItems: 'center', gap: 3,
+                        color: 'var(--ms-accent)' }}>
+              <TargetIcon size={11} strokeWidth={1.8} /> 查看资源
+            </a>
+          )}
           {a.status === 'approved' && a.decided_at && (
             <GrantCountdown decidedAt={a.decided_at}
                             durationSeconds={a.duration_seconds} />
@@ -258,11 +291,13 @@ export default function ApprovalsPage() {
       </div>
 
       {/* #111 修复:删掉"新建申请"按钮,因为它要求 user 手填 36 位 UUID 无法获取。
-          发起申请的入口收敛到资源页(项目 / 文件夹卡片旁的「申请权限」按钮 → RequestAccessModal)。 */}
+          发起申请的入口在资源详情面板:无下载权限的文件会显示「申请下载」,
+          或直接点「下载」被 403 拒绝时自动弹出申请(RequestAccessModal)。 */}
       <Alert
         type="info"
         showIcon
-        message="如需发起新申请,请到具体的项目 / 文件夹页面,点资源旁边的「申请权限」按钮。"
+        message="如何发起新申请?"
+        description="进入项目 → 选中无权限的文件 → 右侧详情面板点「申请下载」;或直接点「下载」,系统会自动弹出权限申请。提交后在本页「我的申请」跟踪进度,项目管理员在「全部」里审批。"
         style={{ marginBottom: 'var(--ms-sp-md)' }}
       />
 

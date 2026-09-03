@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.db.tables import ApprovalRequest
+from app.db.tables import ApprovalRequest, Asset, User
 from app.deps import (
     get_audit,
     CurrentUser,
@@ -51,7 +51,11 @@ router = APIRouter()
 
 
 async def _enrich_out(db: AsyncSession, approval: ApprovalRequest) -> ApprovalOut:
-    """ApprovalOut + #136/#137 enrich target_name + parent_project_id(反查)。"""
+    """ApprovalOut + #136/#137 enrich target_name + parent_project_id(反查)。
+
+    另补审批人视角需要的信息:申请人姓名(requester_name)+ asset 目标的
+    folder_id(审批行跳转到所在文件夹用)。
+    """
     from app.services.target_resolve import resolve_target_name_and_project
     out = ApprovalOut.model_validate(approval)
     name, ppid = await resolve_target_name_and_project(
@@ -59,6 +63,12 @@ async def _enrich_out(db: AsyncSession, approval: ApprovalRequest) -> ApprovalOu
     )
     out.target_name = name
     out.parent_project_id = ppid
+    requester = await db.get(User, approval.applicant_user_id)
+    out.requester_name = requester.name if requester else None
+    if approval.target_type == "asset":
+        asset = await db.get(Asset, approval.target_id)
+        if asset is not None:
+            out.folder_id = asset.folder_id
     return out
 
 
@@ -81,6 +91,28 @@ async def create_approval(
         raise HTTPException(400, "action=access 仅适用于 target_type=sensitive_folder")
     if payload.action == "download" and payload.duration_seconds is None:
         raise HTTPException(400, "action=download 必须指定 duration_seconds")
+
+    # 重复申请防护:
+    # 1) asset download — 已拥有下载权限(如此前审批批过且未过期)→ 无需再申请
+    if payload.target_type == "asset" and payload.action == "download":
+        already = await permissions.check(
+            user_subject=user.subject, relation="can_download",
+            object_type="asset", object_id=str(payload.target_id),
+        )
+        if already:
+            raise HTTPException(400, "你已拥有该文件的下载权限(或已有未过期的临时授权),无需重复申请")
+    # 2) 同人 + 同目标 + 同动作已有 pending → 等审批即可,防止刷屏
+    dup = await db.execute(
+        select(ApprovalRequest).where(
+            ApprovalRequest.applicant_user_id == user_id,
+            ApprovalRequest.target_type == payload.target_type,
+            ApprovalRequest.target_id == payload.target_id,
+            ApprovalRequest.action == payload.action,
+            ApprovalRequest.status == "pending",
+        ).limit(1)
+    )
+    if dup.scalars().first() is not None:
+        raise HTTPException(400, "相同目标的申请正在审批中,请等待管理员处理,勿重复提交")
 
     # #112 PR-2:若提交 via_link,backend enforce token 仍有效 + target/action 一致
     # + 限定 receiver 时必须 = current user(advisor risk #3:不能只靠 frontend 隐藏 UI)

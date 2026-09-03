@@ -1,10 +1,12 @@
 /**
  * FolderGrantsPanel — 普通(非 sensitive)一级 folder 的 explicit grant 管理。
- * 复用 FolderInvitePanel 形态;三个 level(viewer/downloader/uploader)+ Segmented。
+ * 复用 FolderInvitePanel 形态;三个 level(viewer/downloader/uploader)多选 chips,一次授多 level。
  * 入口:AssetSummaryPanel 在 0 选 + folder 是一级普通 folder 时切到这里。
  */
-import { App, Button, Modal, Popconfirm, Segmented, Skeleton, Tooltip } from 'antd';
-import { Building2, Folder as FolderIcon, Plus, Trash2, Users as UsersIcon } from 'lucide-react';
+import { App, Button, Modal, Popconfirm, Skeleton, Tooltip } from 'antd';
+import {
+  Building2, Check, Folder as FolderIcon, Plus, Trash2, Users as UsersIcon,
+} from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { http, errorMessage } from '../api/client';
@@ -185,20 +187,29 @@ function AddGrantModal({
   folder: Folder; me: Me; onSuccess: () => void;
 }) {
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [level, setLevel] = useState<GrantLevel>('viewer');
+  const [levels, setLevels] = useState<GrantLevel[]>(['viewer']);
   const [loading, setLoading] = useState(false);
   const { message } = App.useApp();
+
+  const toggleLevel = (l: GrantLevel) =>
+    setLevels(prev => prev.includes(l) ? prev.filter(x => x !== l) : [...prev, l]);
+
+  const levelLabels = LEVEL_ORDER.filter(l => levels.includes(l)).map(l => LEVEL_META[l].label);
 
   const submit = async () => {
     if (subjects.length === 0) {
       message.warning('请选至少一个主体');
       return;
     }
+    if (levels.length === 0) {
+      message.warning('请至少勾选一个权限');
+      return;
+    }
     setLoading(true);
     let ok = 0, fail = 0;
     for (const s of subjects) {
       try {
-        const body: Record<string, string> = { level };
+        const body: Record<string, unknown> = { levels };   // 一次授多 level
         if (s.kind === 'user') body.user_id = s.id;   // users.id UUID(#148 起)
         else body.group_id = s.id;
         await http.post(`/api/v1/folders/${folder.id}/grants`, body);
@@ -210,8 +221,9 @@ function AddGrantModal({
     }
     setLoading(false);
     if (ok > 0) {
-      message.success(`已加 ${ok} 个 ${LEVEL_META[level].label} grant${fail > 0 ? ` · 失败 ${fail}` : ''}`);
+      message.success(`已为 ${ok} 个主体添加「${levelLabels.join(' + ')}」grant${fail > 0 ? ` · 失败 ${fail}` : ''}`);
       setSubjects([]);
+      setLevels(['viewer']);
       onSuccess();
       onClose();
     }
@@ -227,15 +239,45 @@ function AddGrantModal({
           <SubjectPicker value={subjects} onChange={setSubjects} me={me} />
         </div>
         <div>
-          <FieldLabel>权限</FieldLabel>
-          <Segmented
-            block value={level}
-            onChange={(v) => setLevel(v as GrantLevel)}
-            options={LEVEL_ORDER.map(l => ({ label: LEVEL_META[l].label, value: l }))}
-          />
+          <FieldLabel>权限(可多选,一次授予)</FieldLabel>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {LEVEL_ORDER.map(l => {
+              const meta = LEVEL_META[l];
+              const active = levels.includes(l);
+              return (
+                <span key={l} onClick={() => toggleLevel(l)} aria-checked={active} role="checkbox"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleLevel(l); }}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '6px 14px', borderRadius: 6,
+                        fontSize: 13, fontWeight: active ? 600 : 400,
+                        cursor: 'pointer', userSelect: 'none',
+                        border: `1.5px solid ${active ? meta.color : 'var(--ms-hairline)'}`,
+                        background: active ? meta.bg : 'var(--ms-surface)',
+                        color: active ? meta.color : 'var(--ms-ink-muted)',
+                        boxShadow: active ? `0 0 0 1px ${meta.color}` : 'none',
+                        transition: 'all 0.14s',
+                      }}>
+                  {active && <Check size={14} strokeWidth={3} />}
+                  {meta.label}
+                </span>
+              );
+            })}
+          </div>
           <div style={{
-            marginTop: 8, fontSize: 11, color: 'var(--ms-ink-subtle)', lineHeight: 1.6,
-          }}>{LEVEL_META[level].desc}</div>
+            marginTop: 8, fontSize: 11, color: 'var(--ms-ink-subtle)', lineHeight: 1.7,
+          }}>
+            {levels.length === 0 ? (
+              <span style={{ color: 'var(--ms-amber)' }}>至少勾选一个权限</span>
+            ) : (
+              <>已选:<b style={{ color: 'var(--ms-ink)' }}>{levelLabels.join(' + ')}</b>。
+                {levels.includes('uploader') && '上传:查看 + 上传 + 建子目录。'}
+                {levels.includes('downloader') && '下载:查看 + 下载。'}
+                {levels.includes('viewer') && '查看:仅浏览元数据。'}
+              </>
+            )}
+          </div>
         </div>
       </div>
     </Modal>

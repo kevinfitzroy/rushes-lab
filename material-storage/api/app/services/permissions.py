@@ -76,6 +76,19 @@ def fmt_subject(kind: Literal["user", "group"], id_: str) -> str:
     return f"{kind}:{id_}"
 
 
+def is_already_exists_error(e: BaseException) -> bool:
+    """判定 OpenFGA 写异常是否为「重复 tuple」。
+
+    不匹配完整报错文案:openfga 镜像未固定版本,400 文案同时含 "already exists"
+    与 "already existed" 且随版本可能漂移(PR #176 review P1-1)。
+    改为 SDK 异常类型(400 ValidationException)+ 两者稳定公共子串 "already exist";
+    非 400 类(网络 / 5xx)不视作重复,继续上抛。
+    """
+    from openfga_sdk.exceptions import ValidationException
+
+    return isinstance(e, ValidationException) and "already exist" in str(e).lower()
+
+
 class PermissionsService:
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -280,7 +293,7 @@ class PermissionsService:
             await self._client.write(ClientWriteRequest(writes=[tup]))
         except Exception as e:
             # 'tuple already existed' → 先删后写(刷新 condition.grant_time)
-            if "already existed" in str(e):
+            if is_already_exists_error(e):
                 try:
                     await self._client.write(ClientWriteRequest(deletes=[
                         ClientTuple(user=subject, relation=kind, object=f"folder:{folder_id}")
@@ -511,7 +524,7 @@ class PermissionsService:
             await self._client.write(ClientWriteRequest(writes=[new_tuple]))
         except Exception as e:
             # 'tuple already existed' → 先删后写(刷新 condition.grant_time)
-            if "already existed" in str(e):
+            if is_already_exists_error(e):
                 try:
                     await self._client.write(ClientWriteRequest(deletes=[
                         ClientTuple(

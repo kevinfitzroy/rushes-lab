@@ -29,17 +29,20 @@ const DURATION_PRESETS = [
 /** 受控 — 通过 Form.Item 注入 value/onChange,写 form 的 duration_seconds(number) */
 function DurationControl({ value, onChange }: { value?: number; onChange?: (v: number) => void }) {
   const presetSeconds = DURATION_PRESETS.map(p => p.seconds);
-  const isCustom = value != null && !presetSeconds.includes(value as typeof presetSeconds[number]);
+  const initCustom = value != null && !presetSeconds.includes(value as typeof presetSeconds[number]);
+  // customMode 必须显式记录:不能由 value 反推 —— 首次点「自定义」写入的默认秒数
+  // 常与某个预设重合(如 1h=3600),反推会立刻把弹回预设,输入框永远出不来
+  const [customMode, setCustomMode] = useState(initCustom);
   const [customValue, setCustomValue] = useState<number>(
-    isCustom ? Math.max(1, Math.round((value ?? 3600) / 3600)) : 1
+    initCustom ? Math.max(1, Math.round((value ?? 3600) / 3600)) : 1
   );
   const [customUnit, setCustomUnit] = useState<60 | 3600 | 86400>(
-    isCustom && value && value % 86400 === 0 ? 86400
-    : isCustom && value && value % 3600 === 0 ? 3600
-    : isCustom ? 60 : 3600
+    initCustom && value && value % 86400 === 0 ? 86400
+    : initCustom && value && value % 3600 === 0 ? 3600
+    : 3600
   );
 
-  const segValue = isCustom ? 'custom' : (value ?? 3600);
+  const segValue = customMode ? 'custom' : (value ?? 3600);
 
   return (
     <>
@@ -47,8 +50,10 @@ function DurationControl({ value, onChange }: { value?: number; onChange?: (v: n
         value={segValue as string | number}
         onChange={(val) => {
           if (val === 'custom') {
+            setCustomMode(true);
             onChange?.(customValue * customUnit);
           } else {
+            setCustomMode(false);
             onChange?.(val as number);
           }
         }}
@@ -57,8 +62,9 @@ function DurationControl({ value, onChange }: { value?: number; onChange?: (v: n
           { label: '自定义', value: 'custom' },
         ]}
       />
-      {isCustom && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+      {customMode && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--ms-ink-muted)', flexShrink: 0 }}>自定义时长:</span>
           <InputNumber
             min={1} max={365}
             value={customValue}

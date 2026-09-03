@@ -20,6 +20,7 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   download: '下载',
   download_denied: '下载被拒',
   folder_created: '文件夹创建',
+  folder_deleted: '文件夹删除',
   folder_grant_added: '文件夹权限授予',
   folder_grant_removed: '文件夹权限撤销',
   grant_revoked: '授权撤回',

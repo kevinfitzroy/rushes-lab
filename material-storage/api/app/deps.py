@@ -110,18 +110,30 @@ async def get_current_user(
     """
     settings = get_settings()
     auth: OIDCService = request.app.state.auth
+    dev_mode = settings.env == "dev"
 
     token = request.cookies.get(settings.session_cookie_name)
+    user: CurrentUser | None = None
+    forced_change = False
     if token:
         try:
             payload = auth.decode_session(token)
             uid = uuid.UUID(payload["sub"])
+            # F5:is_active 校验放最前 —— 禁用账号任何端点一律 401(含改密/me),
+            # 优先于 F15 的 403(禁用状态下的改密诉求无意义)
+            user, forced_change = await _load_active_user(uid)
         except (ValueError, KeyError) as e:
-            log.info("session decode failed: %s", e)
-            raise HTTPException(401, "会话已过期或无效,请重新登录") from e
-        # F5:is_active 校验放最前 —— 禁用账号任何端点一律 401(含改密/me),
-        # 优先于 F15 的 403(禁用状态下的改密诉求无意义)
-        user, forced_change = await _load_active_user(uid)
+            if not dev_mode:
+                raise HTTPException(401, "会话已过期或无效,请重新登录") from e
+            # dev:本地栈重建 / secret 轮换后浏览器残留的旧 session JWT 会卡死
+            # 整个 UI(401 循环弹回登录页)—— 回落 X-User-Id,不再让僵尸 cookie 挡路
+            log.info("dev: session decode failed (%s),falling back to X-User-Id", e)
+        except HTTPException as e:
+            if not dev_mode:
+                raise
+            log.info("dev: session user load failed (%s),falling back to X-User-Id", e.detail)
+
+    if user is not None:
         # F15:强制改密拦截(must_change_password=true 只放行改密/me/logout)
         route_name = getattr(request.scope.get("route"), "name", "")
         if forced_change and route_name not in _FORCED_CHANGE_OK_ROUTES:
@@ -130,7 +142,7 @@ async def get_current_user(
             )
         return user
 
-    if settings.env == "dev" and x_user_id:
+    if dev_mode and x_user_id:
         try:
             uid = uuid.UUID(x_user_id)
         except ValueError as e:

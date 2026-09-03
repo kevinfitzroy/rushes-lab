@@ -75,6 +75,7 @@ async def main() -> None:
             insert(User)
             .values(
                 id=ADMIN_USER_ID,
+                username="alice",
                 feishu_open_id="dev_admin_open_id",
                 name="alice (admin)",
                 email="alice@dev.local",
@@ -87,6 +88,7 @@ async def main() -> None:
             insert(User)
             .values(
                 id=MEMBER_USER_ID,
+                username="bob",
                 feishu_open_id="dev_member_open_id",
                 name="bob (member)",
                 email="bob@dev.local",

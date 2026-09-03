@@ -37,7 +37,12 @@ services:
       - poc-net
 
   ms-api:
-    build: .
+    build:
+      context: .
+      # 镜像源可覆盖(默认清华;部分网络 403 时 export APT_MIRROR / PIP_INDEX_URL 换阿里云)
+      args:
+        APT_MIRROR: ${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     container_name: ms-api
     restart: unless-stopped
     env_file: .env
@@ -59,7 +64,11 @@ services:
       - poc-net
 
   ms-worker:
-    build: .
+    build:
+      context: .
+      args:
+        APT_MIRROR: ${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     container_name: ms-worker
     restart: unless-stopped
     command: arq app.workers.main.WorkerSettings

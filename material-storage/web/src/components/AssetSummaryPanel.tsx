@@ -5,7 +5,7 @@
 import { App, Button, Input, Tag } from 'antd';
 import {
   Copy, Download as DownloadIcon, Eye, FileText, Files,
-  Hash, Save, Share2,
+  Hash, KeyRound, Save, Share2,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { Asset, Folder, Me } from '../api/types';
@@ -16,6 +16,7 @@ import { ShareModal } from './ShareModal';
 import { FolderInvitePanel } from './FolderInvitePanel';
 import { FolderGrantsPanel } from './FolderGrantsPanel';
 import { AssetPreviewModal, isPreviewable } from './AssetPreviewModal';
+import { RequestAccessModal } from './RequestAccessModal';
 import { AssetTagEditor } from './AssetTagEditor';
 
 function fmtBytes(n: number): string {
@@ -34,9 +35,12 @@ interface Props {
 export function AssetSummaryPanel({ selected, me, folder }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
   const { message } = App.useApp();
   const dlLink = useDownloadLink();
   const downloads = useDownloads();
+  // 无下载权限时:下载/预览会被后端 403;「申请下载」把审批入口显式摆出来
+  const canDownload = folder?.my_can_download !== false;
 
   // D iter3:0 选 + sensitive folder + me → FolderInvitePanel
   if (selected.length === 0 && folder && folder.is_sensitive && me) {
@@ -77,7 +81,14 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
         const link = await dlLink.mutateAsync(a.id);
         await downloads.start(link.url, a.filename);
       } catch (e) {
-        message.error(errorMessage(e, '下载失败'));
+        const err = e as { response?: { status?: number } };
+        if (err.response?.status === 403) {
+          // 无权限 → 自动弹申请(与 FolderDetail / ProjectDetail 同款流程)
+          message.warning('无下载权限,已为你打开权限申请…');
+          setApplyOpen(true);
+        } else {
+          message.error(errorMessage(e, '下载失败'));
+        }
       }
     };
     const handleCopyId = async () => {
@@ -136,6 +147,11 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
           gap: 4,
           borderBottom: '1px solid var(--ms-hairline-soft)',
         }}>
+          {!canDownload && (
+            <QuickAction icon={<KeyRound size={14} strokeWidth={1.8} />}
+                         label="申请下载"
+                         onClick={() => setApplyOpen(true)} />
+          )}
           {isPreviewable(a) && (
             <QuickAction icon={<Eye size={14} strokeWidth={1.8} />}
                          label="预览"
@@ -147,7 +163,7 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
                        onClick={handleDownload} />
           {me && (
             <QuickAction icon={<Share2 size={14} strokeWidth={1.8} />}
-                         label="分享给飞书"
+                         label="分享"
                          onClick={() => setShareOpen(true)} />
           )}
           <QuickAction icon={<Copy size={14} strokeWidth={1.8} />}
@@ -192,6 +208,16 @@ export function AssetSummaryPanel({ selected, me, folder }: Props) {
             asset={a}
             open={previewOpen}
             onClose={() => setPreviewOpen(false)}
+          />
+        )}
+        {applyOpen && (
+          <RequestAccessModal
+            open
+            onClose={() => setApplyOpen(false)}
+            targetId={a.id}
+            targetName={a.filename}
+            targetType="asset"
+            defaultAction="download"
           />
         )}
       </div>

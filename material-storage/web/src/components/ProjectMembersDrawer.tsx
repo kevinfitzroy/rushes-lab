@@ -3,11 +3,11 @@
  * 入口:ProjectDetailPage 顶栏"成员"按钮。
  *
  * 成员卡片:头像/icon + name + roles 徽章串 + per-role 撤销 + 邀请按钮。
- * 邀请 Modal:UserPicker + role segmented control(admin/uploader/downloader/viewer)。
+ * 邀请 Modal:UserPicker + 角色多选 toggle chips(admin/uploader/downloader/viewer,一次授多角色)。
  */
-import { App, Button, Drawer, Modal, Popconfirm, Segmented, Skeleton, Tooltip } from 'antd';
+import { App, Button, Drawer, Modal, Popconfirm, Skeleton, Tooltip } from 'antd';
 import {
-  Building2, Clock, FolderLock, Folder as FolderIcon, Infinity as InfinityIcon,
+  Building2, Check, Clock, FolderLock, Folder as FolderIcon, Infinity as InfinityIcon,
   Layers, Plus, ShieldCheck, Trash2, Users as UsersIcon,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -457,20 +457,30 @@ function InviteModal({
   project: Project; me: Me; onSuccess: () => void;
 }) {
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [role, setRole] = useState<ProjectRole>('viewer');
+  const [roles, setRoles] = useState<ProjectRole[]>(['viewer']);
   const [loading, setLoading] = useState(false);
   const { message } = App.useApp();
+
+  const toggleRole = (r: ProjectRole) =>
+    setRoles(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]);
+
+  const hasGroupSubject = subjects.some(s => s.kind !== 'user');
+  const roleLabels = ROLE_ORDER.filter(r => roles.includes(r)).map(r => ROLE_META[r].label);
 
   const submit = async () => {
     if (subjects.length === 0) {
       message.warning('请选至少一个主体');
       return;
     }
+    if (roles.length === 0) {
+      message.warning('请至少勾选一个角色');
+      return;
+    }
     setLoading(true);
     let ok = 0, fail = 0;
     for (const s of subjects) {
       try {
-        const body: Record<string, string> = { role };
+        const body: Record<string, unknown> = { roles };   // 一次授多角色
         if (s.kind === 'user') body.user_id = s.id;   // users.id UUID(#148 起)
         else body.group_id = s.id;
         await http.post(`/api/v1/projects/${project.id}/members`, body);
@@ -482,9 +492,10 @@ function InviteModal({
     }
     setLoading(false);
     if (ok > 0) {
-      message.success(`已添加 ${ok} 个主体为「${ROLE_META[role].label}」${fail > 0 ? ` · 失败 ${fail}` : ''}`);
+      message.success(`已为 ${ok} 个主体授予「${roleLabels.join(' + ')}」${fail > 0 ? ` · 失败 ${fail}` : ''}`);
       onSuccess();
       setSubjects([]);
+      setRoles(['viewer']);
       onClose();
     }
   };
@@ -509,22 +520,51 @@ function InviteModal({
           />
         </div>
         <div>
-          <FieldLabel>角色</FieldLabel>
-          <Segmented
-            block
-            value={role}
-            onChange={(v) => setRole(v as ProjectRole)}
-            options={ROLE_ORDER.map(r => ({
-              label: ROLE_META[r].label, value: r,
-            }))}
-          />
+          <FieldLabel>角色(可多选,一次授予)</FieldLabel>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {ROLE_ORDER.map(r => {
+              const meta = ROLE_META[r];
+              const active = roles.includes(r);
+              return (
+                <span key={r} onClick={() => toggleRole(r)} aria-checked={active} role="checkbox"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleRole(r); }}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '6px 14px', borderRadius: 6,
+                        fontSize: 13, fontWeight: active ? 600 : 400,
+                        cursor: 'pointer', userSelect: 'none',
+                        border: `1.5px solid ${active ? meta.color : 'var(--ms-hairline)'}`,
+                        background: active ? meta.bg : 'var(--ms-surface)',
+                        color: active ? meta.color : 'var(--ms-ink-muted)',
+                        boxShadow: active ? `0 0 0 1px ${meta.color}` : 'none',
+                        transition: 'all 0.14s',
+                      }}>
+                  {active && <Check size={14} strokeWidth={3} />}
+                  {meta.label}
+                </span>
+              );
+            })}
+          </div>
           <div style={{
-            marginTop: 8, fontSize: 11, color: 'var(--ms-ink-subtle)', lineHeight: 1.6,
+            marginTop: 8, fontSize: 11, color: 'var(--ms-ink-subtle)', lineHeight: 1.7,
           }}>
-            {role === 'admin' && '管理:全部权限 + 可管成员 + 可建 sensitive 目录'}
-            {role === 'uploader' && '上传:可上传文件 + 创建子文件夹 + 自动含查看权限'}
-            {role === 'downloader' && '下载:可下载文件 + 自动含查看权限'}
-            {role === 'viewer' && '查看:仅元数据浏览,不能下载/上传'}
+            {roles.length === 0 ? (
+              <span style={{ color: 'var(--ms-amber)' }}>至少勾选一个角色</span>
+            ) : (
+              <>
+                已选:<b style={{ color: 'var(--ms-ink)' }}>{roleLabels.join(' + ')}</b>。
+                {roles.includes('admin') && '管理:全部权限 + 可管成员 + 可建敏感目录。'}
+                {roles.includes('uploader') && '上传:传文件 + 建子目录,自动含查看。'}
+                {roles.includes('downloader') && '下载:下载文件,自动含查看。'}
+                {roles.includes('viewer') && '查看:仅浏览元数据。'}
+              </>
+            )}
+            {roles.includes('admin') && hasGroupSubject && (
+              <div style={{ color: 'var(--ms-amber)', marginTop: 2 }}>
+                ⚠ 用户组主体不能授「管理」,提交时该主体会被拒绝
+              </div>
+            )}
           </div>
         </div>
       </div>

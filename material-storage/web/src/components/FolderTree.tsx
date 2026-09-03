@@ -14,6 +14,8 @@ interface Props {
   onSelect: (folderId: string) => void;
   onCreateChild?: () => void;
   onCreateRoot?: () => void;
+  /** 项目级上传权限(uploader/admin)— 后端建目录强制 can_upload,前端据此隐藏入口 */
+  canUpload?: boolean;
 }
 
 interface TreeNode {
@@ -95,7 +97,7 @@ function buildTree(folders: Folder[]): TreeNode[] {
 }
 
 export function FolderTree({
-  folders, projectName, activeFolderId, onSelect, onCreateChild, onCreateRoot,
+  folders, projectName, activeFolderId, onSelect, onCreateChild, onCreateRoot, canUpload,
 }: Props) {
   const tree = useMemo(() => buildTree(folders), [folders]);
 
@@ -134,7 +136,7 @@ export function FolderTree({
           }}>{projectName}</div>
         )}
       </div>
-      {onCreateRoot && (
+      {canUpload && onCreateRoot && (
         <Tooltip title="项目根新建" placement="bottom">
           <button
             onClick={onCreateRoot}
@@ -147,7 +149,7 @@ export function FolderTree({
           </button>
         </Tooltip>
       )}
-      {onCreateChild && activeFolderId && (
+      {canUpload && onCreateChild && activeFolderId && (
         <Tooltip title="当前文件夹下新建子" placement="bottom">
           <button
             onClick={onCreateChild}

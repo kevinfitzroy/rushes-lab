@@ -135,10 +135,22 @@ vertical slice 已 ship(PR #102 + #103 deploy 修)。剩:
 - ProjectDetailPage 加"设置"按钮 → modal
 - 没具体需求场景驱动,先不做
 
-### D iter2(低优先级)— folder rename / move / delete
+### D iter2 — folder delete(一期已 ship)/ rename / move(仍低优先级)
 
-- 产品上"开一级 folder 来解决"已覆盖大部分需求;若实际用了发现痛再做
-- `PATCH /api/v1/folders/{id}` rename / move + DELETE 软删
+- **delete 一期(2026-09-03,liuqi 分支)**:`DELETE /api/v1/folders/{id}` — **仅空文件夹,硬删**
+  (前端 header 按钮,空夹才可点;后端 enforce 无子夹且无资产行[含软删] + OpenFGA
+  tuple 尽力清理 + `folder_deleted` audit)。
+  **权限:普通夹 `can_upload` / sensitive 夹 `can_admin`** —— 普通夹与创建对称
+  (model v4:uploader 隐含建子目录,uploader 自主管理目录结构);sensitive 夹例外,
+  因其 `can_upload` 实为 downloader 级(model v4),当删除门槛太宽且邀请配置价值高
+- **设计决策:空夹硬删而非原计划的软删**。软删对空文件夹无收益(无 MinIO 对象可延迟清理、重建成本
+  一次点击),且 `uq_folder_project_prefix` 是**全量**唯一约束,软删行占位会让同名重建撞 409
+  ——硬删天然释放约束位。非空拒绝而非级联(assets.folder_id 是 RESTRICT,子树删除的产品语义未定)。
+- **二期(等回收站需求真出现再做)**:非空软删 → 需先加 `folders.deleted_at` 列 + 把唯一约束换成
+  `WHERE deleted_at IS NULL` 的 partial unique index,且所有读取点(list / search / tree)要按
+  `minio_prefix` 前缀排除已删子树。
+- rename / move:`PATCH /api/v1/folders/{id}` 维持低优先级,"开一级 folder 来解决"仍覆盖大部分需求;
+  若做 move 需同步迁移子树 OpenFGA parent tuple + 处理 minio_prefix 与存量 asset key 的关系
 
 ### ~~dev_bootstrap v3→v4 stale~~ — ✅ 已修(issue #69,PR #152)
 

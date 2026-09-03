@@ -31,7 +31,7 @@ from app.deps import (
 )
 from app.models import ProjectCreateIn, ProjectOut
 from app.services.audit import AuditService
-from app.services.permissions import PermissionsService
+from app.services.permissions import PermissionsService, is_already_exists_error
 
 router = APIRouter()
 
@@ -427,7 +427,8 @@ async def add_project_member(
 
     body: {
       user_id?: str | group_id?: str,  # 二选一(user_id = users.id UUID;#154:department 轴下线)
-      role: 'admin'|'viewer'|'downloader'|'uploader'
+      role?: 'admin'|'viewer'|'downloader'|'uploader',   # 旧单角色(仍兼容)
+      roles?: ['admin'|'viewer'|'downloader'|'uploader', ...]  # 一次授多角色
     }
     需 can_admin project。
     """
@@ -440,9 +441,20 @@ async def add_project_member(
         is_system_admin=is_system_admin,
     )
 
-    role = payload.get("role")
-    if role not in PROJECT_ROLES:
-        raise HTTPException(400, f"role must be one of {PROJECT_ROLES}")
+    # roles(多选,新)优先;旧单 role 字段继续兼容。
+    # P2-1:先校验类型 —— 客户端误传字符串("admin")时 for 会按字符迭代,
+    # 报出 ['a','d','m','i','n'] 这种费解文案,必须在语义校验前拦下。
+    raw_roles = payload.get("roles")
+    if raw_roles is not None and not isinstance(raw_roles, list):
+        raise HTTPException(400, "roles 必须是数组")
+    legacy_role = payload.get("role")
+    raw_roles = raw_roles or ([legacy_role] if legacy_role else [])
+    bad = [r for r in raw_roles if not isinstance(r, str) or r not in PROJECT_ROLES]
+    if bad:
+        raise HTTPException(400, f"role must be one of {PROJECT_ROLES}: got {bad}")
+    if not raw_roles:
+        raise HTTPException(400, "role(或 roles)必填")
+    roles = [r for r in PROJECT_ROLES if r in set(raw_roles)]  # 去重 + 固定顺序
 
     provided = [
         ("user", payload.get("user_id")),
@@ -451,23 +463,34 @@ async def add_project_member(
     chosen = [(k, v) for k, v in provided if v]
     if len(chosen) != 1:
         raise HTTPException(400, "must specify exactly one of user_id / group_id")
-    if role == "admin" and chosen[0][0] != "user":
+    if "admin" in roles and chosen[0][0] != "user":
         # model v4 限 admin: [user, group#member]
         raise HTTPException(400, "admin 不允许直接给 group;请改给 user")
     subject_kind, subject_id = chosen[0]
 
     from app.services.permissions import fmt_subject
     subject = fmt_subject(subject_kind, subject_id)  # type: ignore[arg-type]
-    await permissions.add_project_subject(
-        project_id=str(project_id), subject=subject, role=role,  # type: ignore[arg-type]
-    )
-
-    await audit.write(
-        event_type="project_member_added",
-        actor_user_id=user_id, target_project_id=project_id,
-        details={"subject": subject, "role": role, "kind": subject_kind},
-        **ctx,
-    )
+    # 部分成功语义:重复(已存在)按幂等跳过;真错误中止 —— 此前角色已生效并留有
+    # audit,客户端重试可幂等补齐(P2-2)。
+    for role in roles:
+        try:
+            await permissions.add_project_subject(
+                project_id=str(project_id), subject=subject, role=role,  # type: ignore[arg-type]
+            )
+        except Exception as e:
+            # OpenFGA 重复 tuple —— 重复邀请 / 多角色部分重叠时终态已是管理员想要的,
+            # 按幂等成功跳过;真错误继续抛(→ 500)
+            if not is_already_exists_error(e):
+                raise
+            continue
+        # 每个角色一条 audit:保持 project_member_added 单角色 detail 形状,
+        # 下游按 event_type 过滤的查询不用改
+        await audit.write(
+            event_type="project_member_added",
+            actor_user_id=user_id, target_project_id=project_id,
+            details={"subject": subject, "role": role, "kind": subject_kind},
+            **ctx,
+        )
 
 
 @router.delete("/{project_id}/members", status_code=204)

@@ -167,7 +167,7 @@ sudo systemctl start postgresql redis-server
 
 系统里没有"自助注册":账号由系统 admin 在管理后台创建并下发临时密码(ADR-0007 决策 2)。所以顺序是:
 
-1. **dev 通道进第一个管理员** — 开 `http://localhost:5173/ms-static/web/dev-login`,填 `00000000-0000-0000-0000-000000000001`(alice,`dev_bootstrap` 已给她 `organization#admin`)。这条通道只在 `ENV=dev` 生效,生产自动失效。
+1. **首个管理员登录** — 开 `http://localhost:5173/ms-static/web/login`,用 **alice / alice2026**(`local_up.sh` 收尾自动给 seed 账号设的 dev 密码,见 §2.5;alice = org admin = 系统 admin)。账号密码链路与生产完全一致(带 session cookie,不再依赖 `X-User-Id` dev 通道,利于实测不同账号不同角色)。旧的 dev-login(X-User-Id)仍在,登录页底部有入口,适合临时冒烟任意 UUID。
 2. **建真实账号** — 顶栏进 `管理 → 用户`(`/admin/users`)→ 新建本地用户,填**登录名**(拼音/工号)、姓名、邮箱 → 弹窗回显**一次性临时密码**,复制下来。
 3. **用真实账号登录** — 换一个浏览器无痕窗口开 `/ms-static/web/login`,用刚才的**登录名 + 临时密码**登录。
    - 这条路径正是 review F2 修的:登录匹配优先级 `username → email → name`,修之前用登录名登录必然 401。
@@ -193,7 +193,9 @@ sudo systemctl start postgresql redis-server
 ## 7. 已知坑速查
 
 - **登录成功却回到登录页** → `SESSION_COOKIE_SECURE` 没改 `false`。
+- **反复被弹回登录页、怎么点都进不去(2026-08-31 已修)** → 旧因:浏览器残留的 `ms_session` cookie 在栈重建(secret 轮换/清库)后签名失效,而 `get_current_user` 的 cookie 分支优先且失败不回落,压死 `X-User-Id` dev 通道 → 401 循环弹回。现 dev 模式下无效 session 自动回落 `X-User-Id`(deps.py);日常密码登录不受影响,遇旧 cookie 清掉即可(`document.cookie='ms_session=; Max-Age=0; path=/'`)。
 - **页面全空、没有报错** → OpenFGA model 没推进 store,或 `OPENFGA_STORE_ID` 写错;所有 `check` 恒 false 但不报错。
+- **无权限账号(outsider)能看到全部项目(2026-08-31 已修)** → 旧因:`seed_demo_data` 重跑时"升真 user 为 org admin"循环把 `ou_fake_outsider` 也捞进去(它不以 `dev_` 开头),自称幂等但 outsider 例外。现查询已显式排除;历史脏 tuple 手动删(`POST /stores/{id}/write` 的 `deletes.tuple_keys`,注意 HTTP schema 是嵌套 `tuple_keys` 不是裸数组)。
 - **上传 403 / SignatureDoesNotMatch** → `MINIO_ENDPOINT_PUBLIC` 与浏览器实际访问的 host 不一致(P-10);隧道下必须填 `http://localhost:6100`。
 - **`alembic upgrade head` 报 `functions in index expression must be marked IMMUTABLE`** → 代码不是最新 main(0011 的 R1 修复没在);或数据库在旧 revision 上重放旧 0011。
 - **`docker exec ms-api pytest` 报 ImportError / 缺包** → `force-recreate` 后容器内 dev 依赖丢了,`docker compose exec ms-api pip install -r requirements-dev.txt`(或镜像重建)补上。
@@ -206,8 +208,5 @@ sudo systemctl start postgresql redis-server
 
 ## 8. 建议顺手做的两件事
 
-1. **`scripts/local_up.sh`** —— 把 §2 的步骤(建 store + 推 model + migrate + seed + 打印入口 URL)收成一条命令。现在每次重来都要手抄 OpenFGA store id,是最容易出错的一步。
-2. ~~`scripts/set_password.py`~~ —— **已落地为 [`scripts/set_initial_admin.py`](../../material-storage/api/scripts/set_initial_admin.py)**:
-   给指定 user 设密码(可顺带 `--create` 建用户、`--grant-org-admin` 授予系统 admin),
-   省略 `--password` 时生成合规临时密码并打印。`ENV=production` 下 dev 通道失效、seed 又不设密码,
-   新机器就是靠它开出第一个能登录的账号。
+1. ~~`scripts/local_up.sh`~~ ✅ **已落地(2026-08-28,`api/scripts/local_up.sh`)** —— §2 全流程(起依赖栈 `-p poc-pigsty-minio` + 建 store/推 model(幂等复用)+ 生成 `.env` + build + migrate + 双 seed)收成一条命令,Git Bash(Windows)与 Linux 均可跑。配套:Dockerfile 镜像源抽成 build arg(默认清华,`APT_MIRROR` / `PIP_INDEX_URL` 可切阿里云);用法:`bash scripts/local_up.sh`(`--web` 顺带起前端,`--refresh-model` 重推 model)。
+2. ✅ **已落地(双实现并存)** —— 本分支的 [`api/scripts/set_password.py`](../../material-storage/api/scripts/set_password.py)(按用户名/邮箱/显示名/UUID 设密码 + 补登录名,local_up.sh 用它给 seed 账号设固定 dev 密码);main 侧的 [`api/scripts/set_initial_admin.py`](../../material-storage/api/scripts/set_initial_admin.py)(支持 `--create` 建用户 + `--grant-org-admin`,`ENV=production` 下开出首个可登录账号)。两者职责互补,均保留。

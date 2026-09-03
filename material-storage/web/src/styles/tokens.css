@@ -174,3 +174,16 @@ html, body {
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background: var(--ms-hairline); border-radius: 4px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--ms-ink-subtle); }
+
+/* ─── AntD Segmented 选中态统一加深 ─────────────────────────────────────────
+   默认选中是白底浮块,在浅色卡片上几乎看不出选了哪个(审批申请的有效期、
+   邀请面板历史版本等都踩过)。统一改为墨色底 + 反白文字。
+   注意 AntD 6 没有 .ant-segmented-thumb 元素,选中背景直接在 label 上。 */
+.ant-segmented .ant-segmented-item-selected {
+  background: var(--ms-ink) !important;
+  color: var(--ms-canvas) !important;
+  font-weight: 600;
+}
+.ant-segmented .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: var(--ms-ink);
+}

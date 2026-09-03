@@ -23,10 +23,13 @@ export default function DevLoginPage() {
       <Card title="material-storage — dev login">
         <Alert
           type="info"
-          message="开发模式 X-User-Id header 登录"
-          description="生产部署应走飞书 OIDC(/api/v1/auth/login);此页用于 dev / smoke 测试。X-User-Id 存于 localStorage,后续所有 request 自动附加。"
+          message="开发者通道(X-User-Id header 直连身份)"
+          description="日常测试请走账号密码登录(/login,与生产同链路,local_up.sh 已为 seed 账号设好固定密码)。此页仅在 ENV=dev 生效:身份存 localStorage,后续请求自动附加 X-User-Id,适合临时冒烟任意 UUID。"
           style={{ marginBottom: 16 }}
         />
+        <Button block style={{ marginBottom: 16 }} onClick={() => navigate('/login')}>
+          前往账号密码登录 →
+        </Button>
 
         <Typography.Title level={5}>预设测试用户</Typography.Title>
         <Space direction="vertical" style={{ width: '100%' }}>

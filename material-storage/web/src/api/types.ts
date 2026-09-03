@@ -132,6 +132,9 @@ export interface Approval {
   // #136/#137: backend enrich — 资源名 + 父项目(folder/asset 导航用)
   target_name?: string | null;
   parent_project_id?: string | null;
+  // 审批人视角:申请人姓名 + asset 目标所在 folder(跳转/溯源用)
+  requester_name?: string | null;
+  folder_id?: string | null;
 }
 
 export interface DownloadLink {

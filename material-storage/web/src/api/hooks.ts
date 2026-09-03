@@ -109,6 +109,21 @@ export const useFolders = (projectId: string | undefined) =>
     enabled: !!projectId,
   });
 
+// 删除文件夹(仅空文件夹;后端 enforce can_admin + 无子夹/无文件)
+// 注意:不 invalidate ['folder', id] —— 删除成功瞬间该 query 的 observer 还挂在
+// 已删 folder 上,失效/移除会立刻触发一次注定 404 的 GET;导航走后缓存自然无人引用
+export const useDeleteFolder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { folder_id: string; project_id: string }) => {
+      await http.delete(`/api/v1/folders/${args.folder_id}`);
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['folders', vars.project_id] });
+    },
+  });
+};
+
 export const useFolder = (folderId: string | undefined) =>
   useQuery({
     queryKey: ['folder', folderId],

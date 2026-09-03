@@ -185,6 +185,9 @@ class ApprovalOut(ORMModel):
     # target_name = 人类可读资源名;parent_project_id = folder/asset 时的父项目(导航用)
     target_name: str | None = None
     parent_project_id: uuid.UUID | None = None
+    # 审批人视角:申请人姓名 + asset 目标所在 folder(审批行跳转/溯源用)
+    requester_name: str | None = None
+    folder_id: uuid.UUID | None = None
 
 
 # ─── 本地账号密码登录(#149)──────────────────────────────────────────────

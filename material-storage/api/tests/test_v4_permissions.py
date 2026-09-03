@@ -153,9 +153,31 @@ async def test_folders_outsider_sees_only_public_project_normal_folders(client: 
 
 
 # ─── approval 流程 ────────────────────────────────────────────────────────────
+async def _cleanup_wedding_download_approvals() -> None:
+    """确定性清场:删掉本目标全部 download 申请(含历史 pending),保证测试可重入。
+
+    API reject 之外兜底 —— reject 与 create 注册的 notify 后台任务在同行上有
+    低概率竞态(观测过 reject 200 但未落库),不能依赖它收敛历史状态。
+    """
+    from sqlalchemy import delete
+
+    from app.db.session import get_sessionmaker
+    from app.db.tables import ApprovalRequest
+
+    async with get_sessionmaker()() as db:
+        res = await db.execute(delete(ApprovalRequest).where(
+            ApprovalRequest.target_type == "project",
+            ApprovalRequest.target_id == PROJECT_WEDDING,
+            ApprovalRequest.action == "download",
+        ))
+        print(f"[cleanup] deleted rows: {res.rowcount}")
+        await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_approval_create_and_pending_state(client: AsyncClient) -> None:
-    """Evan 提交一个 approval — 应返 201 + status=pending。"""
+    """Evan 提交 approval → 201 + pending;重复提交 → 400;结束清理保证可重入。"""
+    await _cleanup_wedding_download_approvals()
     body = {
         "target_type": "project",
         "target_id": PROJECT_WEDDING,
@@ -169,14 +191,36 @@ async def test_approval_create_and_pending_state(client: AsyncClient) -> None:
     assert a["status"] == "pending"
     assert a["target_id"] == PROJECT_WEDDING
 
-    # outsider 也能提(任何人可申请);但 approve 不通过(无 admin)
+    # 同人同目标同动作重复提交 → 400(防刷屏)
+    r_dup = await client.post("/api/v1/approvals", json=body, headers=_h(EVAN_ID))
+    assert r_dup.status_code == 400
+
+    # outsider 也能提(不同申请人不冲突);但 approve 不通过(无 admin)
     body2 = dict(body, reason="outsider 申请")
     r2 = await client.post("/api/v1/approvals", json=body2, headers=_h(OUTSIDER_ID))
     assert r2.status_code == 201
+    # outsider 同目标重复 → 400
+    r3 = await client.post("/api/v1/approvals", json=body2, headers=_h(OUTSIDER_ID))
+    assert r3.status_code == 400
+
+    # 清理:管理员(Evan)拒掉两条 pending,测试可重入(残留 pending 会让下次运行 400)。
+    # reject 与 create 注册的 notify 后台任务在同行上有低概率竞态,重试一次兜底
+    for aid in (a["id"], r2.json()["id"]):
+        rr = await client.post(
+            f"/api/v1/approvals/{aid}/reject", json={"decision_note": "test cleanup"},
+            headers=_h(EVAN_ID),
+        )
+        if rr.status_code != 200:
+            rr = await client.post(
+                f"/api/v1/approvals/{aid}/reject", json={"decision_note": "test cleanup retry"},
+                headers=_h(EVAN_ID),
+            )
+        assert rr.status_code == 200, rr.text
 
 
 @pytest.mark.asyncio
 async def test_approval_reject_by_non_admin_returns_403(client: AsyncClient) -> None:
+    await _cleanup_wedding_download_approvals()
     # Evan 创建,然后 outsider 尝试 approve → 403
     body = {
         "target_type": "project", "target_id": PROJECT_WEDDING,
@@ -191,6 +235,12 @@ async def test_approval_reject_by_non_admin_returns_403(client: AsyncClient) -> 
         headers=_h(OUTSIDER_ID),
     )
     assert r2.status_code == 403
+    # 清理:Evan(项目 admin)拒掉,免得残留 pending 卡住下次运行
+    rr = await client.post(
+        f"/api/v1/approvals/{aid}/reject", json={"decision_note": "test cleanup"},
+        headers=_h(EVAN_ID),
+    )
+    assert rr.status_code == 200
 
 
 # ─── share 短链 ─────────────────────────────────────────────────────────────
@@ -363,6 +413,143 @@ async def test_folder_grants_sensitive_rejected(client: AsyncClient) -> None:
     sens = next(f for f in r.json() if f["is_sensitive"])
     r2 = await client.get(f"/api/v1/folders/{sens['id']}/grants", headers=_h(EVAN_ID))
     assert r2.status_code == 400
+
+
+# ─── folder 删除(一期:仅空文件夹硬删)────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_folder_delete_empty_hard(client: AsyncClient) -> None:
+    """空 folder:Evan 创建 → 删 204 → GET 404 → 重复删 404(硬删无 tombstone)。"""
+    uniq = uuid.uuid4().hex[:8]
+    r = await client.post(
+        "/api/v1/folders",
+        json={"project_id": PROJECT_EVENT, "name": f"zz_del_empty_{uniq}"},
+        headers=_h(EVAN_ID),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["id"]
+
+    r2 = await client.delete(f"/api/v1/folders/{fid}", headers=_h(EVAN_ID))
+    assert r2.status_code == 204, r2.text
+
+    r3 = await client.get(f"/api/v1/folders/{fid}", headers=_h(EVAN_ID))
+    assert r3.status_code == 404
+
+    r4 = await client.delete(f"/api/v1/folders/{fid}", headers=_h(EVAN_ID))
+    assert r4.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_folder_delete_nonempty_rejected(client: AsyncClient) -> None:
+    """非空:有子文件夹时删父 409;先删子、父变空后可删(同名也能立刻重建)。"""
+    uniq = uuid.uuid4().hex[:8]
+    r = await client.post(
+        "/api/v1/folders",
+        json={"project_id": PROJECT_EVENT, "name": f"zz_del_parent_{uniq}"},
+        headers=_h(EVAN_ID),
+    )
+    assert r.status_code == 201, r.text
+    parent = r.json()["id"]
+
+    r2 = await client.post(
+        "/api/v1/folders",
+        json={"project_id": PROJECT_EVENT, "name": f"zz_del_child_{uniq}",
+              "parent_folder_id": parent},
+        headers=_h(EVAN_ID),
+    )
+    assert r2.status_code == 201, r2.text
+    child = r2.json()["id"]
+
+    r3 = await client.delete(f"/api/v1/folders/{parent}", headers=_h(EVAN_ID))
+    assert r3.status_code == 409
+
+    r4 = await client.delete(f"/api/v1/folders/{child}", headers=_h(EVAN_ID))
+    assert r4.status_code == 204, r4.text
+    r5 = await client.delete(f"/api/v1/folders/{parent}", headers=_h(EVAN_ID))
+    assert r5.status_code == 204
+
+    # 硬删释放 uq_folder_project_prefix:同名可立即重建
+    r6 = await client.post(
+        "/api/v1/folders",
+        json={"project_id": PROJECT_EVENT, "name": f"zz_del_parent_{uniq}"},
+        headers=_h(EVAN_ID),
+    )
+    assert r6.status_code == 201, r6.text
+    r7 = await client.delete(f"/api/v1/folders/{r6.json()['id']}", headers=_h(EVAN_ID))
+    assert r7.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_folder_delete_denied_for_non_admin(client: AsyncClient) -> None:
+    """无任何角色的 outsider(public 项目普通 folder)→ 403。
+
+    普通夹删除门槛是 can_upload(uploader 可删空夹);outsider 既无
+    can_upload 也无 can_admin,两个 relation 都过不了。
+    """
+    r = await client.get(
+        "/api/v1/folders", params={"project_id": PROJECT_EVENT}, headers=_h(EVAN_ID),
+    )
+    assert r.status_code == 200
+    fid = r.json()[0]["id"]
+
+    r2 = await client.delete(f"/api/v1/folders/{fid}", headers=_h(OUTSIDER_ID))
+    assert r2.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_folder_delete_uploader_can_delete(client: AsyncClient) -> None:
+    """普通夹删除降级为 can_upload:显式 uploader(非 admin)可删空 folder。"""
+    uniq = uuid.uuid4().hex[:8]
+    r = await client.post(
+        "/api/v1/folders",
+        json={"project_id": PROJECT_EVENT, "name": f"zz_del_uploader_{uniq}"},
+        headers=_h(EVAN_ID),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["id"]
+
+    # Evan 给 outsider 授 folder 显式 uploader(一级普通夹,走 /grants)
+    add = await client.post(
+        f"/api/v1/folders/{fid}/grants",
+        json={"user_id": OUTSIDER_ID, "level": "uploader"},
+        headers=_h(EVAN_ID),
+    )
+    assert add.status_code == 204, add.text
+
+    r2 = await client.delete(f"/api/v1/folders/{fid}", headers=_h(OUTSIDER_ID))
+    assert r2.status_code == 204, r2.text
+
+
+@pytest.mark.asyncio
+async def test_folder_delete_sensitive_still_requires_admin(client: AsyncClient) -> None:
+    """sensitive 夹例外:invited downloader 隐含 can_upload,但删除仍需 can_admin。"""
+    # 找 wedding 项目的 sensitive folder
+    r = await client.get(
+        "/api/v1/folders", params={"project_id": PROJECT_WEDDING}, headers=_h(EVAN_ID),
+    )
+    assert r.status_code == 200
+    sens = next(f for f in r.json() if f["is_sensitive"])
+
+    # Evan 邀 outsider 作 downloader(→ sensitive 的 can_upload 为 true)
+    inv = await client.post(
+        f"/api/v1/folders/{sens['id']}/invite",
+        json={"user_id": OUTSIDER_ID, "level": "downloader"},
+        headers=_h(EVAN_ID),
+    )
+    assert inv.status_code == 204, inv.text
+    try:
+        r2 = await client.delete(
+            f"/api/v1/folders/{sens['id']}", headers=_h(OUTSIDER_ID),
+        )
+        assert r2.status_code == 403, r2.text
+    finally:
+        # 清理:撤销邀请,不污染 seed 数据
+        rev = await client.delete(
+            f"/api/v1/folders/{sens['id']}/invite",
+            params={"subject": f"user:{OUTSIDER_ID}", "level": "downloader",
+                    "permanent": "true"},
+            headers=_h(EVAN_ID),
+        )
+        assert rev.status_code == 204, rev.text
 
 
 # #154:admin feishu health / test-card 测试随飞书下线删除(ADR-0007)

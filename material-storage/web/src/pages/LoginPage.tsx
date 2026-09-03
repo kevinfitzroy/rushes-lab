@@ -108,6 +108,12 @@ export default function LoginPage() {
       </Card>
       <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: 'var(--ms-ink-subtle)' }}>
         连续 5 次登录失败将锁定 15 分钟
+        {import.meta.env.DEV && (
+          <div style={{ marginTop: 4 }}>
+            {/* dev 下跳过登录的 X-User-Id 通道(local_up.sh 已给 seed 账号设密码,日常不必用) */}
+            <a href={`${BASENAME}/dev-login`}>开发者通道(X-User-Id)→</a>
+          </div>
+        )}
       </div>
     </div>
   );
